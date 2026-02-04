@@ -45,10 +45,12 @@
 }
 
 body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
     background: var(--bg-primary) !important;
     color: var(--text-primary) !important;
     min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
 }
 
 /* Sidebar */
@@ -66,7 +68,7 @@ body {
 }
 
 .sidebar-brand {
-    padding: 14px 16px;
+    padding: 20px 16px 16px;
     border-bottom: 1px solid var(--border);
     text-align: center;
 }
@@ -74,14 +76,14 @@ body {
 .sidebar-logo {
     height: 40px;
     width: auto;
-    margin-bottom: 4px;
+    margin-bottom: 6px;
 }
 
 .sidebar-brand h2 {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--accent);
-    letter-spacing: 1px;
+    font-size: 17px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 0.5px;
 }
 
 .sidebar-brand .subtitle {
@@ -117,10 +119,11 @@ body {
 .sidebar-nav a {
     display: flex;
     align-items: center;
-    padding: 7px 16px;
-    color: var(--text-secondary);
+    padding: 8px 16px;
+    color: var(--text-muted);
     text-decoration: none;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 500;
     transition: all 0.15s ease;
     border-left: 3px solid transparent;
 }
@@ -131,7 +134,7 @@ body {
 }
 
 .sidebar-nav a.active {
-    background: var(--bg-tertiary);
+    background: rgba(88, 166, 255, 0.08);
     color: var(--accent);
     border-left-color: var(--accent);
 }
@@ -188,8 +191,9 @@ body {
 }
 
 .top-bar h1 {
-    font-size: 20px;
-    font-weight: 600;
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
 }
 
 .top-bar .meta {
@@ -235,16 +239,19 @@ body {
 .card {
     background: var(--bg-card) !important;
     border: 1px solid var(--border) !important;
-    border-radius: 8px;
+    border-radius: 10px;
     margin-bottom: 16px;
     color: var(--text-primary);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.15);
+    transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
 .card-header {
     padding: 12px 16px;
     border-bottom: 1px solid var(--border) !important;
     font-weight: 600;
-    font-size: 14px;
+    font-size: 13px;
+    letter-spacing: 0.2px;
     display: flex;
     align-items: center;
     gap: 8px;
@@ -279,26 +286,30 @@ a.card-link:hover {
 .stat-card {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
+    border-radius: 10px;
+    padding: 16px 18px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.15);
+    border-top: 3px solid var(--border);
 }
 
 .stat-card .label {
-    font-size: 12px;
+    font-size: 11px;
+    font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.8px;
     margin-bottom: 8px;
 }
 
 .stat-card .value {
     font-size: 24px;
     font-weight: 700;
+    letter-spacing: -0.5px;
 }
 
 .stat-card .sub {
     font-size: 12px;
-    color: var(--text-secondary);
+    color: var(--text-muted);
     margin-top: 4px;
 }
 
@@ -308,9 +319,9 @@ a.card-link:hover {
 }
 
 .progress-bar-bg {
-    height: 8px;
+    height: 6px;
     background: var(--bg-primary);
-    border-radius: 4px;
+    border-radius: 3px;
     overflow: hidden;
 }
 
@@ -351,10 +362,10 @@ th {
     text-align: left;
     padding: 10px 12px;
     font-weight: 600;
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted) !important;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.8px;
     border-bottom: 1px solid var(--border) !important;
     white-space: nowrap;
     background: transparent !important;
@@ -427,11 +438,13 @@ tr:hover td {
     border-radius: 6px;
     background: var(--bg-tertiary);
     color: var(--text-primary);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
     transition: all 0.15s ease;
     text-decoration: none;
-    gap: 4px;
+    gap: 6px;
 }
 
 .btn:hover {
@@ -510,12 +523,13 @@ code {
 .toast {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 12px 20px;
     margin-bottom: 8px;
-    font-size: 14px;
+    font-size: 13px;
+    font-weight: 500;
     animation: slideIn 0.3s ease;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     display: flex;
     align-items: center;
     gap: 8px;
@@ -596,28 +610,32 @@ code {
     justify-content: center;
     min-height: 100vh;
     background: var(--bg-primary);
+    background-image: radial-gradient(ellipse at top, rgba(88, 166, 255, 0.06) 0%, transparent 60%);
 }
 
 .login-box {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 40px;
+    border-radius: 14px;
+    padding: 44px 40px;
     width: 100%;
     max-width: 400px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3), 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .login-box h1 {
     text-align: center;
-    font-size: 24px;
-    margin-bottom: 8px;
-    color: var(--accent);
+    font-size: 22px;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+    letter-spacing: -0.3px;
 }
 
 .login-box .subtitle {
     text-align: center;
     color: var(--text-muted);
-    font-size: 14px;
+    font-size: 13px;
     margin-bottom: 32px;
 }
 
@@ -654,16 +672,19 @@ code {
     background: var(--accent);
     color: #fff;
     border: none;
-    border-radius: 6px;
+    border-radius: 8px;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 14px;
     font-weight: 600;
     cursor: pointer;
-    transition: background 0.15s;
+    transition: all 0.15s;
     margin-top: 8px;
+    box-shadow: 0 1px 3px rgba(88, 166, 255, 0.3);
 }
 
 .btn-login:hover {
     background: var(--accent-hover);
+    box-shadow: 0 2px 8px rgba(88, 166, 255, 0.4);
 }
 
 .alert {
@@ -705,20 +726,24 @@ code {
 .quick-item {
     background: var(--bg-card);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 16px;
+    border-radius: 10px;
+    padding: 14px 16px;
     text-align: center;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2), 0 1px 2px rgba(0, 0, 0, 0.15);
 }
 
 .quick-item .qi-value {
     font-size: 28px;
     font-weight: 700;
+    letter-spacing: -0.5px;
 }
 
 .quick-item .qi-label {
-    font-size: 11px;
+    font-size: 10px;
+    font-weight: 600;
     color: var(--text-muted);
     text-transform: uppercase;
+    letter-spacing: 0.8px;
     margin-top: 4px;
 }
 
@@ -889,11 +914,12 @@ code {
 .confirm-box {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 24px;
+    border-radius: 12px;
+    padding: 28px;
     max-width: 420px;
     width: 90%;
     text-align: center;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }
 
 .confirm-box h3 {

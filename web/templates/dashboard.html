@@ -38,17 +38,17 @@
     {% endif %}
 
     <div class="stats-grid">
-        <div class="stat-card">
+        <div class="stat-card" style="border-top-color:var(--accent)">
             <div class="label">Hostname</div>
             <div class="value" style="font-size:18px">{{ data.hostname }}</div>
             <div class="sub">{{ data.os }}</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="border-top-color:var(--green)">
             <div class="label">Uptime</div>
             <div class="value" style="font-size:18px">{{ data.uptime }}</div>
             <div class="sub">{{ data.cpu_model }} ({{ data.cpu_cores }} cores)</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card" style="border-top-color:var(--purple)">
             <div class="label">Load Average</div>
             <div class="value" style="font-size:18px">{{ data.load }}</div>
             <div class="sub">1 / 5 / 15 min</div>
