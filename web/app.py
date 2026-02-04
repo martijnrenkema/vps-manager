@@ -841,18 +841,26 @@ def check_backup_alerts():
 
     if status.get('last_failure'):
         entry = status['last_failure']
-        if isinstance(entry, dict):
-            alerts.append({
-                'severity': 'error',
-                'message': f"Last backup failed: {entry.get('details', 'Unknown error')[:80]}",
-                'link': '/backup',
-            })
-        elif isinstance(entry, str):
-            alerts.append({
-                'severity': 'error',
-                'message': f"Backup failure detected: {entry[:80]}",
-                'link': '/backup',
-            })
+        # Only show failure alert if it's more recent than the last success
+        show_failure = True
+        if isinstance(entry, dict) and isinstance(status.get('last_success'), dict):
+            fail_ts = entry.get('timestamp', '')
+            success_ts = status['last_success'].get('timestamp', '')
+            if success_ts > fail_ts:
+                show_failure = False
+        if show_failure:
+            if isinstance(entry, dict):
+                alerts.append({
+                    'severity': 'error',
+                    'message': f"Last backup failed: {entry.get('details', 'Unknown error')[:80]}",
+                    'link': '/backup',
+                })
+            elif isinstance(entry, str):
+                alerts.append({
+                    'severity': 'error',
+                    'message': f"Backup failure detected: {entry[:80]}",
+                    'link': '/backup',
+                })
 
     # Check if no successful backup in 48 hours
     last_success = status.get('last_success')
@@ -2169,8 +2177,8 @@ def backup_webhook():
             return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
 
     data = request.get_json() or {}
-    if 'status' not in data:
-        return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
+    if 'status' not in data or data['status'] not in ('success', 'failure'):
+        return jsonify({'status': 'error', 'message': 'Invalid data, status must be success or failure'}), 400
 
     status_data = _load_backup_status()
     entry = {
