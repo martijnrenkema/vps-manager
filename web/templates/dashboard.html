@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Dashboard - VPS Manager{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+{% block top_meta %}
+    {% if data %}
+        <span>{{ data.hostname }}</span>
+        <span>Up: {{ data.uptime }}</span>
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+{% if data %}
+    {% if alerts %}
+    <div class="alerts-card card" style="margin-bottom:24px" id="alertsCard">
+        <div class="card-header">
+            {{ icon('activity') }} Alerts
+            <span class="badge badge-{% if alerts|selectattr('severity','equalto','error')|list %}red{% elif alerts|selectattr('severity','equalto','warning')|list %}yellow{% else %}green{% endif %}" style="margin-left:auto" id="alertsBadge">{{ alerts|length }}</span>
+        </div>
+        <div class="card-body" style="padding:0" id="alertsList">
+            {% for alert in alerts %}
+            <div class="alert-item alert-{{ alert.severity }}" data-alert-id="{{ loop.index0 }}" data-alert-key="{{ alert.message|truncate(50, True, '') }}">
+                {% if alert.link %}
+                <a href="{{ alert.link }}" class="alert-link">
+                {% endif %}
+                <span class="alert-icon">
+                    {% if alert.severity == 'error' %}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                    {% elif alert.severity == 'warning' %}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+                    {% else %}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                    {% endif %}
+                </span>
+                <span class="alert-message">{{ alert.message }}</span>
+                {% if alert.link %}
+                </a>
+                {% endif %}
+                <button class="alert-dismiss" onclick="dismissAlert(this)" title="Dismiss">&times;</button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="label">Hostname</div>
+            <div class="value" style="font-size:18px">{{ data.hostname }}</div>
+            <div class="sub">{{ data.os }}</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Uptime</div>
+            <div class="value" style="font-size:18px">{{ data.uptime }}</div>
+            <div class="sub">{{ data.cpu_model }} ({{ data.cpu_cores }} cores)</div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Load Average</div>
+            <div class="value" style="font-size:18px">{{ data.load }}</div>
+            <div class="sub">1 / 5 / 15 min</div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div class="label">Memory</div>
+            <div class="value">{{ data.mem_pct }}%</div>
+            <div class="sub">{{ data.mem_used_gb }}G / {{ data.mem_total_gb }}G (free: {{ data.mem_avail_gb }}G)</div>
+            <div class="progress-wrap">
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill {% if data.mem_pct > 80 %}red{% elif data.mem_pct > 60 %}yellow{% else %}green{% endif %}" style="width:{{ data.mem_pct }}%"></div>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Disk /</div>
+            <div class="value">{{ data.disk_pct }}%</div>
+            <div class="sub">{{ data.disk_used }} / {{ data.disk_size }} (free: {{ data.disk_avail }})</div>
+            <div class="progress-wrap">
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill {% if data.disk_pct > 80 %}red{% elif data.disk_pct > 60 %}yellow{% else %}green{% endif %}" style="width:{{ data.disk_pct }}%"></div>
+                </div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="label">Swap</div>
+            <div class="value">{{ data.swap_pct }}%</div>
+            <div class="sub">{{ data.swap }}</div>
+            <div class="progress-wrap">
+                <div class="progress-bar-bg">
+                    <div class="progress-bar-fill {% if data.swap_pct > 80 %}red{% elif data.swap_pct > 50 %}yellow{% else %}green{% endif %}" style="width:{{ data.swap_pct }}%"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="quick-status">
+        <div class="quick-item">
+            {% set active_count = services|selectattr('status', 'equalto', 'active')|list|length %}
+            <div class="qi-value" style="color:{% if active_count == services|length %}var(--green){% else %}var(--yellow){% endif %}">{{ active_count }}/{{ services|length }}</div>
+            <div class="qi-label">Services active</div>
+        </div>
+        <div class="quick-item">
+            {% set online_count = pm2|selectattr('status', 'equalto', 'online')|list|length %}
+            <div class="qi-value" style="color:{% if online_count == pm2|length %}var(--green){% else %}var(--yellow){% endif %}">{{ online_count }}/{{ pm2|length }}</div>
+            <div class="qi-label">PM2 online</div>
+        </div>
+        <div class="quick-item">
+            {% if ssl %}
+                {% set min_days = ssl|map(attribute='days_left')|min %}
+                <div class="qi-value" style="color:{% if min_days > 30 %}var(--green){% elif min_days > 7 %}var(--yellow){% else %}var(--red){% endif %}">{{ min_days }}d</div>
+                <div class="qi-label">SSL minimum</div>
+            {% else %}
+                <div class="qi-value" style="color:var(--text-muted)">?</div>
+                <div class="qi-label">SSL status</div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid-2col">
+        <a href="{{ url_for('services') }}" class="card card-link">
+            <div class="card-header">{{ icon('activity') }} Services</div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Service</th><th>Status</th></tr></thead>
+                        <tbody>
+                            {% for svc in services %}
+                            <tr>
+                                <td>{{ svc.name }}</td>
+                                <td>
+                                    {% if svc.status == 'active' %}
+                                        <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
+                                    {% else %}
+                                        <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </a>
+        <a href="{{ url_for('pm2') }}" class="card card-link">
+            <div class="card-header">{{ icon('settings') }} PM2 Processes</div>
+            <div class="card-body">
+                <div class="table-wrap">
+                    <table>
+                        <thead><tr><th>Process</th><th>Status</th><th>Memory</th></tr></thead>
+                        <tbody>
+                            {% for p in pm2 %}
+                            <tr>
+                                <td>{{ p.name }}</td>
+                                <td>
+                                    {% if p.status == 'online' %}
+                                        <span class="badge badge-green"><span class="badge-dot green"></span>online</span>
+                                    {% elif p.status == 'stopped' %}
+                                        <span class="badge badge-yellow"><span class="badge-dot yellow"></span>stopped</span>
+                                    {% else %}
+                                        <span class="badge badge-red"><span class="badge-dot red"></span>{{ p.status }}</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ p.memory }} MB</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <div style="margin-top:32px;text-align:right">
+        <button class="btn btn-red" onclick="showConfirm('Server Reboot', 'Are you sure you want to reboot the VPS? All services will be temporarily unavailable.', doReboot)">{{ icon('refresh') }} Server Reboot</button>
+    </div>
+{% else %}
+    <div class="empty-state"><p>Unable to retrieve server data.</p></div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function doReboot() { await apiCall('/reboot', 'POST'); }
+
+// Alert dismiss logic
+function getDismissedAlerts() {
+    try {
+        return JSON.parse(sessionStorage.getItem('dismissedAlerts') || '[]');
+    } catch { return []; }
+}
+
+function dismissAlert(btn) {
+    const item = btn.closest('.alert-item');
+    const key = item.dataset.alertKey;
+    // Save to sessionStorage
+    const dismissed = getDismissedAlerts();
+    if (!dismissed.includes(key)) dismissed.push(key);
+    sessionStorage.setItem('dismissedAlerts', JSON.stringify(dismissed));
+    // Animate out
+    item.style.transition = 'opacity 0.2s, max-height 0.3s';
+    item.style.opacity = '0';
+    item.style.maxHeight = item.offsetHeight + 'px';
+    setTimeout(() => {
+        item.style.maxHeight = '0';
+        item.style.padding = '0 16px';
+        item.style.borderBottom = 'none';
+    }, 150);
+    setTimeout(() => {
+        item.remove();
+        updateAlertsBadge();
+    }, 400);
+}
+
+function updateAlertsBadge() {
+    const remaining = document.querySelectorAll('#alertsList .alert-item');
+    const badge = document.getElementById('alertsBadge');
+    const card = document.getElementById('alertsCard');
+    if (remaining.length === 0) {
+        card.style.display = 'none';
+    } else {
+        badge.textContent = remaining.length;
+    }
+}
+
+// Hide previously dismissed alerts on load
+(function() {
+    const dismissed = getDismissedAlerts();
+    if (!dismissed.length) return;
+    document.querySelectorAll('#alertsList .alert-item').forEach(item => {
+        if (dismissed.includes(item.dataset.alertKey)) {
+            item.remove();
+        }
+    });
+    updateAlertsBadge();
+})();
+</script>
+{% endblock %}

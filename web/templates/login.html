@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Login - VPS Manager</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="login-container">
+        <div class="login-box">
+            <h1>VPS Manager</h1>
+            <div class="subtitle">{{ server_ip }}</div>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% for category, message in messages %}
+                    <div class="alert alert-{{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endwith %}
+
+            <form method="POST" action="{{ url_for('login') }}">
+                {% if show_2fa %}
+                    <div class="form-group">
+                        <label for="totp_code">Authenticator Code</label>
+                        <input type="text" id="totp_code" name="totp_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autofocus required>
+                        <small style="color:var(--text-muted);margin-top:4px;display:block">Enter the 6-digit code from your authenticator app</small>
+                    </div>
+                {% else %}
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" class="form-control" autocomplete="username" autofocus required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" class="form-control" autocomplete="current-password" required>
+                    </div>
+                {% endif %}
+                <button type="submit" class="btn-login">{% if show_2fa %}Verify{% else %}Login{% endif %}</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

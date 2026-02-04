@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Cronjobs - VPS Manager{% endblock %}
+{% block page_title %}Cronjobs{% endblock %}
+
+{% block content %}
+<!-- Root crontab -->
+<div class="card">
+    <div class="card-header">{{ icon('crown') }} Root crontab</div>
+    <div class="card-body">
+        {% if data.root_jobs %}
+            <div class="cron-list">
+                {% for job in data.root_jobs %}
+                <div class="cron-entry">
+                    <div class="cron-schedule">
+                        <span class="badge badge-green">{{ job.human_schedule }}</span>
+                        <code class="cron-raw">{{ job.schedule }}</code>
+                    </div>
+                    <div class="cron-command"><code>{{ job.command }}</code></div>
+                </div>
+                {% endfor %}
+            </div>
+        {% elif data.root %}
+            <pre>{{ data.root }}</pre>
+        {% else %}
+            <span style="color:var(--text-muted)">No root crontab</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- User crontab -->
+<div class="card">
+    <div class="card-header">{{ icon('user') }} User crontab</div>
+    <div class="card-body">
+        {% if data.user_jobs %}
+            <div class="cron-list">
+                {% for job in data.user_jobs %}
+                <div class="cron-entry">
+                    <div class="cron-schedule">
+                        <span class="badge badge-green">{{ job.human_schedule }}</span>
+                        <code class="cron-raw">{{ job.schedule }}</code>
+                    </div>
+                    <div class="cron-command"><code>{{ job.command }}</code></div>
+                </div>
+                {% endfor %}
+            </div>
+        {% elif data.user %}
+            <pre>{{ data.user }}</pre>
+        {% else %}
+            <span style="color:var(--text-muted)">No user crontab</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Systemd timers -->
+<div class="card">
+    <div class="card-header">{{ icon('clock') }} Systemd timers</div>
+    <div class="card-body">
+        {% if data.timer_list %}
+        <div class="table-wrap">
+            <table class="timer-table">
+                <thead>
+                    <tr>
+                        <th>Unit</th>
+                        <th>Activates</th>
+                        <th>Next run</th>
+                        <th>Time left</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for timer in data.timer_list %}
+                    <tr>
+                        <td><strong>{{ timer.unit }}</strong></td>
+                        <td><code>{{ timer.activates }}</code></td>
+                        <td style="font-size:12px;color:var(--text-secondary)">{{ timer.next }}</td>
+                        <td>
+                            <span class="badge badge-green">{{ timer.left }}</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% elif data.timers %}
+            <pre>{{ data.timers }}</pre>
+        {% else %}
+            <span style="color:var(--text-muted)">No systemd timers</span>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

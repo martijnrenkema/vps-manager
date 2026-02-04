@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Disk - VPS Manager{% endblock %}
+{% block page_title %}Disk Usage{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">{{ icon('hard-drive') }} Disk usage /var/www</div>
+    <div class="card-body">
+        {% if sites %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Site</th>
+                        <th>Size</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for site in sites %}
+                    <tr>
+                        <td><strong>{{ site.site }}</strong></td>
+                        <td>
+                            {% set s = site.size %}
+                            {% if 'G' in s %}
+                                <span style="color:var(--red)">{{ s }}</span>
+                            {% elif 'M' in s %}
+                                <span style="color:var(--yellow)">{{ s }}</span>
+                            {% else %}
+                                <span style="color:var(--green)">{{ s }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% if total %}
+                    <tr style="border-top:2px solid var(--border)">
+                        <td><strong>TOTAL</strong></td>
+                        <td><strong>{{ total }}</strong></td>
+                    </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve disk usage.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

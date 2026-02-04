@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Backup - VPS Manager{% endblock %}
+{% block page_title %}Backup Status{% endblock %}
+
+{% block content %}
+<!-- Status Overview -->
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">{{ icon('activity') }} Backup Health</div>
+    <div class="card-body">
+        {% if data.status and data.status.last_success and data.status.last_success is mapping %}
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                <div class="backup-status-icon backup-ok">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--green)">Last backup successful</div>
+                    <div style="font-size:13px;color:var(--text-muted)">{{ data.status.last_success.timestamp[:19] if data.status.last_success.timestamp else 'Unknown' }}</div>
+                </div>
+            </div>
+        {% elif data.status and data.status.last_failure and data.status.last_failure is mapping %}
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                <div class="backup-status-icon backup-fail">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--red)">Last backup failed</div>
+                    <div style="font-size:13px;color:var(--text-muted)">{{ data.status.last_failure.details[:100] if data.status.last_failure.details else '' }}</div>
+                </div>
+            </div>
+        {% else %}
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+                <div class="backup-status-icon backup-unknown">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--text-muted)">No backup status data</div>
+                    <div style="font-size:13px;color:var(--text-muted)">Configure the webhook to track backup status</div>
+                </div>
+            </div>
+        {% endif %}
+
+        <!-- History timeline -->
+        {% if data.history %}
+        <div style="margin-top:16px">
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Last {{ data.history|length }} runs</div>
+            <div class="backup-timeline">
+                {% for entry in data.history|reverse %}
+                <div class="backup-dot {% if entry.status == 'success' %}dot-ok{% else %}dot-fail{% endif %}" data-bs-toggle="tooltip" title="{{ entry.timestamp[:16] if entry.timestamp else '' }} - {{ entry.status }}"></div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Webhook Info -->
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">{{ icon('link') }} Webhook Endpoint</div>
+    <div class="card-body">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">
+            Add this to your backup script to report success or failure:
+        </p>
+        <pre style="font-size:12px"># On success:
+curl -X POST {{ request.url_root }}api/backup/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"status": "success", "details": "Backup completed"}'
+
+# On failure:
+curl -X POST {{ request.url_root }}api/backup/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"status": "failure", "details": "Error message here"}'</pre>
+    </div>
+</div>
+
+<div class="grid-2col">
+    <div class="card">
+        <div class="card-header">{{ icon('clipboard') }} Latest backup log</div>
+        <div class="card-body">
+            {% if data.log %}
+                <pre>{{ data.log }}</pre>
+            {% else %}
+                <div class="empty-state">No backup log found</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">{{ icon('hard-drive') }} Backup size</div>
+        <div class="card-body">
+            {% if data.size %}
+                <div class="stat-card" style="border:none;padding:0">
+                    <div class="value" style="font-size:20px">{{ data.size }}</div>
+                </div>
+            {% else %}
+                <div class="empty-state">No backup directory found</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+    <div class="card-header">{{ icon('database') }} Latest database backups</div>
+    <div class="card-body">
+        {% if data.db_backups %}
+            <pre>{{ data.db_backups }}</pre>
+        {% else %}
+            <div class="empty-state">No database backups found</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,5 @@
+flask
+pywebpush
+cryptography
+pyotp
+qrcode[pil]

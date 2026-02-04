@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Files - VPS Manager{% endblock %}
+{% block page_title %}Files{% endblock %}
+
+{% block content %}
+<div class="file-browser">
+    <!-- Toolbar -->
+    <div class="file-toolbar">
+        <div class="breadcrumb" id="breadcrumb"></div>
+        <div class="btn-group">
+            <button class="btn btn-green" onclick="showMkdirDialog()">{{ icon('folder-plus') }} New folder</button>
+            <button class="btn btn-green" onclick="document.getElementById('uploadInput').click()">{{ icon('upload') }} Upload</button>
+            <form id="uploadForm" style="display:none">
+                <input type="file" id="uploadInput" multiple onchange="uploadFiles(this.files)">
+            </form>
+        </div>
+    </div>
+
+    <!-- File table -->
+    <div class="card">
+        <div class="card-body" style="padding:0">
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:40px"></th>
+                            <th>Name</th>
+                            <th style="width:100px">Size</th>
+                            <th style="width:160px">Modified</th>
+                            <th style="width:100px">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="fileList">
+                        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Mkdir dialog -->
+<div class="confirm-overlay" id="mkdirOverlay">
+    <div class="confirm-box">
+        <h3>New folder</h3>
+        <div class="form-group" style="text-align:left;margin:16px 0">
+            <label>Folder name</label>
+            <input type="text" class="form-control" id="mkdirName" placeholder="name" onkeydown="if(event.key==='Enter')doMkdir()">
+        </div>
+        <div class="btn-group" style="justify-content:center">
+            <button class="btn" onclick="closeMkdir()">Cancel</button>
+            <button class="btn btn-green" onclick="doMkdir()">Create</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentPath = '/var/www';
+
+function loadDir(path) {
+    currentPath = path;
+    fetch(`/files/list?path=${encodeURIComponent(path)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showToast(data.error, 'error');
+                return;
+            }
+            currentPath = data.path;
+            renderBreadcrumb(data.path);
+            renderFiles(data);
+        })
+        .catch(() => showToast('Unable to load directory', 'error'));
+}
+
+function renderBreadcrumb(path) {
+    const bc = document.getElementById('breadcrumb');
+    const parts = path.split('/').filter(Boolean);
+    let html = `<span class="bc-item" onclick="loadDir('/')">/</span>`;
+    let built = '';
+    for (const part of parts) {
+        built += '/' + part;
+        const p = built;
+        html += `<span class="bc-sep">/</span><span class="bc-item" onclick="loadDir('${p}')">${part}</span>`;
+    }
+    bc.innerHTML = html;
+}
+
+function renderFiles(data) {
+    const tbody = document.getElementById('fileList');
+    let html = '';
+
+    // Parent directory link
+    if (data.parent !== null) {
+        html += `<tr class="file-row" ondblclick="loadDir('${data.parent}')">
+            <td class="file-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></td>
+            <td><a href="#" onclick="loadDir('${data.parent}');return false" class="file-link">..</a></td>
+            <td>-</td><td>-</td><td></td>
+        </tr>`;
+    }
+
+    if (data.items.length === 0) {
+        html += '<tr><td colspan="5" class="empty-state">Folder is empty</td></tr>';
+    }
+
+    for (const item of data.items) {
+        const fullPath = data.path + (data.path.endsWith('/') ? '' : '/') + item.name;
+        const escapedPath = fullPath.replace(/'/g, "\\'");
+
+        let icon, nameCol;
+        if (item.type === 'dir') {
+            icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+            nameCol = `<a href="#" onclick="loadDir('${escapedPath}');return false" class="file-link">${escHtml(item.name)}</a>`;
+        } else {
+            icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
+            nameCol = `<span class="file-name">${escHtml(item.name)}</span>`;
+        }
+
+        let actions = '';
+        if (item.type === 'file') {
+            actions += `<a href="/files/download?path=${encodeURIComponent(fullPath)}" class="btn btn-sm" title="Download"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a> `;
+        }
+        actions += `<button class="btn btn-sm btn-red" onclick="deleteItem('${escapedPath}', '${item.type}')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>`;
+
+        const dblclick = item.type === 'dir' ? `ondblclick="loadDir('${escapedPath}')"` : '';
+        html += `<tr class="file-row" ${dblclick}>
+            <td class="file-icon">${icon}</td>
+            <td>${nameCol}</td>
+            <td>${item.size}</td>
+            <td>${item.modified}</td>
+            <td class="file-actions">${actions}</td>
+        </tr>`;
+    }
+
+    tbody.innerHTML = html;
+}
+
+function escHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function deleteItem(path, type) {
+    const label = type === 'dir' ? 'folder' : 'file';
+    const name = path.split('/').pop();
+    showConfirm('Delete', `Are you sure you want to delete ${label} "${name}"?`, async () => {
+        try {
+            const res = await fetch('/files/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({path})
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+                loadDir(currentPath);
+            } else {
+                showToast(data.message || 'Error', 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    });
+}
+
+function showMkdirDialog() {
+    document.getElementById('mkdirName').value = '';
+    document.getElementById('mkdirOverlay').classList.add('active');
+    setTimeout(() => document.getElementById('mkdirName').focus(), 100);
+}
+
+function closeMkdir() {
+    document.getElementById('mkdirOverlay').classList.remove('active');
+}
+
+async function doMkdir() {
+    const name = document.getElementById('mkdirName').value.trim();
+    if (!name) return;
+    closeMkdir();
+    try {
+        const res = await fetch('/files/mkdir', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({path: currentPath, name})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            loadDir(currentPath);
+        } else {
+            showToast(data.message || 'Fout', 'error');
+        }
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+}
+
+async function uploadFiles(files) {
+    if (!files.length) return;
+    for (const file of files) {
+        const form = new FormData();
+        form.append('path', currentPath);
+        form.append('file', file);
+        try {
+            const res = await fetch('/files/upload', {method: 'POST', body: form});
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+            } else {
+                showToast(data.message || 'Upload failed', 'error');
+            }
+        } catch (e) {
+            showToast(`Upload failed: ${file.name}`, 'error');
+        }
+    }
+    document.getElementById('uploadInput').value = '';
+    loadDir(currentPath);
+}
+
+// Close mkdir overlay on backdrop click / escape
+document.getElementById('mkdirOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeMkdir();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeMkdir();
+});
+
+// Initial load
+loadDir(currentPath);
+</script>
+{% endblock %}

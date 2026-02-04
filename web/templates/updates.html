@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Updates - VPS Manager{% endblock %}
+{% block page_title %}System Updates{% endblock %}
+
+{% block content %}
+{% set security_updates = updates|selectattr('category', 'equalto', 'security')|list %}
+{% set regular_updates = updates|selectattr('category', 'equalto', 'regular')|list %}
+{% set esm_updates = updates|selectattr('category', 'equalto', 'esm')|list %}
+{% set phased_updates = updates|selectattr('category', 'equalto', 'phased')|list %}
+{% set installable = security_updates|length + regular_updates|length %}
+
+<div class="section-header" style="margin-bottom:16px">
+    <div>
+        <button class="btn btn-sm" onclick="refreshUpdates()">{{ icon('refresh') }} Check</button>
+        {% if installable > 0 %}
+            <button class="btn btn-sm btn-green" id="installBtn" onclick="showConfirm('Install updates', 'Install {{ installable }} update(s)? (ESM updates excluded)', installUpdates)">{{ icon('download') }} Install ({{ installable }})</button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Security Updates -->
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--red)">
+        {{ icon('shield') }} Security Updates
+        <span class="badge badge-red" style="margin-left:auto">{{ security_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if security_updates %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in security_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted)">No security updates</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Regular Updates -->
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--green)">
+        {{ icon('package') }} Regular Updates
+        <span class="badge badge-green" style="margin-left:auto">{{ regular_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if regular_updates %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in regular_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted)">No regular updates</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ESM Updates -->
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--yellow)">
+        {{ icon('lock') }} Ubuntu Pro / ESM
+        <span class="badge badge-yellow" style="margin-left:auto">{{ esm_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if esm_updates %}
+        <div style="padding:8px 12px;background:var(--yellow-bg);border:1px solid rgba(210,153,34,0.3);border-radius:6px;margin-bottom:12px;font-size:13px;color:var(--yellow)">
+            These updates require an Ubuntu Pro subscription. They cannot be installed without enabling ESM via <code>pro attach</code>.
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in esm_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted)">No ESM updates</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Phased Updates -->
+{% if phased_updates %}
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--text-muted)">
+        {{ icon('clock') }} Phased Updates
+        <span class="badge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">{{ phased_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        <div style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:13px;color:var(--text-secondary)">
+            These updates are being gradually rolled out by Ubuntu (phased rollout). They will become available automatically once your system is included in the rollout.
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in phased_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not updates %}
+<div style="text-align:center;padding:24px">
+    <span class="badge badge-green" style="font-size:14px;padding:8px 16px">System is up to date</span>
+</div>
+{% endif %}
+
+<div id="updateProgress" style="display:none;margin-top:16px">
+    <div class="card">
+        <div class="card-header">{{ icon('terminal') }} Installation progress</div>
+        <div class="card-body">
+            <div id="updateStatus" style="margin-bottom:12px">
+                <span class="badge badge-yellow" id="updateBadge">Installing...</span>
+            </div>
+            <pre id="updateLog">Waiting for output...</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function refreshUpdates() {
+    location.reload();
+}
+
+async function installUpdates() {
+    var progressEl = document.getElementById('updateProgress');
+    var logEl = document.getElementById('updateLog');
+    var badgeEl = document.getElementById('updateBadge');
+    var installBtn = document.getElementById('installBtn');
+
+    progressEl.style.display = 'block';
+    logEl.textContent = 'Installing updates...\nThis may take a while.\n';
+    badgeEl.textContent = 'Installing...';
+    badgeEl.className = 'badge badge-yellow';
+    if (installBtn) installBtn.disabled = true;
+
+    progressEl.scrollIntoView({ behavior: 'smooth' });
+
+    try {
+        var res = await fetch('/updates/install', { method: 'POST' });
+        var data = await res.json();
+
+        if (res.ok) {
+            badgeEl.textContent = 'Updates installed';
+            badgeEl.className = 'badge badge-green';
+            logEl.textContent = data.output || 'Done.';
+            showToast('Updates installed successfully', 'success');
+        } else {
+            badgeEl.textContent = 'Installation failed';
+            badgeEl.className = 'badge badge-red';
+            logEl.textContent = data.output || data.message || 'Unknown error';
+            showToast('Failed to install updates', 'error');
+        }
+    } catch (e) {
+        badgeEl.textContent = 'Connection error';
+        badgeEl.className = 'badge badge-red';
+        logEl.textContent = 'Connection lost during installation.';
+        showToast('Connection error', 'error');
+    }
+
+    if (installBtn) installBtn.disabled = false;
+}
+</script>
+{% endblock %}

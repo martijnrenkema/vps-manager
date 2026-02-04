@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Firewall - VPS Manager{% endblock %}
+{% block page_title %}Firewall & Security{% endblock %}
+
+{% block content %}
+<div class="grid-2col">
+    <div class="card">
+        <div class="card-header">
+            {{ icon('shield') }} UFW Firewall Rules
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="UFW (Uncomplicated Firewall) controls which network connections are allowed or blocked on the server.">?</span>
+        </div>
+        <div class="card-body">
+            {% if data.ufw %}
+                <pre>{{ data.ufw }}</pre>
+            {% else %}
+                <div class="empty-state">Unable to retrieve UFW status</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            {{ icon('ban') }} Fail2ban SSHD Status
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Fail2ban monitors log files and blocks IPs that show suspicious behavior such as repeated failed login attempts.">?</span>
+        </div>
+        <div class="card-body">
+            {% if data.fail2ban %}
+                <pre>{{ data.fail2ban }}</pre>
+            {% else %}
+                <div class="empty-state">Unable to retrieve fail2ban status</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Fail2ban Config & Jails -->
+<div class="grid-2col" style="margin-top:16px">
+    <div class="card">
+        <div class="card-header">
+            {{ icon('settings') }} Fail2ban Configuration
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="These settings control how fail2ban detects and blocks malicious IPs. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span>
+        </div>
+        <div class="card-body">
+            {% if data.f2b_config %}
+            <div class="table-wrap">
+                <table>
+                    <tbody>
+                        <tr>
+                            <td><strong>Ban Time</strong></td>
+                            <td>
+                                {{ data.f2b_config.bantime or '?' }}
+                                {% if data.f2b_config.permanent_bans %}
+                                    <span class="badge badge-red" style="margin-left:8px">Permanent</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        <tr>
+                            <td><strong>Find Time</strong></td>
+                            <td>{{ data.f2b_config.findtime or '?' }}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Max Retry</strong></td>
+                            <td>{{ data.f2b_config.maxretry or '?' }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <div class="empty-state">Unable to retrieve fail2ban config</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">
+            {{ icon('list') }} Active Jails
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="A jail is a set of rules that monitors a specific service log file. Each jail can independently ban IPs that violate its rules.">?</span>
+        </div>
+        <div class="card-body">
+            {% if data.jails %}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>Jail</th><th>Status</th><th>Banned</th><th>Total</th></tr></thead>
+                    <tbody>
+                        {% for jail in data.jails %}
+                        <tr>
+                            <td><strong>{{ jail.name }}</strong></td>
+                            <td>
+                                {% if jail.status == 'active' %}
+                                    <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
+                                {% else %}
+                                    <span class="badge badge-red">{{ jail.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if jail.banned > 0 %}
+                                    <span class="badge badge-yellow">{{ jail.banned }}</span>
+                                {% else %}
+                                    <span style="color:var(--text-muted)">0</span>
+                                {% endif %}
+                            </td>
+                            <td style="color:var(--text-muted)">{{ jail.total_banned }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <div class="empty-state">No jails found</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="card">
+        <div class="card-header">
+            {{ icon('ban') }} Banned IPs (all jails)
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Currently blocked IPs. Bans expire after the configured ban time unless permanent bans are enabled.">?</span>
+        </div>
+        <div class="card-body">
+            {% if data.banned %}
+                {% if data.banned in ['[{}]', '[]'] %}
+                    <span class="badge badge-green">No banned IPs</span>
+                {% else %}
+                    <pre style="color:var(--red)">{{ data.banned }}</pre>
+                {% endif %}
+            {% else %}
+                <div class="empty-state">No data</div>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
+        <div class="card-body">
+            {% if data.sessions %}
+                <pre>{{ data.sessions }}</pre>
+            {% else %}
+                <span style="color:var(--text-muted)">No active sessions</span>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top:16px">
+    <div class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</div>
+    <div class="card-body">
+        {% if data.auth_log %}
+            <pre>{{ data.auth_log }}</pre>
+        {% else %}
+            <div class="empty-state">Unable to read auth.log</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

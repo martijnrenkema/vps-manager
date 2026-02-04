@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block title %}Terminal - VPS Manager{% endblock %}
+{% block page_title %}Terminal{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header" style="justify-content:space-between">
+        <span>Terminal</span>
+        <button class="btn btn-sm" onclick="clearTerminal()">Clear</button>
+    </div>
+    <div class="card-body" style="padding:0">
+        <div id="termOutput" class="term-output"></div>
+        <div class="term-input-wrap">
+            <span class="term-prompt" id="termPrompt">martijn@vps:~$</span>
+            <input type="text" id="termInput" class="term-input" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.term-output {
+    background: #0d1117;
+    padding: 16px;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    color: #e6edf3;
+    min-height: 400px;
+    max-height: calc(100vh - 240px);
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.5;
+}
+
+.term-output .cmd { color: var(--green); }
+.term-output .err { color: var(--red); }
+
+.term-input-wrap {
+    display: flex;
+    align-items: center;
+    background: #0d1117;
+    border-top: 1px solid var(--border);
+    padding: 8px 16px;
+}
+
+.term-prompt {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    color: var(--green);
+    white-space: nowrap;
+    margin-right: 8px;
+}
+
+.term-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: #e6edf3;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 13px;
+    outline: none;
+    caret-color: var(--accent);
+}
+</style>
+
+<script>
+(function() {
+    var outputEl = document.getElementById('termOutput');
+    var inputEl = document.getElementById('termInput');
+    var promptEl = document.getElementById('termPrompt');
+    var cwd = '{{ cwd }}';
+    var hist = [];
+    var histIdx = -1;
+    var busy = false;
+
+    function getPrompt() {
+        var d = cwd;
+        if (d === '/home/martijn') d = '~';
+        else if (d.indexOf('/home/martijn/') === 0) d = '~/' + d.substring(14);
+        return 'martijn@vps:' + d + '$';
+    }
+
+    function addLine(text, cls) {
+        var el = document.createElement('div');
+        if (cls) el.className = cls;
+        el.textContent = text;
+        outputEl.appendChild(el);
+        outputEl.scrollTop = outputEl.scrollHeight;
+    }
+
+    function updatePrompt() {
+        promptEl.textContent = getPrompt();
+    }
+
+    inputEl.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            submitCommand();
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (histIdx < hist.length - 1) {
+                histIdx++;
+                inputEl.value = hist[histIdx];
+            }
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (histIdx > 0) {
+                histIdx--;
+                inputEl.value = hist[histIdx];
+            } else {
+                histIdx = -1;
+                inputEl.value = '';
+            }
+        }
+    });
+
+    function submitCommand() {
+        if (busy) return;
+        var cmd = inputEl.value.trim();
+        if (!cmd) return;
+
+        hist.unshift(cmd);
+        histIdx = -1;
+        addLine(getPrompt() + ' ' + cmd, 'cmd');
+        inputEl.value = '';
+        busy = true;
+
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/terminal/exec');
+        xhr.setRequestHeader('Content-Type', 'application/json');
+        xhr.onload = function() {
+            try {
+                var data = JSON.parse(xhr.responseText);
+                if (data.clear) {
+                    outputEl.innerHTML = '';
+                } else {
+                    if (data.stdout) {
+                        addLine(data.stdout);
+                    }
+                    if (data.stderr) {
+                        addLine(data.stderr, 'err');
+                    }
+                }
+                if (data.cwd) {
+                    cwd = data.cwd;
+                    updatePrompt();
+                }
+            } catch(ex) {
+                addLine('Error processing response', 'err');
+            }
+            busy = false;
+            inputEl.focus();
+        };
+        xhr.onerror = function() {
+            addLine('Connection error', 'err');
+            busy = false;
+            inputEl.focus();
+        };
+        xhr.timeout = 35000;
+        xhr.ontimeout = function() {
+            addLine('Command timeout', 'err');
+            busy = false;
+            inputEl.focus();
+        };
+        xhr.send(JSON.stringify({command: cmd}));
+    }
+
+    // Click anywhere in terminal focuses input
+    outputEl.addEventListener('click', function() { inputEl.focus(); });
+
+    window.clearTerminal = function() {
+        outputEl.innerHTML = '';
+        inputEl.focus();
+    };
+
+    updatePrompt();
+    inputEl.focus();
+})();
+</script>
+{% endblock %}
