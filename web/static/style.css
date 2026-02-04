@@ -66,15 +66,15 @@ body {
 }
 
 .sidebar-brand {
-    padding: 20px 16px;
+    padding: 14px 16px;
     border-bottom: 1px solid var(--border);
     text-align: center;
 }
 
 .sidebar-logo {
-    height: 48px;
+    height: 40px;
     width: auto;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 .sidebar-brand h2 {
@@ -111,13 +111,13 @@ body {
 }
 
 .sidebar-nav {
-    padding: 8px 0;
+    padding: 4px 0;
 }
 
 .sidebar-nav a {
     display: flex;
     align-items: center;
-    padding: 10px 16px;
+    padding: 7px 16px;
     color: var(--text-secondary);
     text-decoration: none;
     font-size: 14px;
@@ -146,7 +146,7 @@ body {
 .sidebar-nav .divider {
     height: 1px;
     background: var(--border);
-    margin: 8px 16px;
+    margin: 4px 16px;
 }
 
 .sidebar-bottom {
