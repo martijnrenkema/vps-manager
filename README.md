@@ -151,11 +151,13 @@ Add webhook calls to your backup script on the VPS:
 
 ```bash
 WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
+WEBHOOK_SECRET="your-webhook-secret"  # Set in Settings > Backup
 
 # Trap errors for failure reporting
 report_failure() {
     curl -s -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
+        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
         -d "{\"status\": \"failure\", \"details\": \"$1\"}" > /dev/null 2>&1
 }
 trap 'report_failure "Backup failed at line $LINENO"' ERR
@@ -166,6 +168,7 @@ set -e
 # Report success at the end
 curl -s -X POST "$WEBHOOK_URL" \
     -H "Content-Type: application/json" \
+    -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
     -d '{"status": "success", "details": "Backup completed"}' > /dev/null 2>&1
 ```
 
@@ -175,16 +178,19 @@ For a remote machine that pulls backups via SSH and rsync:
 
 ```bash
 WEBHOOK_URL="https://your-vps-dashboard.example.com/api/backup/webhook"
+WEBHOOK_SECRET="your-webhook-secret"
 
 rsync -avz --delete -e "ssh" user@vps:/var/backups/ /local/backups/
 
 if [ $? -eq 0 ]; then
     curl -s -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
+        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
         -d '{"status": "success", "details": "Pull completed"}'
 else
     curl -s -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
+        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
         -d '{"status": "failure", "details": "Pull failed"}'
 fi
 ```
@@ -192,6 +198,7 @@ fi
 ## Dependencies
 
 - [Flask](https://flask.palletsprojects.com/) - Web framework
+- [Flask-WTF](https://flask-wtf.readthedocs.io/) - CSRF protection
 - [pywebpush](https://github.com/web-push-libs/pywebpush) - Web Push notifications
 - [cryptography](https://cryptography.io/) - VAPID key generation
 - [pyotp](https://github.com/pyauth/pyotp) - TOTP two-factor authentication

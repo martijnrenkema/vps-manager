@@ -56,6 +56,9 @@ else:
     app.secret_key = _generated
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB upload limit
+app.config['SESSION_COOKIE_SECURE'] = True
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 csrf = CSRFProtect(app)
 
 # Load configuration
@@ -1446,7 +1449,7 @@ def get_ddos_stats():
 
 def is_path_allowed(path):
     """Check if path is within allowed directories (whitelist approach)"""
-    allowed = CONFIG.get('file_browser', {}).get('allowed_paths', ['/var/www', '/home/martijn'])
+    allowed = CONFIG.get('file_browser', {}).get('allowed_paths', ['/var/www'])
     real = os.path.realpath(path)
     for a in allowed:
         if real == a or real.startswith(a + '/'):

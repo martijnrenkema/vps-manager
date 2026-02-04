@@ -38,7 +38,7 @@ def get_default_config():
         "vapid_mailto": "mailto:admin@localhost",
         "file_browser": {
             "default_path": "/var/www",
-            "allowed_paths": ["/var/www", "/home/martijn"],
+            "allowed_paths": ["/var/www"],
         },
         "backup": {
             "log_path": "/var/log/vps-backup.log",
