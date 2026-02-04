@@ -1,6 +1,5 @@
-const CACHE_NAME = 'vps-manager-v1';
+const CACHE_NAME = 'vps-manager-v2';
 const STATIC_ASSETS = [
-    '/static/style.css',
     '/static/logo.png',
     '/static/icon-192.png',
     '/static/icon-512.png',

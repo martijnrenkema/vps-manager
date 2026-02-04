@@ -3,6 +3,11 @@
 {% block title %}Dashboard - VPS Manager{% endblock %}
 {% block page_title %}Dashboard{% endblock %}
 
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
 {% block content %}
 {% if data %}
     {% if alerts %}
@@ -84,6 +89,41 @@
                 <div class="progress-bar-bg">
                     <div class="progress-bar-fill {% if data.swap_pct > 80 %}red{% elif data.swap_pct > 50 %}yellow{% else %}green{% endif %}" style="width:{{ data.swap_pct }}%"></div>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="charts-grid">
+        <div class="chart-card">
+            <div class="chart-title">CPU Load (1 min avg)</div>
+            <div class="chart-value" id="chartCpuValue">--</div>
+            <div class="chart-wrap">
+                <canvas id="chartCpu"></canvas>
+                <div class="chart-empty" id="chartCpuEmpty">Collecting data...</div>
+            </div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">Memory Usage</div>
+            <div class="chart-value" id="chartMemValue">--</div>
+            <div class="chart-wrap">
+                <canvas id="chartMem"></canvas>
+                <div class="chart-empty" id="chartMemEmpty">Collecting data...</div>
+            </div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">Disk Usage</div>
+            <div class="chart-value" id="chartDiskValue">--</div>
+            <div class="chart-wrap">
+                <canvas id="chartDisk"></canvas>
+                <div class="chart-empty" id="chartDiskEmpty">Collecting data...</div>
+            </div>
+        </div>
+        <div class="chart-card">
+            <div class="chart-title">Network I/O</div>
+            <div class="chart-value" id="chartNetValue">--</div>
+            <div class="chart-wrap">
+                <canvas id="chartNet"></canvas>
+                <div class="chart-empty" id="chartNetEmpty">Collecting data...</div>
             </div>
         </div>
     </div>
@@ -176,6 +216,169 @@
 {% block scripts %}
 <script>
 async function doReboot() { await apiCall('/reboot', 'POST'); }
+
+// --- Charts ---
+const chartInstances = {};
+const chartColors = {
+    cpu: { border: '#58a6ff', bg: [0.3, 0.0] },
+    mem: { border: '#3fb950', bg: [0.3, 0.0] },
+    disk: { border: '#bc8cff', bg: [0.3, 0.0] },
+    netRx: { border: '#39d2c0' },
+    netTx: { border: '#d29922' },
+};
+
+function makeGradient(ctx, canvas, r, g, b, stops) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight);
+    gradient.addColorStop(0, `rgba(${r},${g},${b},${stops[0]})`);
+    gradient.addColorStop(1, `rgba(${r},${g},${b},${stops[1]})`);
+    return gradient;
+}
+
+function baseChartOpts(yLabel, yMax) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+            legend: { display: false },
+            tooltip: {
+                backgroundColor: '#21262d',
+                borderColor: '#30363d',
+                borderWidth: 1,
+                titleColor: '#e6edf3',
+                bodyColor: '#b1bac4',
+                padding: 10,
+                titleFont: { size: 12 },
+                bodyFont: { size: 12 },
+            },
+        },
+        scales: {
+            x: {
+                type: 'time',
+                time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }, tooltipFormat: 'HH:mm' },
+                grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
+                ticks: { color: '#8b949e', font: { size: 11 }, maxTicksLimit: 8 },
+            },
+            y: {
+                min: 0,
+                max: yMax || undefined,
+                grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
+                ticks: { color: '#8b949e', font: { size: 11 } },
+                title: { display: !!yLabel, text: yLabel || '', color: '#8b949e', font: { size: 11 } },
+            },
+        },
+        elements: {
+            line: { tension: 0.4, borderWidth: 2 },
+            point: { radius: 0, hoverRadius: 4 },
+        },
+    };
+}
+
+function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + ' B/s';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB/s';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB/s';
+}
+
+function initCharts() {
+    // CPU
+    const cpuCanvas = document.getElementById('chartCpu');
+    const cpuCtx = cpuCanvas.getContext('2d');
+    chartInstances.cpu = new Chart(cpuCtx, {
+        type: 'line',
+        data: { datasets: [{ fill: true, backgroundColor: makeGradient(cpuCtx, cpuCanvas, 88, 166, 255, [0.3, 0.0]), borderColor: chartColors.cpu.border, data: [] }] },
+        options: baseChartOpts('Load'),
+    });
+
+    // Memory
+    const memCanvas = document.getElementById('chartMem');
+    const memCtx = memCanvas.getContext('2d');
+    chartInstances.mem = new Chart(memCtx, {
+        type: 'line',
+        data: { datasets: [{ fill: true, backgroundColor: makeGradient(memCtx, memCanvas, 63, 185, 80, [0.3, 0.0]), borderColor: chartColors.mem.border, data: [] }] },
+        options: baseChartOpts('%', 100),
+    });
+
+    // Disk
+    const diskCanvas = document.getElementById('chartDisk');
+    const diskCtx = diskCanvas.getContext('2d');
+    chartInstances.disk = new Chart(diskCtx, {
+        type: 'line',
+        data: { datasets: [{ fill: true, backgroundColor: makeGradient(diskCtx, diskCanvas, 188, 140, 255, [0.3, 0.0]), borderColor: chartColors.disk.border, data: [] }] },
+        options: baseChartOpts('%', 100),
+    });
+
+    // Network (two lines)
+    const netCanvas = document.getElementById('chartNet');
+    const netCtx = netCanvas.getContext('2d');
+    const netOpts = baseChartOpts('');
+    netOpts.plugins.legend = { display: true, labels: { color: '#8b949e', boxWidth: 12, font: { size: 11 } } };
+    netOpts.scales.y.ticks.callback = function(val) { return formatBytes(val); };
+    netOpts.plugins.tooltip.callbacks = { label: function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y); } };
+    chartInstances.net = new Chart(netCtx, {
+        type: 'line',
+        data: {
+            datasets: [
+                { label: 'RX', fill: false, borderColor: chartColors.netRx.border, data: [] },
+                { label: 'TX', fill: false, borderColor: chartColors.netTx.border, data: [] },
+            ],
+        },
+        options: netOpts,
+    });
+}
+
+function updateCharts(metrics) {
+    if (!metrics || !metrics.length) return;
+
+    // Hide empty states
+    ['Cpu', 'Mem', 'Disk', 'Net'].forEach(n => {
+        const el = document.getElementById('chart' + n + 'Empty');
+        if (el) el.style.display = 'none';
+    });
+
+    const last = metrics[metrics.length - 1];
+
+    // Update current values
+    document.getElementById('chartCpuValue').textContent = last.cpu.toFixed(2);
+    document.getElementById('chartMemValue').textContent = last.mem.toFixed(1) + '%';
+    document.getElementById('chartDiskValue').textContent = last.disk + '%';
+    document.getElementById('chartNetValue').textContent = formatBytes(last.net_rx) + ' / ' + formatBytes(last.net_tx);
+
+    // Map to chart data
+    const cpuData = metrics.map(m => ({ x: m.ts * 1000, y: m.cpu }));
+    const memData = metrics.map(m => ({ x: m.ts * 1000, y: m.mem }));
+    const diskData = metrics.map(m => ({ x: m.ts * 1000, y: m.disk }));
+    const rxData = metrics.map(m => ({ x: m.ts * 1000, y: m.net_rx }));
+    const txData = metrics.map(m => ({ x: m.ts * 1000, y: m.net_tx }));
+
+    chartInstances.cpu.data.datasets[0].data = cpuData;
+    chartInstances.mem.data.datasets[0].data = memData;
+    chartInstances.disk.data.datasets[0].data = diskData;
+    chartInstances.net.data.datasets[0].data = rxData;
+    chartInstances.net.data.datasets[1].data = txData;
+
+    chartInstances.cpu.update('none');
+    chartInstances.mem.update('none');
+    chartInstances.disk.update('none');
+    chartInstances.net.update('none');
+}
+
+async function fetchMetrics() {
+    try {
+        const res = await fetch('/api/metrics');
+        if (res.ok) {
+            const data = await res.json();
+            updateCharts(data);
+        }
+    } catch (e) {}
+}
+
+// Init charts and start polling
+if (typeof Chart !== 'undefined') {
+    initCharts();
+    fetchMetrics();
+    setInterval(fetchMetrics, 60000);
+}
 
 // Alert dismiss logic
 function getDismissedAlerts() {

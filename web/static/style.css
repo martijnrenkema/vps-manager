@@ -845,11 +845,6 @@ code {
         gap: 8px;
     }
 
-    .notif-dropdown {
-        width: 300px;
-        right: -40px;
-    }
-
     .card-body {
         padding: 12px;
     }
@@ -1279,6 +1274,17 @@ code {
     margin-top: 4px;
 }
 
+@media (max-width: 768px) {
+    .notif-dropdown {
+        position: fixed;
+        top: 56px;
+        left: 8px;
+        right: 8px;
+        width: auto;
+        max-height: calc(100vh - 72px);
+    }
+}
+
 /* Log entry (expandable) */
 .log-entries {
     border-top: 1px solid var(--border);
@@ -1497,6 +1503,64 @@ code {
     .log-timestamp {
         width: 100%;
     }
+}
+
+/* Charts grid */
+.charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+}
+
+.chart-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.chart-card .chart-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 12px;
+}
+
+.chart-card .chart-value {
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.chart-wrap {
+    position: relative;
+    height: 180px;
+    width: 100%;
+}
+
+.chart-wrap canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
+
+.chart-empty {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--text-muted);
+    font-size: 13px;
+}
+
+@media (max-width: 768px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    .chart-wrap { height: 150px; }
 }
 
 /* PWA install banner */

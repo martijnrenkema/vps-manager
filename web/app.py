@@ -70,13 +70,16 @@ USERNAME = os.environ.get('VPS_MANAGER_USER') or CONFIG['auth'].get('username') 
 _env_pass = os.environ.get('VPS_MANAGER_PASS', '')
 if CONFIG['auth'].get('password_hash'):
     PASSWORD_HASH = CONFIG['auth']['password_hash']
-elif _env_pass and _env_pass != 'changeme':
+elif _env_pass:
     PASSWORD_HASH = generate_password_hash(_env_pass)
 else:
-    PASSWORD_HASH = generate_password_hash('changeme')
+    import secrets as _secrets
+    _generated_pass = _secrets.token_urlsafe(16)
+    PASSWORD_HASH = generate_password_hash(_generated_pass)
     logging.warning(
-        'WARNING: Using default password "changeme". '
-        'Set VPS_MANAGER_PASS env var or change password in settings.'
+        'WARNING: No password configured. Generated temporary password: %s  '
+        'Set VPS_MANAGER_PASS env var or change password in settings.',
+        _generated_pass
     )
 
 # ---------------------------------------------------------------------------
@@ -94,6 +97,9 @@ NOTIFICATION_HISTORY_PATH = DATA_DIR / 'notification_history.json'
 
 NOTIFICATION_COOLDOWN = CONFIG.get('notification_cooldown', 3600)
 MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
+METRICS_PATH = DATA_DIR / 'metrics.json'
+_metrics_lock = threading.Lock()
+_prev_net = {'rx': None, 'tx': None, 'ts': None}
 
 logger = logging.getLogger('vps-manager')
 
@@ -221,6 +227,141 @@ def _classify_alert(alert):
     return 'warnings'
 
 
+def _load_metrics():
+    """Load metrics from JSON file"""
+    if METRICS_PATH.exists():
+        try:
+            return json.loads(METRICS_PATH.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def _save_metrics(metrics):
+    """Save metrics to JSON file, pruning entries older than 24h"""
+    cutoff = time.time() - 86400
+    metrics = [m for m in metrics if m.get('ts', 0) > cutoff]
+    # Max 288 entries (24h * 60min / 5min)
+    metrics = metrics[-288:]
+    METRICS_PATH.write_text(json.dumps(metrics))
+
+
+def _get_net_interface():
+    """Detect primary network interface from /proc/net/dev"""
+    try:
+        with open('/proc/net/dev', 'r') as f:
+            lines = f.readlines()
+        for line in lines[2:]:
+            parts = line.split(':')
+            if len(parts) >= 2:
+                iface = parts[0].strip()
+                if iface in ('eth0', 'ens6', 'ens3', 'enp0s3', 'eno1'):
+                    return iface
+        # Fallback: first non-lo interface
+        for line in lines[2:]:
+            parts = line.split(':')
+            if len(parts) >= 2:
+                iface = parts[0].strip()
+                if iface != 'lo':
+                    return iface
+    except OSError:
+        pass
+    return None
+
+
+def _read_net_bytes(iface):
+    """Read RX/TX bytes for a network interface from /proc/net/dev"""
+    try:
+        with open('/proc/net/dev', 'r') as f:
+            for line in f:
+                if iface + ':' in line:
+                    parts = line.split(':')[1].split()
+                    rx = int(parts[0])
+                    tx = int(parts[8])
+                    return rx, tx
+    except (OSError, IndexError, ValueError):
+        pass
+    return None, None
+
+
+def collect_metrics():
+    """Collect a single metrics data point"""
+    global _prev_net
+    now = time.time()
+    point = {'ts': int(now)}
+
+    # CPU load (1 min avg)
+    try:
+        with open('/proc/loadavg', 'r') as f:
+            point['cpu'] = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        point['cpu'] = 0
+
+    # Memory and Swap from free -b
+    result = run_cmd("free -b", timeout=5)
+    if result.returncode == 0:
+        for line in result.stdout.split('\n'):
+            parts = line.split()
+            if parts and parts[0] == 'Mem:' and len(parts) >= 3:
+                try:
+                    total = int(parts[1])
+                    used = int(parts[2])
+                    point['mem'] = round(used / total * 100, 1) if total else 0
+                except (ValueError, ZeroDivisionError):
+                    point['mem'] = 0
+            elif parts and parts[0] == 'Swap:' and len(parts) >= 3:
+                try:
+                    total = int(parts[1])
+                    used = int(parts[2])
+                    point['swap'] = round(used / total * 100, 1) if total else 0
+                except (ValueError, ZeroDivisionError):
+                    point['swap'] = 0
+    point.setdefault('mem', 0)
+    point.setdefault('swap', 0)
+
+    # Disk usage
+    result = run_cmd("df / | tail -1", timeout=5)
+    if result.returncode == 0:
+        parts = result.stdout.split()
+        if len(parts) >= 5:
+            try:
+                point['disk'] = int(parts[4].rstrip('%'))
+            except ValueError:
+                point['disk'] = 0
+        else:
+            point['disk'] = 0
+    else:
+        point['disk'] = 0
+
+    # Network I/O
+    iface = _get_net_interface()
+    if iface:
+        rx, tx = _read_net_bytes(iface)
+        if rx is not None and _prev_net['rx'] is not None and _prev_net['ts'] is not None:
+            elapsed = now - _prev_net['ts']
+            if elapsed > 0:
+                point['net_rx'] = int((rx - _prev_net['rx']) / elapsed)
+                point['net_tx'] = int((tx - _prev_net['tx']) / elapsed)
+            else:
+                point['net_rx'] = 0
+                point['net_tx'] = 0
+        else:
+            point['net_rx'] = 0
+            point['net_tx'] = 0
+        _prev_net = {'rx': rx, 'tx': tx, 'ts': now}
+    else:
+        point['net_rx'] = 0
+        point['net_tx'] = 0
+
+    # Save
+    with _metrics_lock:
+        metrics = _load_metrics()
+        metrics.append(point)
+        _save_metrics(metrics)
+
+    return point
+
+
 def _monitor_loop():
     """Background thread: check alerts and send push notifications"""
     # Wait for app to fully start
@@ -229,6 +370,12 @@ def _monitor_loop():
 
     while True:
         try:
+            # Collect metrics every cycle (independent of subscriptions)
+            try:
+                collect_metrics()
+            except Exception as e:
+                logger.warning(f"Metrics collection error: {e}")
+
             subs = _load_subscriptions()
             if not subs:
                 time.sleep(MONITOR_INTERVAL)
@@ -354,13 +501,10 @@ def get_server_uptime_short():
 
 @app.context_processor
 def inject_global_info():
-    history = _load_notification_history()
-    unread = sum(1 for item in history if not item.get('read'))
     return {
         'server_ip': get_server_ip(),
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
-        'unread_count': unread,
     }
 
 
@@ -2242,19 +2386,24 @@ def disable_2fa():
 def backup_webhook():
     """Endpoint for backup scripts to report success/failure"""
     webhook_secret = CONFIG.get('backup', {}).get('webhook_secret', '')
-    if webhook_secret:
-        provided = request.headers.get('X-Webhook-Secret', '')
-        if not provided or provided != webhook_secret:
-            return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+    if not webhook_secret:
+        return jsonify({'status': 'error', 'message': 'Webhook secret not configured'}), 403
+    provided = request.headers.get('X-Webhook-Secret', '')
+    if not provided or provided != webhook_secret:
+        return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
 
     data = request.get_json() or {}
     if 'status' not in data or data['status'] not in ('success', 'failure'):
         return jsonify({'status': 'error', 'message': 'Invalid data, status must be success or failure'}), 400
 
+    # Sanitize details: strip HTML tags and limit length
+    raw_details = data.get('details', '')
+    clean_details = re.sub(r'<[^>]+>', '', str(raw_details))[:500]
+
     status_data = _load_backup_status()
     entry = {
         'status': data['status'],
-        'details': data.get('details', ''),
+        'details': clean_details,
         'timestamp': datetime.now().isoformat(),
     }
 
@@ -2277,6 +2426,15 @@ def backup_webhook():
 def reboot():
     run_cmd("sudo reboot")
     return jsonify({'status': 'ok', 'message': 'Server is rebooting...'})
+
+
+@app.route('/api/metrics')
+@login_required
+def api_metrics():
+    """Return collected metrics (max 288 data points, 24h)"""
+    with _metrics_lock:
+        metrics = _load_metrics()
+    return jsonify(metrics)
 
 
 @app.route('/api/refresh/<section>')
