@@ -95,7 +95,8 @@
                 <h1>{% block page_title %}Dashboard{% endblock %}</h1>
             </div>
             <div class="meta">
-                {% block top_meta %}{% endblock %}
+                <span>{{ global_hostname }}</span>
+                <span>Up: {{ global_uptime }}</span>
                 <span><span class="uptime-dot"></span>Online</span>
             </div>
         </div>

@@ -2,12 +2,6 @@
 {% from "icons.html" import icon %}
 {% block title %}Dashboard - VPS Manager{% endblock %}
 {% block page_title %}Dashboard{% endblock %}
-{% block top_meta %}
-    {% if data %}
-        <span>{{ data.hostname }}</span>
-        <span>Up: {{ data.uptime }}</span>
-    {% endif %}
-{% endblock %}
 
 {% block content %}
 {% if data %}

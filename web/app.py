@@ -252,8 +252,9 @@ def _monitor_loop():
 
         time.sleep(MONITOR_INTERVAL)
 
-# Cached server IP (fetched once at startup)
+# Cached server info (fetched once at startup)
 _server_ip = None
+_server_hostname = None
 
 
 def get_server_ip():
@@ -268,9 +269,34 @@ def get_server_ip():
     return _server_ip
 
 
+def get_server_hostname():
+    """Get hostname (cached)"""
+    global _server_hostname
+    if _server_hostname is None:
+        result = subprocess.run(
+            "hostname", shell=True, capture_output=True, text=True, timeout=5
+        )
+        _server_hostname = result.stdout.strip() if result.returncode == 0 else '?'
+    return _server_hostname
+
+
+def get_server_uptime_short():
+    """Get uptime as formatted string"""
+    try:
+        with open('/proc/uptime', 'r') as f:
+            seconds = float(f.read().split()[0])
+        return format_server_uptime(seconds)
+    except Exception:
+        return '?'
+
+
 @app.context_processor
-def inject_server_ip():
-    return {'server_ip': get_server_ip()}
+def inject_global_info():
+    return {
+        'server_ip': get_server_ip(),
+        'global_hostname': get_server_hostname(),
+        'global_uptime': get_server_uptime_short(),
+    }
 
 
 # ---------------------------------------------------------------------------
