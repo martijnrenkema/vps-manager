@@ -126,7 +126,7 @@ python3 vps-manager.py --all        # Everything at once
 │       ├── notifications.html # Push notification settings
 │       ├── settings.html   # Configuration panel
 │       └── icons.html      # SVG icon macros
-└── CLAUDE.md
+└── CLAUDE.md               # AI assistant context
 ```
 
 ## Configuration

@@ -19,5 +19,5 @@ web/data/
 .DS_Store
 Thumbs.db
 
-# Claude
+# AI tooling
 .claude/
