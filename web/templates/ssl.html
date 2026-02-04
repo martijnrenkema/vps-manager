@@ -67,7 +67,7 @@ async function renewCert(domain) {
     try {
         var res = await fetch('/ssl/renew', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify({domain: domain})
         });
         var data = await res.json();
@@ -86,7 +86,7 @@ async function renewAll() {
     try {
         var res = await fetch('/ssl/renew', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify({})
         });
         var data = await res.json();

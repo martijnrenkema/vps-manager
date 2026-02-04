@@ -171,7 +171,7 @@ async function installUpdates() {
     progressEl.scrollIntoView({ behavior: 'smooth' });
 
     try {
-        var res = await fetch('/updates/install', { method: 'POST' });
+        var res = await fetch('/updates/install', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
         var data = await res.json();
 
         if (res.ok) {

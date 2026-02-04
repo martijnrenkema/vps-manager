@@ -9,6 +9,7 @@ import os
 import re
 import io
 import json
+import shlex
 import shutil
 import subprocess
 import threading
@@ -24,6 +25,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from flask_wtf.csrf import CSRFProtect
 from pywebpush import webpush, WebPushException
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
@@ -39,8 +41,22 @@ except ImportError:
 from config import load_config, save_config
 
 app = Flask(__name__)
-app.secret_key = os.environ.get('VPS_MANAGER_SECRET', os.urandom(24))
+
+# Secret key: env var > persisted file > generate and persist
+_secret_key_file = Path(__file__).parent / 'data' / '.secret_key'
+_env_secret = os.environ.get('VPS_MANAGER_SECRET')
+if _env_secret:
+    app.secret_key = _env_secret
+elif _secret_key_file.exists():
+    app.secret_key = _secret_key_file.read_bytes()
+else:
+    _secret_key_file.parent.mkdir(exist_ok=True)
+    _generated = os.urandom(32)
+    _secret_key_file.write_bytes(_generated)
+    app.secret_key = _generated
+
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB upload limit
+csrf = CSRFProtect(app)
 
 # Load configuration
 CONFIG = load_config()
@@ -48,10 +64,17 @@ app.permanent_session_lifetime = timedelta(hours=CONFIG['auth'].get('session_lif
 
 # Auth configuration - env vars take precedence, then config, then defaults
 USERNAME = os.environ.get('VPS_MANAGER_USER') or CONFIG['auth'].get('username') or 'admin'
+_env_pass = os.environ.get('VPS_MANAGER_PASS', '')
 if CONFIG['auth'].get('password_hash'):
     PASSWORD_HASH = CONFIG['auth']['password_hash']
+elif _env_pass and _env_pass != 'changeme':
+    PASSWORD_HASH = generate_password_hash(_env_pass)
 else:
-    PASSWORD_HASH = generate_password_hash(os.environ.get('VPS_MANAGER_PASS', 'changeme'))
+    PASSWORD_HASH = generate_password_hash('changeme')
+    logging.warning(
+        'WARNING: Using default password "changeme". '
+        'Set VPS_MANAGER_PASS env var or change password in settings.'
+    )
 
 # ---------------------------------------------------------------------------
 # Push Notification Setup
@@ -304,7 +327,7 @@ def inject_global_info():
 # ---------------------------------------------------------------------------
 
 def run_cmd(cmd, timeout=30):
-    """Run a command locally on the VPS"""
+    """Run a shell command locally on the VPS (only for hardcoded commands)"""
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=timeout
@@ -316,6 +339,47 @@ def run_cmd(cmd, timeout=30):
             stderr = 'Command timed out'
             returncode = 1
         return Timeout()
+
+
+def run_cmd_safe(args, timeout=30):
+    """Run a command with argument list (no shell injection possible)"""
+    try:
+        result = subprocess.run(
+            args, capture_output=True, text=True, timeout=timeout
+        )
+        return result
+    except subprocess.TimeoutExpired:
+        class Timeout:
+            stdout = ''
+            stderr = 'Command timed out'
+            returncode = 1
+        return Timeout()
+
+
+def is_safe_name(name):
+    """Validate that a name only contains safe characters (alphanumeric, dot, dash, underscore)"""
+    return bool(re.match(r'^[a-zA-Z0-9._-]+$', name))
+
+
+# Login rate limiting: max 5 attempts per IP per 5 minutes
+_login_attempts = {}  # {ip: [(timestamp, ...), ...]}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW = 300  # seconds
+
+
+def _is_rate_limited(ip):
+    """Check if an IP has exceeded login attempt limits"""
+    now = time.time()
+    attempts = _login_attempts.get(ip, [])
+    # Remove expired attempts
+    attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
+    _login_attempts[ip] = attempts
+    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+
+
+def _record_attempt(ip):
+    """Record a failed login attempt"""
+    _login_attempts.setdefault(ip, []).append(time.time())
 
 
 def login_required(f):
@@ -335,6 +399,13 @@ def login_required(f):
 def login():
     show_2fa = False
     if request.method == 'POST':
+        client_ip = request.remote_addr
+
+        # Rate limiting check
+        if _is_rate_limited(client_ip):
+            flash('Too many login attempts. Try again later.', 'danger')
+            return render_template('login.html', show_2fa=False)
+
         username = request.form.get('username', '')
         password = request.form.get('password', '')
         totp_code = request.form.get('totp_code', '').strip()
@@ -353,8 +424,10 @@ def login():
                     session['username'] = username
                     return redirect(url_for('dashboard'))
                 else:
+                    _record_attempt(client_ip)
                     flash('Invalid 2FA code', 'danger')
                     return render_template('login.html', show_2fa=True)
+            _record_attempt(client_ip)
             flash('Invalid 2FA code', 'danger')
             return render_template('login.html', show_2fa=True)
 
@@ -371,6 +444,7 @@ def login():
             session['logged_in'] = True
             session['username'] = username
             return redirect(url_for('dashboard'))
+        _record_attempt(client_ip)
         flash('Invalid username or password', 'danger')
     return render_template('login.html', show_2fa=show_2fa)
 
@@ -1363,13 +1437,13 @@ def get_ddos_stats():
 
 
 def is_path_allowed(path):
-    """Check if path is allowed (not in blocked list)"""
-    blocked = CONFIG.get('file_browser', {}).get('blocked_paths', ['/proc', '/sys', '/dev'])
+    """Check if path is within allowed directories (whitelist approach)"""
+    allowed = CONFIG.get('file_browser', {}).get('allowed_paths', ['/var/www', '/home/martijn'])
     real = os.path.realpath(path)
-    for b in blocked:
-        if real == b or real.startswith(b + '/'):
-            return False
-    return True
+    for a in allowed:
+        if real == a or real.startswith(a + '/'):
+            return True
+    return False
 
 
 def format_file_size(size_bytes):
@@ -1422,7 +1496,9 @@ def pm2():
 @app.route('/pm2/restart/<name>', methods=['POST'])
 @login_required
 def pm2_restart(name):
-    result = run_cmd(f"pm2 restart {name}")
+    if not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid process name'}), 400
+    result = run_cmd_safe(["pm2", "restart", name])
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f"'{name}' restarted"})
     return jsonify({'status': 'error', 'message': f"Could not restart '{name}': {result.stderr}"}), 500
@@ -1431,7 +1507,9 @@ def pm2_restart(name):
 @app.route('/pm2/stop/<name>', methods=['POST'])
 @login_required
 def pm2_stop(name):
-    result = run_cmd(f"pm2 stop {name}")
+    if not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid process name'}), 400
+    result = run_cmd_safe(["pm2", "stop", name])
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f"'{name}' stopped"})
     return jsonify({'status': 'error', 'message': f"Could not stop '{name}': {result.stderr}"}), 500
@@ -1440,7 +1518,9 @@ def pm2_stop(name):
 @app.route('/pm2/start/<name>', methods=['POST'])
 @login_required
 def pm2_start(name):
-    result = run_cmd(f"pm2 start {name}")
+    if not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid process name'}), 400
+    result = run_cmd_safe(["pm2", "start", name])
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f"'{name}' started"})
     return jsonify({'status': 'error', 'message': f"Could not start '{name}': {result.stderr}"}), 500
@@ -1449,7 +1529,9 @@ def pm2_start(name):
 @app.route('/pm2/logs/<name>')
 @login_required
 def pm2_logs(name):
-    result = run_cmd(f"pm2 logs {name} --lines 50 --nostream")
+    if not is_safe_name(name):
+        return jsonify({'logs': 'Invalid process name'})
+    result = run_cmd_safe(["pm2", "logs", name, "--lines", "50", "--nostream"])
     output = ''
     if result.stdout:
         output += result.stdout
@@ -1471,9 +1553,17 @@ def ssl_renew():
     data = request.get_json() or {}
     domain = data.get('domain')
     if domain:
-        result = run_cmd(f"sudo certbot renew --force-renewal --cert-name {domain} 2>&1", timeout=120)
+        if not is_safe_name(domain):
+            return jsonify({'status': 'error', 'message': 'Invalid domain name'}), 400
+        result = run_cmd_safe(
+            ["sudo", "certbot", "renew", "--force-renewal", "--cert-name", domain],
+            timeout=120
+        )
     else:
-        result = run_cmd("sudo certbot renew --force-renewal 2>&1", timeout=120)
+        result = run_cmd_safe(
+            ["sudo", "certbot", "renew", "--force-renewal"],
+            timeout=120
+        )
     output = result.stdout if result.stdout else result.stderr
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'message': 'Renewal successful', 'output': output})
@@ -1492,7 +1582,9 @@ def services():
 def service_action(action, name):
     if action not in ('restart', 'stop', 'start'):
         return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
-    result = run_cmd(f"sudo systemctl {action} {name}", timeout=30)
+    if not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid service name'}), 400
+    result = run_cmd_safe(["sudo", "systemctl", action, name], timeout=30)
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f"'{name}' {action} successful"})
     return jsonify({'status': 'error', 'message': f"Could not {action} '{name}': {result.stderr}"}), 500
@@ -1541,14 +1633,20 @@ def nginx_logs_page():
 def api_nginx_log():
     """Get content of a specific nginx log file"""
     log_file = request.args.get('file', '')
-    lines = int(request.args.get('lines', 50))
+    try:
+        lines = int(request.args.get('lines', 50))
+    except (ValueError, TypeError):
+        lines = 50
     lines = min(lines, 200)
-    # Only allow files in /var/log/nginx/
-    if not log_file or not log_file.startswith('/var/log/nginx/') or '..' in log_file:
+    # Only allow files in /var/log/nginx/ - resolve symlinks and validate
+    if not log_file or '..' in log_file:
         return jsonify({'error': 'Invalid log file'}), 400
-    result = run_cmd(f"sudo tail -{lines} {log_file} 2>/dev/null")
+    real_log = os.path.realpath(log_file)
+    if not real_log.startswith('/var/log/nginx/'):
+        return jsonify({'error': 'Invalid log file'}), 400
+    result = run_cmd_safe(["sudo", "tail", f"-{lines}", real_log])
     if result.returncode == 0:
-        return jsonify({'content': result.stdout, 'file': os.path.basename(log_file)})
+        return jsonify({'content': result.stdout, 'file': os.path.basename(real_log)})
     return jsonify({'error': 'Could not read log file'}), 500
 
 
@@ -1587,27 +1685,57 @@ def terminal():
 @app.route('/terminal/exec', methods=['POST'])
 @login_required
 def terminal_exec():
-    data = request.get_json()
+    data = request.get_json() or {}
     cmd = data.get('command', '').strip()
     cwd = session.get('terminal_cwd', '/')
 
     if not cmd:
         return jsonify({'stdout': '', 'stderr': 'No command specified', 'cwd': cwd})
 
-    # Block dangerous patterns
-    dangerous = ['rm -rf /', 'mkfs', 'dd if=', '> /dev/', 'chmod -R 777 /',
-                 'wget -O- | sh', 'curl | sh', ':(){ :|:& };:']
-    for pattern in dangerous:
-        if pattern in cmd:
-            return jsonify({'stdout': '', 'stderr': 'Blocked: dangerous command', 'cwd': cwd})
+    # Validate cwd is a real directory
+    real_cwd = os.path.realpath(cwd)
+    if not os.path.isdir(real_cwd):
+        real_cwd = '/'
+
+    # Block dangerous patterns (defense-in-depth, not a security boundary)
+    cmd_lower = cmd.lower()
+    dangerous_strings = [
+        'rm -rf /', 'rm -rf /*', 'rm -rf ~', 'rm -rf .', 'rm -rf *',
+        'mkfs', 'dd if=', '> /dev/', 'chmod -r 777 /', 'chmod 777 /',
+        ':(){ :|:& };:', '.(){.|.&};.',
+        'shred', 'wipefs',
+    ]
+    dangerous_patterns = [
+        r'\bpython[23]?\b.*-c\b',      # python -c 'os.system(...)'
+        r'\bperl\b.*-e\b',             # perl -e 'system(...)'
+        r'curl\b.*\|\s*\bsh\b',        # curl ... | sh
+        r'wget\b.*\|\s*\bsh\b',        # wget ... | sh
+        r'curl\b.*\|\s*\bbash\b',      # curl ... | bash
+        r'wget\b.*\|\s*\bbash\b',      # wget ... | bash
+        r'\beval\b',                    # eval
+        r'>\s*/etc/',                   # write to /etc
+        r'\bpasswd\b',                  # passwd changes
+        r'\buserdel\b',                 # delete users
+        r'\buseradd\b',                 # add users
+        r'\bvisudo\b',                  # sudoers changes
+        r'\bshutdown\b',               # shutdown
+        r'\binit\s+[06]\b',            # init 0/6
+    ]
+    for pattern in dangerous_strings:
+        if pattern in cmd_lower:
+            return jsonify({'stdout': '', 'stderr': 'Blocked: dangerous command', 'cwd': real_cwd})
+    for pattern in dangerous_patterns:
+        if re.search(pattern, cmd_lower):
+            return jsonify({'stdout': '', 'stderr': 'Blocked: dangerous command', 'cwd': real_cwd})
 
     # Handle 'clear' locally
     if cmd == 'clear':
-        return jsonify({'stdout': '', 'stderr': '', 'cwd': cwd, 'clear': True})
+        return jsonify({'stdout': '', 'stderr': '', 'cwd': real_cwd, 'clear': True})
 
     # Run the command from the current working directory, then capture new cwd
     # This way cd, pushd, etc. all work naturally
-    wrapped = f'cd {cwd} 2>/dev/null && {cmd} 2>&1; echo "---CWD---"; pwd'
+    # cwd is shell-quoted to prevent injection through manipulated session values
+    wrapped = f'cd {shlex.quote(real_cwd)} 2>/dev/null && {cmd} 2>&1; echo "---CWD---"; pwd'
     result = run_cmd(wrapped, timeout=30)
 
     output = result.stdout
@@ -1675,7 +1803,8 @@ def files_list():
     # Sort: dirs first, then files
     items.sort(key=lambda x: (0 if x['type'] == 'dir' else 1, x['name'].lower()))
 
-    parent = os.path.dirname(real_path) if real_path != '/' else None
+    parent_path = os.path.dirname(real_path)
+    parent = parent_path if (real_path != '/' and is_path_allowed(parent_path)) else None
 
     return jsonify({
         'path': real_path,
@@ -1797,8 +1926,8 @@ def vapid_key():
 @app.route('/api/push/subscribe', methods=['POST'])
 @login_required
 def push_subscribe():
-    data = request.get_json()
-    if not data or 'endpoint' not in data or 'keys' not in data:
+    data = request.get_json() or {}
+    if 'endpoint' not in data or 'keys' not in data:
         return jsonify({'status': 'error', 'message': 'Invalid subscription data'}), 400
 
     subs = _load_subscriptions()
@@ -1825,8 +1954,8 @@ def push_subscribe():
 @app.route('/api/push/unsubscribe', methods=['POST'])
 @login_required
 def push_unsubscribe():
-    data = request.get_json()
-    endpoint = data.get('endpoint') if data else None
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
@@ -1839,8 +1968,8 @@ def push_unsubscribe():
 @app.route('/api/push/test', methods=['POST'])
 @login_required
 def push_test():
-    data = request.get_json()
-    endpoint = data.get('endpoint') if data else None
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
@@ -1884,8 +2013,8 @@ def push_preferences():
         }))
 
     # POST
-    data = request.get_json()
-    endpoint = data.get('endpoint') if data else None
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
@@ -1915,7 +2044,7 @@ def settings():
 @login_required
 def update_config():
     global CONFIG, NOTIFICATION_COOLDOWN, MONITOR_INTERVAL
-    data = request.get_json()
+    data = request.get_json() or {}
     if not data:
         return jsonify({'status': 'error', 'message': 'No data received'}), 400
 
@@ -2030,10 +2159,17 @@ def disable_2fa():
 
 
 @app.route('/api/backup/webhook', methods=['POST'])
+@csrf.exempt
 def backup_webhook():
     """Endpoint for backup scripts to report success/failure"""
-    data = request.get_json()
-    if not data or 'status' not in data:
+    webhook_secret = CONFIG.get('backup', {}).get('webhook_secret', '')
+    if webhook_secret:
+        provided = request.headers.get('X-Webhook-Secret', '')
+        if not provided or provided != webhook_secret:
+            return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
+
+    data = request.get_json() or {}
+    if 'status' not in data:
         return jsonify({'status': 'error', 'message': 'Invalid data'}), 400
 
     status_data = _load_backup_status()

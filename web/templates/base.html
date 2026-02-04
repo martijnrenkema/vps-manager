@@ -8,6 +8,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="VPS Manager">
+    <meta name="csrf-token" content="{{ csrf_token() }}">
     <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
     <title>{% block title %}VPS Manager{% endblock %}</title>
@@ -134,13 +135,18 @@
     </div>
 
     <script>
+        // CSRF token for AJAX requests
+        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+
         // Toast notifications
         function showToast(message, type = 'success') {
             const container = document.getElementById('toastContainer');
             const toast = document.createElement('div');
             toast.className = `toast ${type}`;
-            const icon = type === 'success' ? '✓' : '✗';
-            toast.innerHTML = `<span>${icon}</span> ${message}`;
+            const iconSpan = document.createElement('span');
+            iconSpan.textContent = type === 'success' ? '✓' : '✗';
+            toast.appendChild(iconSpan);
+            toast.appendChild(document.createTextNode(' ' + message));
             container.appendChild(toast);
             setTimeout(() => toast.remove(), 4000);
         }
@@ -148,7 +154,8 @@
         // AJAX helper
         async function apiCall(url, method = 'GET') {
             try {
-                const res = await fetch(url, { method });
+                const opts = { method, headers: {'X-CSRFToken': csrfToken} };
+                const res = await fetch(url, opts);
                 const data = await res.json();
                 if (res.ok) {
                     showToast(data.message || 'OK', 'success');
@@ -164,17 +171,17 @@
 
         // PM2 actions
         async function pm2Action(action, name) {
-            await apiCall(`/pm2/${action}/${name}`, 'POST');
+            await apiCall('/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
             setTimeout(() => location.reload(), 1500);
         }
 
         // PM2 logs modal
         async function showLogs(name) {
             document.getElementById('logModal').classList.add('active');
-            document.getElementById('logModalTitle').textContent = `Logs: ${name}`;
+            document.getElementById('logModalTitle').textContent = 'Logs: ' + name;
             document.getElementById('logModalContent').textContent = 'Loading...';
             try {
-                const res = await fetch(`/pm2/logs/${name}`);
+                const res = await fetch('/pm2/logs/' + encodeURIComponent(name));
                 const data = await res.json();
                 document.getElementById('logModalContent').textContent = data.logs || 'No logs';
             } catch (e) {

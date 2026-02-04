@@ -170,7 +170,7 @@ async function changePassword(e) {
     try {
         const res = await fetch('/settings/password', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify(data),
         });
         const result = await res.json();
@@ -187,7 +187,7 @@ async function changePassword(e) {
 
 async function enable2FA() {
     try {
-        const res = await fetch('/settings/2fa/enable', { method: 'POST' });
+        const res = await fetch('/settings/2fa/enable', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
         const data = await res.json();
         if (res.ok) {
             document.getElementById('setup2fa').style.display = 'block';
@@ -210,7 +210,7 @@ async function verify2FA() {
     try {
         const res = await fetch('/settings/2fa/verify', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify({ code }),
         });
         const data = await res.json();
@@ -234,7 +234,7 @@ async function disable2FA() {
     try {
         const res = await fetch('/settings/2fa/disable', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify({ password }),
         });
         const data = await res.json();
@@ -274,7 +274,7 @@ async function saveConfig(e) {
     try {
         const res = await fetch('/api/config', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify(data),
         });
         const result = await res.json();

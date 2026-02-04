@@ -78,64 +78,118 @@ function loadDir(path) {
 
 function renderBreadcrumb(path) {
     const bc = document.getElementById('breadcrumb');
+    bc.innerHTML = '';
+    const root = document.createElement('span');
+    root.className = 'bc-item';
+    root.textContent = '/';
+    root.onclick = () => loadDir('/');
+    bc.appendChild(root);
+
     const parts = path.split('/').filter(Boolean);
-    let html = `<span class="bc-item" onclick="loadDir('/')">/</span>`;
     let built = '';
     for (const part of parts) {
         built += '/' + part;
+        const sep = document.createElement('span');
+        sep.className = 'bc-sep';
+        sep.textContent = '/';
+        bc.appendChild(sep);
+        const item = document.createElement('span');
+        item.className = 'bc-item';
+        item.textContent = part;
         const p = built;
-        html += `<span class="bc-sep">/</span><span class="bc-item" onclick="loadDir('${p}')">${part}</span>`;
+        item.onclick = () => loadDir(p);
+        bc.appendChild(item);
     }
-    bc.innerHTML = html;
 }
 
 function renderFiles(data) {
     const tbody = document.getElementById('fileList');
-    let html = '';
+    tbody.innerHTML = '';
+
+    const dirIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+    const fileIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>';
 
     // Parent directory link
     if (data.parent !== null) {
-        html += `<tr class="file-row" ondblclick="loadDir('${data.parent}')">
-            <td class="file-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></td>
-            <td><a href="#" onclick="loadDir('${data.parent}');return false" class="file-link">..</a></td>
-            <td>-</td><td>-</td><td></td>
-        </tr>`;
+        const tr = document.createElement('tr');
+        tr.className = 'file-row';
+        tr.ondblclick = () => loadDir(data.parent);
+        tr.innerHTML = `<td class="file-icon">${dirIcon}</td><td></td><td>-</td><td>-</td><td></td>`;
+        const link = document.createElement('a');
+        link.href = '#';
+        link.className = 'file-link';
+        link.textContent = '..';
+        link.onclick = (e) => { e.preventDefault(); loadDir(data.parent); };
+        tr.children[1].appendChild(link);
+        tbody.appendChild(tr);
     }
 
     if (data.items.length === 0) {
-        html += '<tr><td colspan="5" class="empty-state">Folder is empty</td></tr>';
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="5" class="empty-state">Folder is empty</td>';
+        tbody.appendChild(tr);
+        return;
     }
 
     for (const item of data.items) {
         const fullPath = data.path + (data.path.endsWith('/') ? '' : '/') + item.name;
-        const escapedPath = fullPath.replace(/'/g, "\\'");
+        const tr = document.createElement('tr');
+        tr.className = 'file-row';
 
-        let icon, nameCol;
+        // Icon cell
+        const iconTd = document.createElement('td');
+        iconTd.className = 'file-icon';
+        iconTd.innerHTML = item.type === 'dir' ? dirIcon : fileIcon;
+
+        // Name cell
+        const nameTd = document.createElement('td');
         if (item.type === 'dir') {
-            icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
-            nameCol = `<a href="#" onclick="loadDir('${escapedPath}');return false" class="file-link">${escHtml(item.name)}</a>`;
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'file-link';
+            link.textContent = item.name;
+            link.onclick = (e) => { e.preventDefault(); loadDir(fullPath); };
+            nameTd.appendChild(link);
+            tr.ondblclick = () => loadDir(fullPath);
         } else {
-            icon = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
-            nameCol = `<span class="file-name">${escHtml(item.name)}</span>`;
+            const span = document.createElement('span');
+            span.className = 'file-name';
+            span.textContent = item.name;
+            nameTd.appendChild(span);
         }
 
-        let actions = '';
+        // Size & modified cells
+        const sizeTd = document.createElement('td');
+        sizeTd.textContent = item.size;
+        const modTd = document.createElement('td');
+        modTd.textContent = item.modified;
+
+        // Actions cell
+        const actTd = document.createElement('td');
+        actTd.className = 'file-actions';
         if (item.type === 'file') {
-            actions += `<a href="/files/download?path=${encodeURIComponent(fullPath)}" class="btn btn-sm" title="Download"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a> `;
+            const dl = document.createElement('a');
+            dl.href = '/files/download?path=' + encodeURIComponent(fullPath);
+            dl.className = 'btn btn-sm';
+            dl.title = 'Download';
+            dl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+            actTd.appendChild(dl);
+            actTd.appendChild(document.createTextNode(' '));
         }
-        actions += `<button class="btn btn-sm btn-red" onclick="deleteItem('${escapedPath}', '${item.type}')" title="Delete"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>`;
+        const del = document.createElement('button');
+        del.className = 'btn btn-sm btn-red';
+        del.title = 'Delete';
+        del.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+        del.onclick = () => deleteItem(fullPath, item.type);
+        actTd.appendChild(del);
 
-        const dblclick = item.type === 'dir' ? `ondblclick="loadDir('${escapedPath}')"` : '';
-        html += `<tr class="file-row" ${dblclick}>
-            <td class="file-icon">${icon}</td>
-            <td>${nameCol}</td>
-            <td>${item.size}</td>
-            <td>${item.modified}</td>
-            <td class="file-actions">${actions}</td>
-        </tr>`;
+        tr.appendChild(iconTd);
+        tr.appendChild(nameTd);
+        tr.appendChild(sizeTd);
+        tr.appendChild(modTd);
+        tr.appendChild(actTd);
+        tbody.appendChild(tr);
     }
-
-    tbody.innerHTML = html;
 }
 
 function escHtml(str) {
@@ -151,7 +205,7 @@ function deleteItem(path, type) {
         try {
             const res = await fetch('/files/delete', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
                 body: JSON.stringify({path})
             });
             const data = await res.json();
@@ -184,7 +238,7 @@ async function doMkdir() {
     try {
         const res = await fetch('/files/mkdir', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
             body: JSON.stringify({path: currentPath, name})
         });
         const data = await res.json();
@@ -206,7 +260,7 @@ async function uploadFiles(files) {
         form.append('path', currentPath);
         form.append('file', file);
         try {
-            const res = await fetch('/files/upload', {method: 'POST', body: form});
+            const res = await fetch('/files/upload', {method: 'POST', headers: {'X-CSRFToken': csrfToken}, body: form});
             const data = await res.json();
             if (res.ok) {
                 showToast(data.message, 'success');

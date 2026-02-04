@@ -185,7 +185,7 @@
             // Send subscription to server
             const subRes = await fetch('/api/push/subscribe', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify(subscription.toJSON()),
             });
 
@@ -209,7 +209,7 @@
             if (currentSubscription) {
                 await fetch('/api/push/unsubscribe', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                     body: JSON.stringify({ endpoint: currentSubscription.endpoint }),
                 });
                 await currentSubscription.unsubscribe();
@@ -226,7 +226,7 @@
         try {
             const res = await fetch('/api/push/test', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify({ endpoint: currentSubscription.endpoint }),
             });
             if (res.ok) {
@@ -272,7 +272,7 @@
         try {
             const res = await fetch('/api/push/preferences', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
                 body: JSON.stringify(prefs),
             });
             if (res.ok) {

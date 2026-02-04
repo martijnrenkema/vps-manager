@@ -20,6 +20,7 @@
             {% endwith %}
 
             <form method="POST" action="{{ url_for('login') }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                 {% if show_2fa %}
                     <div class="form-group">
                         <label for="totp_code">Authenticator Code</label>

@@ -38,12 +38,13 @@ def get_default_config():
         "vapid_mailto": "mailto:admin@localhost",
         "file_browser": {
             "default_path": "/var/www",
-            "blocked_paths": ["/proc", "/sys", "/dev"],
+            "allowed_paths": ["/var/www", "/home/martijn"],
         },
         "backup": {
             "log_path": "/var/log/vps-backup.log",
             "backup_dir": "/var/backups/vps/",
             "db_backup_dir": "/var/backups/vps/databases/",
+            "webhook_secret": "",
         },
         "ddos_detection": {
             "enabled": True,
