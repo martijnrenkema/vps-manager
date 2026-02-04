@@ -3,6 +3,10 @@
 {% block page_title %}Terminal{% endblock %}
 
 {% block content %}
+<div class="alert-info-hint">
+    <strong>Restricted terminal</strong> — Destructive commands are blocked, including: rm -rf, mkfs, dd, shutdown, eval, passwd, useradd/userdel and piping curl/wget to sh. Commands have a 30 second timeout.
+</div>
+
 <div class="card">
     <div class="card-header" style="justify-content:space-between">
         <span>Terminal</span>

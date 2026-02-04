@@ -90,6 +90,7 @@ VAPID_PRIVATE_KEY_PATH = DATA_DIR / 'vapid_private.pem'
 VAPID_PUBLIC_KEY_PATH = DATA_DIR / 'vapid_public.txt'
 SUBSCRIPTIONS_PATH = DATA_DIR / 'subscriptions.json'
 NOTIFICATION_LOG_PATH = DATA_DIR / 'notification_log.json'
+NOTIFICATION_HISTORY_PATH = DATA_DIR / 'notification_history.json'
 
 NOTIFICATION_COOLDOWN = CONFIG.get('notification_cooldown', 3600)
 MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
@@ -153,6 +154,34 @@ def _load_notification_log():
 def _save_notification_log(log):
     """Save notification cooldown log"""
     NOTIFICATION_LOG_PATH.write_text(json.dumps(log, indent=2))
+
+
+def _load_notification_history():
+    """Load notification history"""
+    if NOTIFICATION_HISTORY_PATH.exists():
+        try:
+            return json.loads(NOTIFICATION_HISTORY_PATH.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def _save_notification_history(history):
+    """Save notification history (max 100 entries)"""
+    NOTIFICATION_HISTORY_PATH.write_text(json.dumps(history[-100:], indent=2))
+
+
+def _add_notification_history(title, body, category):
+    """Add an entry to notification history"""
+    history = _load_notification_history()
+    history.append({
+        'timestamp': datetime.now().isoformat(),
+        'title': title,
+        'body': body,
+        'category': category,
+        'read': False,
+    })
+    _save_notification_history(history)
 
 
 def _send_push(subscription_info, payload, private_key_pem):
@@ -231,7 +260,7 @@ def _monitor_loop():
 
             for alert in alerts:
                 category = _classify_alert(alert)
-                alert_key = f"{category}:{alert['message'][:80]}"
+                alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
 
                 # Check cooldown
                 last_sent = notif_log.get(alert_key, 0)
@@ -267,6 +296,13 @@ def _monitor_loop():
 
                 notif_log[alert_key] = now
                 log_changed = True
+
+                # Save to notification history
+                _add_notification_history(
+                    payload['title'],
+                    payload['body'],
+                    category,
+                )
 
             # Clean old entries from log (>24h)
             cleaned = {k: v for k, v in notif_log.items() if now - v < 86400}
@@ -318,10 +354,13 @@ def get_server_uptime_short():
 
 @app.context_processor
 def inject_global_info():
+    history = _load_notification_history()
+    unread = sum(1 for item in history if not item.get('read'))
     return {
         'server_ip': get_server_ip(),
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
+        'unread_count': unread,
     }
 
 
@@ -857,12 +896,14 @@ def check_backup_alerts():
                     'severity': 'error',
                     'message': f"Last backup failed: {entry.get('details', 'Unknown error')[:80]}",
                     'link': '/backup',
+                    'key': 'backup_failed',
                 })
             elif isinstance(entry, str):
                 alerts.append({
                     'severity': 'error',
                     'message': f"Backup failure detected: {entry[:80]}",
                     'link': '/backup',
+                    'key': 'backup_failed',
                 })
 
     # Check if no successful backup in 48 hours
@@ -875,6 +916,7 @@ def check_backup_alerts():
                     'severity': 'warning',
                     'message': 'No successful backup in the last 48 hours',
                     'link': '/backup',
+                    'key': 'backup_stale',
                 })
         except (ValueError, TypeError):
             pass
@@ -1283,21 +1325,21 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         disk_critical = thresholds.get('disk_critical', 95)
         disk_warning = thresholds.get('disk_warning', 80)
         if disk_pct > disk_critical:
-            alerts.append({'severity': 'error', 'message': f"Disk space critical: {disk_pct}% used", 'link': '/disk'})
+            alerts.append({'severity': 'error', 'message': f"Disk space critical: {disk_pct}% used", 'link': '/disk', 'key': 'disk_critical'})
         elif disk_pct > disk_warning:
-            alerts.append({'severity': 'warning', 'message': f"Disk space high: {disk_pct}% used", 'link': '/disk'})
+            alerts.append({'severity': 'warning', 'message': f"Disk space high: {disk_pct}% used", 'link': '/disk', 'key': 'disk_warning'})
 
         # Memory usage
         mem_pct = data.get('mem_pct', 0)
         mem_warning = thresholds.get('memory_warning', 85)
         if mem_pct > mem_warning:
-            alerts.append({'severity': 'warning', 'message': f"RAM usage high: {mem_pct}%", 'link': None})
+            alerts.append({'severity': 'warning', 'message': f"RAM usage high: {mem_pct}%", 'link': None, 'key': 'ram_warning'})
 
         # Swap usage
         swap_pct = data.get('swap_pct', 0)
         swap_warning = thresholds.get('swap_warning', 50)
         if swap_pct > swap_warning:
-            alerts.append({'severity': 'warning', 'message': f"Swap usage high: {swap_pct}%", 'link': None})
+            alerts.append({'severity': 'warning', 'message': f"Swap usage high: {swap_pct}%", 'link': None, 'key': 'swap_warning'})
 
         # Load average
         load_str = data.get('load', '')
@@ -1306,19 +1348,19 @@ def get_dashboard_alerts(data, services, pm2, ssl):
             load_1 = float(load_str.split('/')[0].strip())
             cores = int(cpu_cores)
             if load_1 > cores:
-                alerts.append({'severity': 'warning', 'message': f"Load average high: {load_1:.2f} (> {cores} cores)", 'link': None})
+                alerts.append({'severity': 'warning', 'message': f"Load average high: {load_1:.2f} (> {cores} cores)", 'link': None, 'key': 'load_warning'})
         except (ValueError, IndexError):
             pass
 
     # Services down
     for svc in services:
         if svc['status'] != 'active':
-            alerts.append({'severity': 'error', 'message': f"Service '{svc['name']}' is {svc['status']}", 'link': '/services'})
+            alerts.append({'severity': 'error', 'message': f"Service '{svc['name']}' is {svc['status']}", 'link': '/services', 'key': f"service_down_{svc['name']}"})
 
     # PM2 processes
     for p in pm2:
         if p['status'] != 'online':
-            alerts.append({'severity': 'error', 'message': f"PM2 process '{p['name']}' is {p['status']}", 'link': '/pm2'})
+            alerts.append({'severity': 'error', 'message': f"PM2 process '{p['name']}' is {p['status']}", 'link': '/pm2', 'key': f"pm2_offline_{p['name']}"})
 
     # SSL certificates
     ssl_critical = thresholds.get('ssl_critical_days', 3)
@@ -1327,9 +1369,9 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         days = cert.get('days_left', 999)
         domain = cert.get('domain', '?')
         if days < ssl_critical:
-            alerts.append({'severity': 'error', 'message': f"SSL certificate '{domain}' expires in {days} days!", 'link': '/ssl'})
+            alerts.append({'severity': 'error', 'message': f"SSL certificate '{domain}' expires in {days} days!", 'link': '/ssl', 'key': f"ssl_critical_{domain}"})
         elif days < ssl_warning:
-            alerts.append({'severity': 'warning', 'message': f"SSL certificate '{domain}' expires in {days} days", 'link': '/ssl'})
+            alerts.append({'severity': 'warning', 'message': f"SSL certificate '{domain}' expires in {days} days", 'link': '/ssl', 'key': f"ssl_warning_{domain}"})
 
     # Quick updates check (fast, cached by apt)
     updates = get_system_updates()
@@ -1339,7 +1381,7 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         msg = f"{len(installable)} updates available"
         if sec_count > 0:
             msg += f" (including {sec_count} security)"
-        alerts.append({'severity': 'warning', 'message': msg, 'link': '/updates'})
+        alerts.append({'severity': 'warning', 'message': msg, 'link': '/updates', 'key': 'updates_available'})
 
     # Sort: error first, then warning, then info
     severity_order = {'error': 0, 'warning': 1, 'info': 2}
@@ -1369,6 +1411,7 @@ def check_ddos_indicators():
                     'severity': 'warning',
                     'message': f"High connection count: {total_conn} established",
                     'link': '/firewall',
+                    'key': 'high_connections',
                 })
         except ValueError:
             pass
@@ -1383,6 +1426,7 @@ def check_ddos_indicators():
                     'severity': 'error',
                     'message': f"SYN flood indicator: {syn_count} SYN_RECV",
                     'link': '/firewall',
+                    'key': 'syn_flood',
                 })
         except ValueError:
             pass
@@ -1402,6 +1446,7 @@ def check_ddos_indicators():
                         'severity': 'error',
                         'message': f"Possible DDoS: {ip_count} connections from {ip_addr}",
                         'link': '/firewall',
+                        'key': f"ddos_single_ip_{ip_addr}",
                     })
             except ValueError:
                 pass
@@ -2003,6 +2048,7 @@ def push_test():
         _save_subscriptions(subs)
         return jsonify({'status': 'error', 'message': 'Subscription expired'}), 410
 
+    _add_notification_history(payload['title'], payload['body'], 'test')
     return jsonify({'status': 'ok', 'message': 'Test notification sent'})
 
 
@@ -2043,6 +2089,28 @@ def push_preferences():
             break
     _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Preferences saved'})
+
+
+# ---------------------------------------------------------------------------
+# Notification History routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/notifications/history')
+@login_required
+def notification_history():
+    history = _load_notification_history()
+    # Return newest first
+    return jsonify(list(reversed(history)))
+
+
+@app.route('/api/notifications/read', methods=['POST'])
+@login_required
+def notification_read():
+    history = _load_notification_history()
+    for item in history:
+        item['read'] = True
+    _save_notification_history(history)
+    return jsonify({'status': 'ok', 'message': 'All notifications marked as read'})
 
 
 @app.route('/settings')

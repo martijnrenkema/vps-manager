@@ -13,7 +13,7 @@
         </div>
         <div class="card-body" style="padding:0" id="alertsList">
             {% for alert in alerts %}
-            <div class="alert-item alert-{{ alert.severity }}" data-alert-id="{{ loop.index0 }}" data-alert-key="{{ alert.message|truncate(50, True, '') }}">
+            <div class="alert-item alert-{{ alert.severity }}" data-alert-id="{{ loop.index0 }}" data-alert-key="{{ alert.key }}">
                 {% if alert.link %}
                 <a href="{{ alert.link }}" class="alert-link">
                 {% endif %}
