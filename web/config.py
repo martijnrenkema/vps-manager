@@ -35,7 +35,7 @@ def get_default_config():
         },
         "monitor_interval": 300,
         "notification_cooldown": 3600,
-        "vapid_mailto": "mailto:push@vps.dmmusic.nl",
+        "vapid_mailto": "mailto:admin@localhost",
         "file_browser": {
             "default_path": "/var/www",
             "blocked_paths": ["/proc", "/sys", "/dev"],

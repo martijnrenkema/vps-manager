@@ -1,6 +1,6 @@
 # VPS Manager
 
-Management tool for Ubuntu VPS servers. Includes a CLI tool for local terminal management and a web dashboard that runs on the VPS itself.
+Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provides a complete management interface via the browser.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![Flask](https://img.shields.io/badge/Flask-Web_Dashboard-green)
@@ -8,8 +8,6 @@ Management tool for Ubuntu VPS servers. Includes a CLI tool for local terminal m
 ![License](https://img.shields.io/badge/License-MIT-green)
 
 ## Features
-
-### Web Dashboard
 
 - **Server Overview** - CPU, RAM, disk, swap, load average, uptime
 - **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with auto-restart
@@ -19,7 +17,7 @@ Management tool for Ubuntu VPS servers. Includes a CLI tool for local terminal m
 - **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
 - **Firewall & Security** - UFW rules, Fail2ban config, jail status, banned IPs
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
-- **Nginx Logs** - Expandable error entries, per-site logs, PHP-FPM errors
+- **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
 - **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
 - **File Browser** - Browse, upload, download, edit files on the server
 - **Web Terminal** - Browser-based command execution
@@ -29,16 +27,7 @@ Management tool for Ubuntu VPS servers. Includes a CLI tool for local terminal m
 - **2FA Authentication** - TOTP two-factor auth with QR code setup
 - **Settings Panel** - All configuration via web UI, password management
 
-### CLI Tool
-
-- **Interactive Menu** - Full-featured terminal UI with colored output
-- **Quick Commands** - `--status`, `--sites`, `--ssl`, `--services`, `--firewall`, etc.
-- **Site Deployment** - Deploy static sites and Node.js apps via rsync
-- **Server Reboot** - Safe reboot with confirmation
-
 ## Quick Start
-
-### Web Dashboard
 
 ```bash
 # Clone repository
@@ -64,74 +53,43 @@ pm2 start "cd /var/www/vps-manager && venv/bin/python app.py" \
 pm2 save
 ```
 
-### CLI Tool
-
-```bash
-# Interactive mode
-python3 vps-manager.py
-
-# Quick status check
-python3 vps-manager.py --status
-
-# All info at once
-python3 vps-manager.py --all
-```
-
-## CLI Usage
-
-```
-python3 vps-manager.py              # Interactive menu
-python3 vps-manager.py --status     # Server overview
-python3 vps-manager.py --sites      # Websites + HTTP check
-python3 vps-manager.py --pm2        # PM2 processes
-python3 vps-manager.py --ssl        # SSL certificates
-python3 vps-manager.py --services   # Service status
-python3 vps-manager.py --backup     # Backup status
-python3 vps-manager.py --deploy SITE  # Deploy site
-python3 vps-manager.py --firewall   # Firewall & security
-python3 vps-manager.py --reboot     # Server reboot
-python3 vps-manager.py --all        # Everything at once
-```
-
 ## Project Structure
 
 ```
-├── vps-manager.py          # CLI tool (runs from local machine via SSH)
-├── web/
-│   ├── app.py              # Flask web dashboard (runs on VPS)
-│   ├── config.py           # Configuration loader with defaults
-│   ├── requirements.txt    # Python dependencies
-│   ├── static/
-│   │   ├── style.css       # Dark theme stylesheet
-│   │   ├── sw.js           # Service worker (push notifications)
-│   │   ├── manifest.json   # PWA manifest
-│   │   └── *.png           # App icons
-│   └── templates/
-│       ├── base.html       # Layout with sidebar navigation
-│       ├── login.html      # Login + 2FA
-│       ├── dashboard.html  # Server overview
-│       ├── services.html   # Service monitoring
-│       ├── websites.html   # Hosted sites
-│       ├── ssl.html        # SSL certificates
-│       ├── pm2.html        # PM2 processes
-│       ├── updates.html    # System updates
-│       ├── firewall.html   # Firewall & security
-│       ├── nginx_logs.html # Log viewer
-│       ├── databases.html  # MariaDB databases
-│       ├── files.html      # File browser
-│       ├── terminal.html   # Web terminal
-│       ├── cronjobs.html   # Cron & timers
-│       ├── disk.html       # Disk usage
-│       ├── backup.html     # Backup status
-│       ├── notifications.html # Push notification settings
-│       ├── settings.html   # Configuration panel
-│       └── icons.html      # SVG icon macros
-└── CLAUDE.md               # AI assistant context
+web/
+├── app.py              # Flask web dashboard
+├── config.py           # Configuration loader with defaults
+├── requirements.txt    # Python dependencies
+├── static/
+│   ├── style.css       # Dark theme stylesheet
+│   ├── sw.js           # Service worker (push notifications)
+│   ├── manifest.json   # PWA manifest
+│   └── *.png           # App icons
+└── templates/
+    ├── base.html       # Layout with sidebar navigation
+    ├── login.html      # Login + 2FA
+    ├── dashboard.html  # Server overview
+    ├── services.html   # Service monitoring
+    ├── websites.html   # Hosted sites
+    ├── ssl.html        # SSL certificates
+    ├── pm2.html        # PM2 processes
+    ├── updates.html    # System updates
+    ├── firewall.html   # Firewall & security
+    ├── nginx_logs.html # Log viewer
+    ├── databases.html  # MariaDB databases
+    ├── files.html      # File browser
+    ├── terminal.html   # Web terminal
+    ├── cronjobs.html   # Cron & timers
+    ├── disk.html       # Disk usage
+    ├── backup.html     # Backup status
+    ├── notifications.html # Push notification settings
+    ├── settings.html   # Configuration panel
+    └── icons.html      # SVG icon macros
 ```
 
 ## Configuration
 
-The web dashboard uses `web/data/config.json` for all settings. On first run, defaults are used. Configuration can be changed via the Settings page or by editing the JSON file directly.
+The dashboard uses `data/config.json` for all settings. On first run, defaults are used. Configuration can be changed via the Settings page or by editing the JSON file directly.
 
 ### Authentication
 

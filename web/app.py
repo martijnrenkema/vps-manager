@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 VPS Manager - Web Interface
-Flask-based web dashboard for managing VPS 212.227.135.150
-Runs locally on the VPS itself (subprocess.run instead of SSH)
+Flask-based web dashboard for managing a VPS.
+Runs locally on the VPS itself (subprocess.run instead of SSH).
 """
 
 import os
@@ -47,7 +47,7 @@ CONFIG = load_config()
 app.permanent_session_lifetime = timedelta(hours=CONFIG['auth'].get('session_lifetime_hours', 24))
 
 # Auth configuration - env vars take precedence, then config, then defaults
-USERNAME = os.environ.get('VPS_MANAGER_USER') or CONFIG['auth'].get('username') or 'martijn'
+USERNAME = os.environ.get('VPS_MANAGER_USER') or CONFIG['auth'].get('username') or 'admin'
 if CONFIG['auth'].get('password_hash'):
     PASSWORD_HASH = CONFIG['auth']['password_hash']
 else:
@@ -136,7 +136,7 @@ def _send_push(subscription_info, payload, private_key_pem):
             subscription_info=subscription_info,
             data=json.dumps(payload),
             vapid_private_key=private_key_pem,
-            vapid_claims={"sub": CONFIG.get('vapid_mailto', 'mailto:push@vps.dmmusic.nl')},
+            vapid_claims={"sub": CONFIG.get('vapid_mailto', 'mailto:admin@localhost')},
         )
         return True
     except WebPushException as e:
@@ -1551,7 +1551,11 @@ def disk():
 @login_required
 def terminal():
     session.setdefault('terminal_cwd', '/')
-    return render_template('terminal.html', cwd=session['terminal_cwd'])
+    result = run_cmd("whoami", timeout=5)
+    sys_user = result.stdout.strip() if result.returncode == 0 else 'user'
+    result = run_cmd("hostname -s", timeout=5)
+    sys_host = result.stdout.strip() if result.returncode == 0 else 'vps'
+    return render_template('terminal.html', cwd=session['terminal_cwd'], sys_user=sys_user, sys_host=sys_host)
 
 
 @app.route('/terminal/exec', methods=['POST'])

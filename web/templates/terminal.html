@@ -11,7 +11,7 @@
     <div class="card-body" style="padding:0">
         <div id="termOutput" class="term-output"></div>
         <div class="term-input-wrap">
-            <span class="term-prompt" id="termPrompt">martijn@vps:~$</span>
+            <span class="term-prompt" id="termPrompt">{{ sys_user }}@{{ sys_host }}:~$</span>
             <input type="text" id="termInput" class="term-input" autocomplete="off" autocapitalize="off" spellcheck="false" autofocus>
         </div>
     </div>
@@ -75,11 +75,15 @@
     var histIdx = -1;
     var busy = false;
 
+    var sysUser = '{{ sys_user }}';
+    var sysHost = '{{ sys_host }}';
+    var homeDir = '/home/' + sysUser;
+
     function getPrompt() {
         var d = cwd;
-        if (d === '/home/martijn') d = '~';
-        else if (d.indexOf('/home/martijn/') === 0) d = '~/' + d.substring(14);
-        return 'martijn@vps:' + d + '$';
+        if (d === homeDir) d = '~';
+        else if (d.indexOf(homeDir + '/') === 0) d = '~/' + d.substring(homeDir.length + 1);
+        return sysUser + '@' + sysHost + ':' + d + '$';
     }
 
     function addLine(text, cls) {
