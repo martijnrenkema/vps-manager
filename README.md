@@ -168,6 +168,69 @@ Web Push notifications with configurable categories:
 | Backup | On | Backup failures, no backup in 48h |
 | System Updates | Off | Available package updates |
 
+## Backup Monitoring
+
+The dashboard tracks backup status via a webhook endpoint (`POST /api/backup/webhook`). No extra ports or inbound connections are needed — the architecture is designed so all connections are outbound or local:
+
+1. **VPS backup script** runs via cron, reports status to `http://127.0.0.1:5050` (localhost)
+2. **Remote backup pull** (e.g. NAS) connects to VPS via SSH to rsync files, then reports status to the dashboard's public HTTPS URL
+
+```
+┌─────────┐  03:00 cron   ┌──────────────────────┐
+│   VPS   │──────────────→ │  vps-backup.sh       │
+│         │                │  webhook → localhost  │
+│         │                └──────────────────────┘
+│         │
+│         │  03:30 cron   ┌──────────────────────┐
+│         │ ←─── SSH ──── │  NAS pull-backup.sh  │
+│         │               │  webhook → HTTPS     │
+└─────────┘               └──────────────────────┘
+```
+
+### VPS Backup Script
+
+Add webhook calls to your backup script on the VPS:
+
+```bash
+WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
+
+# Trap errors for failure reporting
+report_failure() {
+    curl -s -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" \
+        -d "{\"status\": \"failure\", \"details\": \"$1\"}" > /dev/null 2>&1
+}
+trap 'report_failure "Backup failed at line $LINENO"' ERR
+set -e
+
+# ... your backup commands ...
+
+# Report success at the end
+curl -s -X POST "$WEBHOOK_URL" \
+    -H "Content-Type: application/json" \
+    -d '{"status": "success", "details": "Backup completed"}' > /dev/null 2>&1
+```
+
+### Remote Pull Script (NAS / offsite)
+
+For a remote machine that pulls backups via SSH and rsync:
+
+```bash
+WEBHOOK_URL="https://your-vps-dashboard.example.com/api/backup/webhook"
+
+rsync -avz --delete -e "ssh" user@vps:/var/backups/ /local/backups/
+
+if [ $? -eq 0 ]; then
+    curl -s -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" \
+        -d '{"status": "success", "details": "Pull completed"}'
+else
+    curl -s -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" \
+        -d '{"status": "failure", "details": "Pull failed"}'
+fi
+```
+
 ## Dependencies
 
 - [Flask](https://flask.palletsprojects.com/) - Web framework

@@ -111,6 +111,63 @@
     </div>
 </div>
 
+<!-- DDoS Detection -->
+<div class="card" style="margin-top:16px">
+    <div class="card-header">
+        {{ icon('activity') }} DDoS Detection
+        <span class="tooltip-icon" data-bs-toggle="tooltip" title="Real-time connection monitoring. High connection counts from a single IP or many SYN_RECV connections can indicate a DDoS attack.">?</span>
+    </div>
+    <div class="card-body">
+        {% if data.ddos %}
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
+            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+                <div class="label">Established</div>
+                <div class="value" style="font-size:24px;color:{% if data.ddos.total_connections > data.ddos.conn_threshold %}var(--red){% elif data.ddos.total_connections > data.ddos.conn_threshold * 0.7 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.ddos.total_connections }}</div>
+                <div class="sub">threshold: {{ data.ddos.conn_threshold }}</div>
+            </div>
+            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+                <div class="label">SYN_RECV</div>
+                <div class="value" style="font-size:24px;color:{% if data.ddos.syn_recv > data.ddos.syn_threshold %}var(--red){% elif data.ddos.syn_recv > data.ddos.syn_threshold * 0.5 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.ddos.syn_recv }}</div>
+                <div class="sub">threshold: {{ data.ddos.syn_threshold }}</div>
+            </div>
+            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+                <div class="label">Top IP</div>
+                {% if data.ddos.top_ips %}
+                <div class="value" style="font-size:16px;color:{% if data.ddos.top_ips[0].count > data.ddos.ip_threshold %}var(--red){% else %}var(--text){% endif %}">{{ data.ddos.top_ips[0].count }}x</div>
+                <div class="sub">{{ data.ddos.top_ips[0].ip }}</div>
+                {% else %}
+                <div class="value" style="font-size:24px;color:var(--green)">0</div>
+                <div class="sub">no connections</div>
+                {% endif %}
+            </div>
+        </div>
+        {% if data.ddos.top_ips|length > 1 %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>IP Address</th><th>Connections</th></tr></thead>
+                <tbody>
+                    {% for entry in data.ddos.top_ips %}
+                    <tr>
+                        <td><code>{{ entry.ip }}</code></td>
+                        <td>
+                            {% if entry.count > data.ddos.ip_threshold %}
+                                <span class="badge badge-red">{{ entry.count }}</span>
+                            {% else %}
+                                {{ entry.count }}
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+        {% else %}
+            <div class="empty-state">DDoS detection disabled</div>
+        {% endif %}
+    </div>
+</div>
+
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
     <div class="card">
         <div class="card-header">

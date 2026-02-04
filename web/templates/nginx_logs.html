@@ -5,7 +5,7 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('file-text') }} Nginx Error Log (last 20)</div>
+    <div class="card-header">{{ icon('file-text') }} Nginx Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">global (last 20 entries)</span></div>
     <div class="card-body" style="padding:0">
         {% if data.errors %}
             <div class="log-entries">
@@ -32,7 +32,7 @@
 
 {% if data.php_errors %}
 <div class="card">
-    <div class="card-header">{{ icon('file-text') }} PHP-FPM Error Log</div>
+    <div class="card-header">{{ icon('file-text') }} PHP-FPM Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">php-fpm (last 20 entries)</span></div>
     <div class="card-body" style="padding:0">
         <div class="log-entries">
             {% for entry in data.php_errors %}
@@ -53,21 +53,23 @@
 
 {% if data.per_site %}
 <div class="card">
-    <div class="card-header">{{ icon('folder') }} Error logs per site</div>
+    <div class="card-header">{{ icon('folder') }} Error Logs per Site <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">nginx</span></div>
     <div class="card-body">
         <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
-                        <th>Log file</th>
+                        <th>Site</th>
+                        <th>Log File</th>
                         <th>Lines</th>
-                        <th>Last line</th>
+                        <th></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for log in data.per_site %}
                     <tr>
-                        <td><code>{{ log.name }}</code></td>
+                        <td><strong>{{ log.site }}</strong></td>
+                        <td><code style="font-size:12px">{{ log.name }}</code></td>
                         <td>
                             {% if log.lines == '0' %}
                                 <span class="badge badge-green">0</span>
@@ -75,7 +77,11 @@
                                 <span class="badge badge-yellow">{{ log.lines }}</span>
                             {% endif %}
                         </td>
-                        <td><span style="color:var(--text-muted);font-size:12px">{{ log.last }}</span></td>
+                        <td>
+                            {% if log.lines != '0' %}
+                            <button class="btn btn-sm" onclick="viewLog('{{ log.path }}', '{{ log.site }}')">{{ icon('file-text') }} View</button>
+                            {% endif %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -87,7 +93,7 @@
 
 {% if data.access_summary %}
 <div class="card">
-    <div class="card-header">{{ icon('bar-chart') }} Access log summary</div>
+    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">nginx</span></div>
     <div class="card-body">
         <div class="table-wrap">
             <table>
@@ -122,4 +128,53 @@
     </div>
 </div>
 {% endif %}
+
+<!-- Log viewer modal -->
+<div id="logModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;padding:24px;overflow:auto" onclick="if(event.target===this)closeLogModal()">
+    <div style="max-width:900px;margin:40px auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+            <div>
+                <strong id="logModalTitle">Log</strong>
+                <span id="logModalSub" style="color:var(--text-muted);font-size:13px;margin-left:8px"></span>
+            </div>
+            <button onclick="closeLogModal()" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;line-height:1">&times;</button>
+        </div>
+        <div style="padding:16px 20px;max-height:70vh;overflow:auto">
+            <pre id="logModalContent" style="font-size:12px;margin:0;white-space:pre-wrap;word-break:break-all">Loading...</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function viewLog(path, site) {
+    document.getElementById('logModal').style.display = 'block';
+    document.getElementById('logModalTitle').textContent = site;
+    document.getElementById('logModalSub').textContent = 'nginx error log (last 50 lines)';
+    document.getElementById('logModalContent').textContent = 'Loading...';
+    document.body.style.overflow = 'hidden';
+
+    try {
+        var res = await fetch('/api/nginx-log?file=' + encodeURIComponent(path) + '&lines=50');
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('logModalContent').textContent = data.content || '(empty)';
+        } else {
+            document.getElementById('logModalContent').textContent = 'Error: ' + (data.error || 'Unknown error');
+        }
+    } catch (e) {
+        document.getElementById('logModalContent').textContent = 'Error: ' + e.message;
+    }
+}
+
+function closeLogModal() {
+    document.getElementById('logModal').style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeLogModal();
+});
+</script>
 {% endblock %}

@@ -58,18 +58,28 @@
 <div class="card" style="margin-bottom:16px">
     <div class="card-header">{{ icon('link') }} Webhook Endpoint</div>
     <div class="card-body">
-        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:8px">
-            Add this to your backup script to report success or failure:
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+            Add webhook calls to your backup scripts to track status. Use <code>localhost</code> for scripts running on the VPS, or the public URL for remote scripts (e.g. NAS pull).
         </p>
-        <pre style="font-size:12px"># On success:
-curl -X POST {{ request.url_root }}api/backup/webhook \
+
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">VPS backup script (localhost)</div>
+        <pre style="font-size:12px;margin-bottom:16px">WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
+
+# Report success:
+curl -s -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -d '{"status": "success", "details": "Backup completed"}'
 
-# On failure:
-curl -X POST {{ request.url_root }}api/backup/webhook \
+# Report failure:
+curl -s -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
-  -d '{"status": "failure", "details": "Error message here"}'</pre>
+  -d '{"status": "failure", "details": "Error message"}'</pre>
+
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Remote pull script (NAS / offsite)</div>
+        <pre style="font-size:12px">WEBHOOK_URL="{{ request.url_root }}api/backup/webhook"
+
+# Same format, uses the public HTTPS URL.
+# No extra ports needed — connects via existing HTTPS.</pre>
     </div>
 </div>
 

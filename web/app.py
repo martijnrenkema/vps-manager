@@ -949,8 +949,12 @@ def get_nginx_logs():
             line_count = size_result.stdout.strip() if size_result.returncode == 0 else '?'
             last_result = run_cmd(f"tail -1 {log_file} 2>/dev/null")
             last_line = last_result.stdout.strip()[:100] if last_result.stdout.strip() else 'empty'
+            # Derive site name from log filename
+            site = name.replace('-error.log', '').replace('.error.log', '').replace('error.log', 'global')
             data['per_site'].append({
                 'name': name,
+                'site': site,
+                'path': log_file,
                 'lines': line_count,
                 'last': last_line,
             })
@@ -1217,18 +1221,11 @@ def get_dashboard_alerts(data, services, pm2, ssl):
             alerts.append({'severity': 'warning', 'message': f"SSL certificate '{domain}' expires in {days} days", 'link': '/ssl'})
 
     # Quick updates check (fast, cached by apt)
-    result = run_cmd("apt list --upgradable 2>/dev/null | grep -c '/'", timeout=10)
-    try:
-        update_count = int(result.stdout.strip()) if result.returncode == 0 else 0
-    except ValueError:
-        update_count = 0
-    if update_count > 0:
-        sec_result = run_cmd("apt list --upgradable 2>/dev/null | grep -i security | wc -l", timeout=10)
-        try:
-            sec_count = int(sec_result.stdout.strip()) if sec_result.returncode == 0 else 0
-        except ValueError:
-            sec_count = 0
-        msg = f"{update_count} updates available"
+    updates = get_system_updates()
+    installable = [u for u in updates if u['category'] in ('security', 'regular')]
+    sec_count = len([u for u in installable if u['category'] == 'security'])
+    if installable:
+        msg = f"{len(installable)} updates available"
         if sec_count > 0:
             msg += f" (including {sec_count} security)"
         alerts.append({'severity': 'warning', 'message': msg, 'link': '/updates'})
@@ -1299,6 +1296,44 @@ def check_ddos_indicators():
                 pass
 
     return alerts
+
+
+def get_ddos_stats():
+    """Get current connection stats for the firewall DDoS card"""
+    stats = {'total_connections': 0, 'syn_recv': 0, 'top_ips': []}
+
+    result = run_cmd("ss -t state established 2>/dev/null | tail -n +2 | wc -l")
+    if result.returncode == 0:
+        try:
+            stats['total_connections'] = int(result.stdout.strip())
+        except ValueError:
+            pass
+
+    result = run_cmd("ss -t state syn-recv 2>/dev/null | tail -n +2 | wc -l")
+    if result.returncode == 0:
+        try:
+            stats['syn_recv'] = int(result.stdout.strip())
+        except ValueError:
+            pass
+
+    result = run_cmd(
+        "ss -t state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -rn | head -5"
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                try:
+                    stats['top_ips'].append({'count': int(parts[0]), 'ip': parts[1]})
+                except ValueError:
+                    pass
+
+    ddos_cfg = CONFIG.get('ddos_detection', {})
+    stats['conn_threshold'] = ddos_cfg.get('connection_threshold', 100)
+    stats['syn_threshold'] = ddos_cfg.get('syn_threshold', 50)
+    stats['ip_threshold'] = ddos_cfg.get('single_ip_threshold', 50)
+
+    return stats
 
 
 def is_path_allowed(path):
@@ -1448,6 +1483,7 @@ def backup():
 @login_required
 def firewall():
     data = get_firewall_security()
+    data['ddos'] = get_ddos_stats()
     return render_template('firewall.html', data=data)
 
 
@@ -1472,6 +1508,22 @@ def install_updates():
 def nginx_logs_page():
     data = get_nginx_logs()
     return render_template('nginx_logs.html', data=data)
+
+
+@app.route('/api/nginx-log')
+@login_required
+def api_nginx_log():
+    """Get content of a specific nginx log file"""
+    log_file = request.args.get('file', '')
+    lines = int(request.args.get('lines', 50))
+    lines = min(lines, 200)
+    # Only allow files in /var/log/nginx/
+    if not log_file or not log_file.startswith('/var/log/nginx/') or '..' in log_file:
+        return jsonify({'error': 'Invalid log file'}), 400
+    result = run_cmd(f"sudo tail -{lines} {log_file} 2>/dev/null")
+    if result.returncode == 0:
+        return jsonify({'content': result.stdout, 'file': os.path.basename(log_file)})
+    return jsonify({'error': 'Could not read log file'}), 500
 
 
 @app.route('/databases')
