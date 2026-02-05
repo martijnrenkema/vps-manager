@@ -7,6 +7,8 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
+![VPS Manager Dashboard](screenshot.jpg)
+
 ## Features
 
 - **Server Overview** - CPU, RAM, disk, swap, load average, uptime with metrics charts
