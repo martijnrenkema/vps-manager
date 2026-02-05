@@ -9,21 +9,22 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 
 ## Features
 
-- **Server Overview** - CPU, RAM, disk, swap, load average, uptime
+- **Server Overview** - CPU, RAM, disk, swap, load average, uptime with metrics charts
 - **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with auto-restart
 - **Website Management** - All hosted sites with HTTP status checks
 - **SSL Certificates** - Expiry dates, warnings, and auto-renewal status
 - **PM2 Processes** - Node.js process management (restart, stop, logs)
+- **Auto-Update** - Check GitHub releases, one-click self-update with git pull + PM2 restart
 - **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
-- **Firewall & Security** - UFW rules, Fail2ban config, jail status, banned IPs
+- **Firewall & Security** - UFW rules, Fail2ban config, IP banning/unbanning, ban duration tracking, whitelist management
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
 - **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
 - **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
-- **File Browser** - Browse, upload, download, edit files on the server
+- **File Browser** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown)
 - **Web Terminal** - Browser-based command execution
 - **Cron & Timers** - Crontab and systemd timers with human-readable schedules
-- **Backup Monitoring** - Status tracking, history timeline, webhook endpoint
-- **Push Notifications** - Web Push alerts for critical events, configurable categories
+- **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
+- **Push Notifications** - Web Push alerts for critical events, configurable categories, deduplication
 - **2FA Authentication** - TOTP two-factor auth with QR code setup
 - **Settings Panel** - All configuration via web UI, password management
 
@@ -53,12 +54,28 @@ pm2 start "cd /var/www/vps-manager && venv/bin/python app.py" \
 pm2 save
 ```
 
+## Updating
+
+The dashboard has a built-in auto-update system. Go to **Updates** in the sidebar to check for new versions and install them with one click. This requires the deployment directory to be a git repository:
+
+```bash
+# On VPS: initialize git (one-time setup)
+cd /var/www/vps-manager
+git init
+git remote add origin https://github.com/martijnrenkema/vps-manager.git
+git fetch origin && git reset --hard origin/main
+```
+
+After setup, updates are handled entirely through the web interface.
+
 ## Project Structure
 
 ```
 web/
 ├── app.py              # Flask web dashboard
 ├── config.py           # Configuration loader with defaults
+├── VERSION             # Current version number
+├── vps-backup.sh       # VPS backup script
 ├── requirements.txt    # Python dependencies
 ├── static/
 │   ├── style.css       # Dark theme stylesheet
@@ -68,20 +85,20 @@ web/
 └── templates/
     ├── base.html       # Layout with sidebar navigation
     ├── login.html      # Login + 2FA
-    ├── dashboard.html  # Server overview
+    ├── dashboard.html  # Server overview with metrics charts
     ├── services.html   # Service monitoring
     ├── websites.html   # Hosted sites
     ├── ssl.html        # SSL certificates
     ├── pm2.html        # PM2 processes
-    ├── updates.html    # System updates
-    ├── firewall.html   # Firewall & security
+    ├── updates.html    # System + app updates
+    ├── firewall.html   # Firewall, banning & whitelist
     ├── nginx_logs.html # Log viewer
     ├── databases.html  # MariaDB databases
-    ├── files.html      # File browser
+    ├── files.html      # File browser with upload & permissions
     ├── terminal.html   # Web terminal
     ├── cronjobs.html   # Cron & timers
     ├── disk.html       # Disk usage
-    ├── backup.html     # Backup status
+    ├── backup.html     # Backup status & downloads
     ├── notifications.html # Push notification settings
     ├── settings.html   # Configuration panel
     └── icons.html      # SVG icon macros
