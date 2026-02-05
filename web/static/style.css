@@ -1617,6 +1617,187 @@ code {
     .chart-wrap { height: 150px; }
 }
 
+/* Chmod matrix */
+.chmod-matrix {
+    display: grid;
+    grid-template-columns: 80px repeat(3, 1fr);
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--border);
+}
+
+.chmod-header {
+    background: var(--bg-primary);
+    padding: 8px 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+}
+
+.chmod-header:first-child {
+    text-align: left;
+}
+
+.chmod-label {
+    background: var(--bg-tertiary);
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    border-bottom: 1px solid var(--border);
+}
+
+.chmod-matrix > .chmod-label:nth-last-child(-n+4),
+.chmod-matrix > .chmod-cell:nth-last-child(-n+3) {
+    border-bottom: none;
+}
+
+.chmod-cell {
+    background: var(--bg-tertiary);
+    padding: 10px 12px;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+}
+
+.chmod-cell input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--green);
+    cursor: pointer;
+}
+
+/* File upload: drag & drop overlay */
+.file-browser {
+    position: relative;
+}
+
+.drop-zone-overlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(88, 166, 255, 0.06);
+    border: 2px dashed var(--accent);
+    border-radius: 10px;
+    z-index: 10;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+}
+
+.drop-zone-overlay.active {
+    display: flex;
+}
+
+.drop-zone-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    color: var(--accent);
+    font-size: 16px;
+    font-weight: 600;
+    padding: 40px;
+    background: rgba(13, 17, 23, 0.85);
+    border-radius: 10px;
+}
+
+/* File upload: progress area */
+.upload-progress-area {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.upload-progress-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.upload-progress-list {
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.upload-file-entry {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 4px 12px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    font-size: 13px;
+    align-items: center;
+}
+
+.upload-file-entry:last-child {
+    border-bottom: none;
+}
+
+.upload-file-entry.upload-done {
+    opacity: 0.7;
+}
+
+.upload-file-entry.upload-error {
+    background: var(--red-bg);
+}
+
+.upload-file-info {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.upload-file-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary);
+}
+
+.upload-file-size {
+    color: var(--text-muted);
+    font-size: 11px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.upload-file-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    text-align: right;
+    white-space: nowrap;
+}
+
+.upload-file-status.status-ok {
+    color: var(--green);
+}
+
+.upload-file-status.status-err {
+    color: var(--red);
+}
+
+.upload-file-progress {
+    grid-column: 1 / -1;
+    height: 4px;
+}
+
 /* PWA install banner */
 .pwa-install-banner {
     position: fixed;

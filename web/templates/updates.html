@@ -4,6 +4,45 @@
 {% block page_title %}System Updates{% endblock %}
 
 {% block content %}
+<!-- VPS Manager Updates -->
+<div class="card" style="margin-bottom:20px">
+    <div class="card-header" style="border-left:3px solid var(--purple)">
+        {{ icon('download-cloud') }} VPS Manager Updates
+        <span class="badge" id="appVersionBadge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">...</span>
+    </div>
+    <div class="card-body">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <span style="color:var(--text-secondary);font-size:13px">Current version: <strong id="appCurrentVersion">...</strong></span>
+            <button class="btn btn-sm" id="appCheckBtn" onclick="checkAppUpdate()">{{ icon('refresh') }} Check for updates</button>
+        </div>
+
+        <div id="appUpdateAvailable" style="display:none">
+            <div style="padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;margin-bottom:12px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span class="badge badge-green">New version available</span>
+                    <strong id="appNewVersion" style="color:var(--text-primary)"></strong>
+                    <span id="appPublishedAt" style="color:var(--text-muted);font-size:12px;margin-left:auto"></span>
+                </div>
+                <div id="appReleaseNotes" style="color:var(--text-secondary);font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;margin-top:8px"></div>
+            </div>
+            <button class="btn btn-sm btn-green" id="appInstallBtn" onclick="showConfirm('Install update', 'Pull the latest version from GitHub and restart the application?', installAppUpdate)">{{ icon('download') }} Install update</button>
+        </div>
+
+        <div id="appUpToDate" style="display:none">
+            <span class="badge badge-green">Up to date</span>
+        </div>
+
+        <div id="appUpdateProgress" style="display:none;margin-top:12px">
+            <div style="margin-bottom:8px">
+                <span class="badge badge-yellow" id="appUpdateBadge">Installing...</span>
+            </div>
+            <pre id="appUpdateLog" style="font-size:12px;max-height:150px;overflow-y:auto">Pulling latest changes...</pre>
+        </div>
+
+        <div id="appUpdateError" style="display:none;padding:8px 12px;background:var(--red-bg);border:1px solid rgba(220,53,69,0.3);border-radius:6px;font-size:13px;color:var(--red)"></div>
+    </div>
+</div>
+
 {% set security_updates = updates|selectattr('category', 'equalto', 'security')|list %}
 {% set regular_updates = updates|selectattr('category', 'equalto', 'regular')|list %}
 {% set esm_updates = updates|selectattr('category', 'equalto', 'esm')|list %}
@@ -194,5 +233,141 @@ async function installUpdates() {
 
     if (installBtn) installBtn.disabled = false;
 }
+
+// VPS Manager self-update functions
+async function checkAppUpdate() {
+    var checkBtn = document.getElementById('appCheckBtn');
+    var versionBadge = document.getElementById('appVersionBadge');
+    var currentEl = document.getElementById('appCurrentVersion');
+    var availableEl = document.getElementById('appUpdateAvailable');
+    var upToDateEl = document.getElementById('appUpToDate');
+    var errorEl = document.getElementById('appUpdateError');
+
+    checkBtn.disabled = true;
+    versionBadge.textContent = 'Checking...';
+    versionBadge.style.background = 'var(--bg-tertiary)';
+    versionBadge.style.color = 'var(--text-secondary)';
+    availableEl.style.display = 'none';
+    upToDateEl.style.display = 'none';
+    errorEl.style.display = 'none';
+
+    try {
+        var res = await fetch('/api/update/check');
+        var data = await res.json();
+
+        if (!res.ok) {
+            errorEl.textContent = data.message || 'Failed to check for updates';
+            errorEl.style.display = 'block';
+            versionBadge.textContent = 'Error';
+            checkBtn.disabled = false;
+            return;
+        }
+
+        currentEl.textContent = 'v' + data.current_version;
+        versionBadge.textContent = 'v' + data.current_version;
+
+        if (data.update_available) {
+            document.getElementById('appNewVersion').textContent = 'v' + data.latest_version;
+            document.getElementById('appReleaseNotes').textContent = data.release_notes || 'No release notes.';
+            if (data.published_at) {
+                var d = new Date(data.published_at);
+                document.getElementById('appPublishedAt').textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            }
+            availableEl.style.display = 'block';
+            versionBadge.textContent = 'Update available';
+            versionBadge.style.background = 'var(--green-bg)';
+            versionBadge.style.color = 'var(--green)';
+        } else {
+            upToDateEl.style.display = 'block';
+        }
+    } catch (e) {
+        errorEl.textContent = 'Could not connect to check for updates.';
+        errorEl.style.display = 'block';
+        versionBadge.textContent = 'Error';
+    }
+
+    checkBtn.disabled = false;
+}
+
+async function installAppUpdate() {
+    var installBtn = document.getElementById('appInstallBtn');
+    var progressEl = document.getElementById('appUpdateProgress');
+    var logEl = document.getElementById('appUpdateLog');
+    var badgeEl = document.getElementById('appUpdateBadge');
+    var errorEl = document.getElementById('appUpdateError');
+
+    installBtn.disabled = true;
+    errorEl.style.display = 'none';
+    progressEl.style.display = 'block';
+    logEl.textContent = 'Pulling latest changes from GitHub...\n';
+    badgeEl.textContent = 'Installing...';
+    badgeEl.className = 'badge badge-yellow';
+
+    try {
+        var res = await fetch('/api/update/install', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
+        var data = await res.json();
+
+        if (res.ok) {
+            logEl.textContent = (data.output || 'Done.') + '\n\nUpdated: v' + data.previous_version + ' -> v' + data.new_version;
+
+            if (data.restart === 'ok') {
+                badgeEl.textContent = 'Restart required';
+                badgeEl.className = 'badge badge-yellow';
+                logEl.textContent += '\n\nThe application is restarting. This page will reload automatically.';
+                showToast('Update installed, restarting...', 'success');
+                // Wait for PM2 to restart the process, then reload
+                setTimeout(function() { location.reload(); }, 4000);
+            } else {
+                badgeEl.textContent = 'Updated (restart manually)';
+                badgeEl.className = 'badge badge-yellow';
+                logEl.textContent += '\n\nPM2 restart failed. Please restart manually: pm2 restart vps-manager';
+                showToast('Update installed, manual restart needed', 'success');
+            }
+        } else {
+            badgeEl.textContent = 'Update failed';
+            badgeEl.className = 'badge badge-red';
+            logEl.textContent = data.output || data.message || 'Unknown error';
+            showToast('Failed to install update', 'error');
+            installBtn.disabled = false;
+        }
+    } catch (e) {
+        badgeEl.textContent = 'Connection lost';
+        badgeEl.className = 'badge badge-red';
+        logEl.textContent = 'Connection lost. If the update was in progress, the application may be restarting.';
+        showToast('Connection lost during update', 'error');
+        // Try reloading after a delay in case the app restarted
+        setTimeout(function() { location.reload(); }, 5000);
+    }
+}
+
+// Load current version on page load
+(function() {
+    fetch('/api/update/check').then(function(res) {
+        return res.json();
+    }).then(function(data) {
+        if (data.current_version) {
+            document.getElementById('appCurrentVersion').textContent = 'v' + data.current_version;
+            document.getElementById('appVersionBadge').textContent = 'v' + data.current_version;
+            if (data.update_available) {
+                document.getElementById('appNewVersion').textContent = 'v' + data.latest_version;
+                document.getElementById('appReleaseNotes').textContent = data.release_notes || 'No release notes.';
+                if (data.published_at) {
+                    var d = new Date(data.published_at);
+                    document.getElementById('appPublishedAt').textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+                }
+                document.getElementById('appUpdateAvailable').style.display = 'block';
+                var badge = document.getElementById('appVersionBadge');
+                badge.textContent = 'Update available';
+                badge.style.background = 'var(--green-bg)';
+                badge.style.color = 'var(--green)';
+            } else {
+                document.getElementById('appUpToDate').style.display = 'block';
+            }
+        }
+    }).catch(function() {
+        document.getElementById('appCurrentVersion').textContent = 'unknown';
+        document.getElementById('appVersionBadge').textContent = 'unknown';
+    });
+})();
 </script>
 {% endblock %}

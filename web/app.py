@@ -1032,7 +1032,8 @@ def get_backup_status():
     backup_dir = backup_cfg.get('backup_dir', '/var/backups/vps/')
     db_backup_dir = backup_cfg.get('db_backup_dir', '/var/backups/vps/databases/')
 
-    data = {'log': '', 'size': '', 'db_backups': '', 'status': None, 'history': []}
+    data = {'log': '', 'size': '', 'db_backups': '', 'status': None, 'history': [],
+            'backup_files': [], 'db_files': [], 'site_backups': []}
 
     result = run_cmd(f"tail -5 {log_path} 2>/dev/null")
     if result.returncode == 0:
@@ -1045,6 +1046,44 @@ def get_backup_status():
     result = run_cmd(f"ls -lt {db_backup_dir} 2>/dev/null | head -5")
     if result.returncode == 0:
         data['db_backups'] = result.stdout.strip()
+
+    # List backup files with sizes for download
+    for dir_path, key in [(backup_dir, 'backup_files'), (db_backup_dir, 'db_files')]:
+        try:
+            p = Path(dir_path)
+            if p.is_dir():
+                files = []
+                for f in sorted(p.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
+                    if f.is_file():
+                        st = f.stat()
+                        files.append({
+                            'name': f.name,
+                            'path': str(f),
+                            'size': format_file_size(st.st_size),
+                            'size_bytes': st.st_size,
+                            'modified': datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M'),
+                        })
+                data[key] = files[:20]
+        except OSError:
+            pass
+
+    # List site backup directories with total sizes
+    sites_dir = Path(backup_dir) / 'sites'
+    try:
+        if sites_dir.is_dir():
+            for d in sorted(sites_dir.iterdir(), key=lambda x: x.name):
+                if d.is_dir():
+                    total_size = sum(f.stat().st_size for f in d.rglob('*') if f.is_file())
+                    latest_mtime = max((f.stat().st_mtime for f in d.rglob('*') if f.is_file()), default=0)
+                    data['site_backups'].append({
+                        'name': d.name,
+                        'path': str(d),
+                        'size': format_file_size(total_size),
+                        'size_bytes': total_size,
+                        'modified': datetime.fromtimestamp(latest_mtime).strftime('%Y-%m-%d %H:%M') if latest_mtime else '-',
+                    })
+    except OSError:
+        pass
 
     # Load tracked backup status
     status = _load_backup_status()
@@ -1875,12 +1914,253 @@ def backup():
     return render_template('backup.html', data=data)
 
 
+@app.route('/api/backup/download')
+@login_required
+def backup_download():
+    """Download a backup file (restricted to backup directories)"""
+    path = request.args.get('path', '')
+    if not path:
+        return jsonify({'error': 'No path specified'}), 400
+
+    real_path = os.path.realpath(path)
+    backup_cfg = CONFIG.get('backup', {})
+    backup_dir = os.path.realpath(backup_cfg.get('backup_dir', '/var/backups/vps/'))
+    db_backup_dir = os.path.realpath(backup_cfg.get('db_backup_dir', '/var/backups/vps/databases/'))
+
+    # Only allow paths within backup directories
+    allowed = False
+    for allowed_dir in (backup_dir, db_backup_dir):
+        if real_path == allowed_dir or real_path.startswith(allowed_dir + '/'):
+            allowed = True
+            break
+
+    if not allowed:
+        return jsonify({'error': 'Access denied'}), 403
+
+    if os.path.isfile(real_path):
+        return send_file(real_path, as_attachment=True)
+
+    if os.path.isdir(real_path):
+        # Stream directory as tar.gz
+        import tarfile
+        buf = io.BytesIO()
+        dirname = os.path.basename(real_path)
+        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+            tar.add(real_path, arcname=dirname)
+        buf.seek(0)
+        return send_file(buf, as_attachment=True,
+                         download_name=f"{dirname}.tar.gz",
+                         mimetype='application/gzip')
+
+    return jsonify({'error': 'Not found'}), 404
+
+
 @app.route('/firewall')
 @login_required
 def firewall():
     data = get_firewall_security()
     data['ddos'] = get_ddos_stats()
     return render_template('firewall.html', data=data)
+
+
+def _is_valid_ipv4(ip):
+    """Validate an IPv4 address (without CIDR)"""
+    return bool(re.match(
+        r'^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$',
+        ip
+    ))
+
+
+def _is_valid_ip_or_cidr(value):
+    """Validate an IPv4 address or CIDR notation (e.g. 192.168.1.0/24)"""
+    parts = value.split('/')
+    if len(parts) == 1:
+        return _is_valid_ipv4(parts[0])
+    if len(parts) == 2:
+        if not _is_valid_ipv4(parts[0]):
+            return False
+        try:
+            prefix = int(parts[1])
+            return 0 <= prefix <= 32
+        except ValueError:
+            return False
+    return False
+
+
+@app.route('/firewall/ban', methods=['POST'])
+@login_required
+def firewall_ban():
+    """Permanently ban an IP via fail2ban + UFW"""
+    data = request.get_json() or {}
+    ip = data.get('ip', '').strip()
+    jail = data.get('jail', 'sshd').strip()
+
+    if not ip or not _is_valid_ipv4(ip):
+        return jsonify({'status': 'error', 'message': 'Invalid IPv4 address'}), 400
+    if not is_safe_name(jail):
+        return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
+
+    # Ban in fail2ban
+    result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'banip', ip], timeout=15)
+    f2b_ok = result.returncode == 0
+    f2b_msg = result.stdout.strip() or result.stderr.strip()
+
+    # Add permanent UFW deny rule
+    ufw_result = run_cmd_safe(['sudo', 'ufw', 'deny', 'from', ip], timeout=15)
+    ufw_ok = ufw_result.returncode == 0
+    ufw_msg = ufw_result.stdout.strip() or ufw_result.stderr.strip()
+
+    if f2b_ok and ufw_ok:
+        return jsonify({'status': 'ok', 'message': f'{ip} banned in {jail} + UFW rule added'})
+    elif f2b_ok:
+        return jsonify({'status': 'ok', 'message': f'{ip} banned in {jail}, but UFW failed: {ufw_msg}'})
+    elif ufw_ok:
+        return jsonify({'status': 'ok', 'message': f'UFW rule added for {ip}, but fail2ban failed: {f2b_msg}'})
+    return jsonify({'status': 'error', 'message': f'fail2ban: {f2b_msg}, UFW: {ufw_msg}'}), 500
+
+
+@app.route('/firewall/unban', methods=['POST'])
+@login_required
+def firewall_unban():
+    """Unban an IP from a fail2ban jail"""
+    data = request.get_json() or {}
+    ip = data.get('ip', '').strip()
+    jail = data.get('jail', 'sshd').strip()
+
+    if not ip or not _is_valid_ipv4(ip):
+        return jsonify({'status': 'error', 'message': 'Invalid IPv4 address'}), 400
+    if not is_safe_name(jail):
+        return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
+
+    result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'unbanip', ip], timeout=15)
+    if result.returncode == 0:
+        return jsonify({'status': 'ok', 'message': f'{ip} unbanned from {jail}'})
+    return jsonify({'status': 'error', 'message': result.stderr.strip() or 'Unban failed'}), 500
+
+
+@app.route('/firewall/whitelist', methods=['GET'])
+@login_required
+def firewall_whitelist_get():
+    """Get the fail2ban ignoreip whitelist from jail.local"""
+    try:
+        result = run_cmd("sudo cat /etc/fail2ban/jail.local 2>/dev/null", timeout=10)
+        if result.returncode != 0:
+            return jsonify({'ips': []})
+
+        for line in result.stdout.split('\n'):
+            stripped = line.strip()
+            if stripped.startswith('ignoreip'):
+                # ignoreip = 127.0.0.1/8 ::1 10.0.0.0/24
+                _, _, value = stripped.partition('=')
+                ips = [v.strip() for v in value.strip().split() if v.strip()]
+                return jsonify({'ips': ips})
+        return jsonify({'ips': []})
+    except Exception:
+        return jsonify({'ips': []})
+
+
+@app.route('/firewall/whitelist', methods=['POST'])
+@login_required
+def firewall_whitelist_set():
+    """Update the fail2ban ignoreip whitelist in jail.local"""
+    data = request.get_json() or {}
+    ips = data.get('ips', [])
+
+    if not isinstance(ips, list):
+        return jsonify({'status': 'error', 'message': 'ips must be a list'}), 400
+
+    # Validate each entry (allow IPv4, CIDR, and ::1 for IPv6 loopback)
+    validated = []
+    for entry in ips:
+        entry = entry.strip()
+        if not entry:
+            continue
+        if entry == '::1':
+            validated.append(entry)
+        elif _is_valid_ip_or_cidr(entry):
+            validated.append(entry)
+        else:
+            return jsonify({'status': 'error', 'message': f'Invalid IP/CIDR: {entry}'}), 400
+
+    ignoreip_line = 'ignoreip = ' + ' '.join(validated)
+
+    # Read current jail.local
+    result = run_cmd("sudo cat /etc/fail2ban/jail.local 2>/dev/null", timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        lines = result.stdout.split('\n')
+        updated = False
+        new_lines = []
+        for line in lines:
+            if line.strip().startswith('ignoreip'):
+                new_lines.append(ignoreip_line)
+                updated = True
+            else:
+                new_lines.append(line)
+        if not updated:
+            # Insert ignoreip after [DEFAULT] section header
+            final_lines = []
+            inserted = False
+            for line in new_lines:
+                final_lines.append(line)
+                if not inserted and line.strip() == '[DEFAULT]':
+                    final_lines.append(ignoreip_line)
+                    inserted = True
+            if not inserted:
+                final_lines.insert(0, '[DEFAULT]')
+                final_lines.insert(1, ignoreip_line)
+            new_lines = final_lines
+        content = '\n'.join(new_lines)
+    else:
+        content = f'[DEFAULT]\n{ignoreip_line}\n'
+
+    # Write via shell pipe with sudo tee
+    write_result = run_cmd(
+        f"echo {shlex.quote(content)} | sudo tee /etc/fail2ban/jail.local > /dev/null",
+        timeout=10
+    )
+    if write_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Failed to write jail.local'}), 500
+
+    # Reload fail2ban
+    reload_result = run_cmd_safe(['sudo', 'fail2ban-client', 'reload'], timeout=30)
+    if reload_result.returncode == 0:
+        return jsonify({'status': 'ok', 'message': f'Whitelist updated ({len(validated)} entries), fail2ban reloaded'})
+    return jsonify({'status': 'ok', 'message': f'Whitelist updated but fail2ban reload failed: {reload_result.stderr.strip()}'})
+
+
+@app.route('/firewall/banned-ips')
+@login_required
+def firewall_banned_ips():
+    """Get structured list of currently banned IPs per jail"""
+    jails_data = []
+
+    # Get list of active jails
+    result = run_cmd("sudo fail2ban-client status 2>/dev/null", timeout=15)
+    if result.returncode != 0:
+        return jsonify([])
+
+    jail_match = re.search(r'Jail list:\s*(.+)', result.stdout)
+    if not jail_match:
+        return jsonify([])
+
+    jail_names = [j.strip() for j in jail_match.group(1).split(',') if j.strip()]
+
+    for jail_name in jail_names:
+        jail_result = run_cmd(f"sudo fail2ban-client status {shlex.quote(jail_name)} 2>/dev/null", timeout=10)
+        if jail_result.returncode != 0:
+            continue
+
+        # Extract banned IP list
+        ip_match = re.search(r'Banned IP list:\s*(.*)', jail_result.stdout)
+        if ip_match:
+            ip_str = ip_match.group(1).strip()
+            ips = [ip.strip() for ip in ip_str.split() if ip.strip()] if ip_str else []
+        else:
+            ips = []
+
+        jails_data.append({'jail': jail_name, 'ips': ips})
+
+    return jsonify(jails_data)
 
 
 @app.route('/updates')
@@ -1897,6 +2177,89 @@ def install_updates():
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'message': 'Updates installed', 'output': result.stdout[-500:]})
     return jsonify({'status': 'error', 'message': 'Installation error', 'output': result.stderr[-500:]}), 500
+
+
+# ---------------------------------------------------------------------------
+# VPS Manager self-update (GitHub releases)
+# ---------------------------------------------------------------------------
+
+VERSION_FILE = Path(__file__).parent / 'VERSION'
+APP_DIR = '/var/www/vps.dmmusic.nl'
+
+
+def _get_current_version():
+    """Read current version from VERSION file"""
+    try:
+        return VERSION_FILE.read_text().strip()
+    except (OSError, FileNotFoundError):
+        return '0.0.0'
+
+
+@app.route('/api/update/check')
+@login_required
+def update_check():
+    """Check GitHub for the latest release and compare with current version"""
+    import urllib.request
+
+    current = _get_current_version()
+    url = 'https://api.github.com/repos/martijnrenkema/vps-manager/releases/latest'
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'VPS-Manager/' + current,
+        'Accept': 'application/vnd.github.v3+json',
+    })
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': f'Could not reach GitHub: {e}'}), 502
+
+    latest = data.get('tag_name', '').lstrip('v')
+    if not latest:
+        return jsonify({'status': 'error', 'message': 'No releases found'}), 404
+
+    return jsonify({
+        'current_version': current,
+        'latest_version': latest,
+        'update_available': latest != current,
+        'release_notes': data.get('body', ''),
+        'published_at': data.get('published_at', ''),
+    })
+
+
+@app.route('/api/update/install', methods=['POST'])
+@login_required
+def update_install():
+    """Pull latest code from GitHub and restart the PM2 process"""
+    current_before = _get_current_version()
+
+    # Fetch and reset to origin/main
+    result = run_cmd(
+        f"git -C {APP_DIR} fetch origin main && git -C {APP_DIR} reset --hard origin/main",
+        timeout=60
+    )
+    if result.returncode != 0:
+        return jsonify({
+            'status': 'error',
+            'message': 'Git pull failed',
+            'output': (result.stderr or result.stdout)[-500:],
+        }), 500
+
+    # Read the new version from the freshly pulled VERSION file
+    new_version = _get_current_version()
+
+    # Restart PM2 process
+    pm2_result = run_cmd_safe(["pm2", "restart", "vps-manager"], timeout=15)
+    restart_ok = pm2_result.returncode == 0
+
+    return jsonify({
+        'status': 'ok',
+        'message': 'Update installed' + (' - restart pending' if not restart_ok else ''),
+        'previous_version': current_before,
+        'new_version': new_version,
+        'restart': 'ok' if restart_ok else 'failed',
+        'output': result.stdout[-500:],
+    })
 
 
 @app.route('/nginx-logs')
@@ -2054,19 +2417,45 @@ def files_list():
     if not is_path_allowed(real_path):
         return jsonify({'error': 'Access denied'}), 403
 
+    # Get owner/permissions of current directory
+    import pwd
+    import grp
+    import stat as stat_module
+    dir_info = {}
+    try:
+        dir_stat = os.stat(real_path)
+        try:
+            dir_info['owner'] = pwd.getpwuid(dir_stat.st_uid).pw_name
+        except KeyError:
+            dir_info['owner'] = str(dir_stat.st_uid)
+        try:
+            dir_info['group'] = grp.getgrgid(dir_stat.st_gid).gr_name
+        except KeyError:
+            dir_info['group'] = str(dir_stat.st_gid)
+        dir_info['mode'] = oct(stat_module.S_IMODE(dir_stat.st_mode))
+        dir_info['writable'] = os.access(real_path, os.W_OK)
+    except OSError:
+        dir_info = {'owner': '?', 'group': '?', 'mode': '?', 'writable': False}
+
     items = []
     try:
         for name in sorted(os.listdir(real_path)):
             full = os.path.join(real_path, name)
             try:
-                stat = os.stat(full)
+                st = os.stat(full)
                 is_dir = os.path.isdir(full)
-                modified = datetime.fromtimestamp(stat.st_mtime).strftime('%Y-%m-%d %H:%M')
+                modified = datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M')
+                try:
+                    item_owner = pwd.getpwuid(st.st_uid).pw_name
+                except KeyError:
+                    item_owner = str(st.st_uid)
                 items.append({
                     'name': name,
                     'type': 'dir' if is_dir else 'file',
-                    'size': '-' if is_dir else format_file_size(stat.st_size),
+                    'size': '-' if is_dir else format_file_size(st.st_size),
                     'modified': modified,
+                    'owner': item_owner,
+                    'mode': oct(stat_module.S_IMODE(st.st_mode)),
                 })
             except (OSError, PermissionError):
                 items.append({
@@ -2074,6 +2463,8 @@ def files_list():
                     'type': 'unknown',
                     'size': '-',
                     'modified': '-',
+                    'owner': '?',
+                    'mode': '?',
                 })
     except PermissionError:
         return jsonify({'error': 'No read permissions on this directory'}), 403
@@ -2088,6 +2479,7 @@ def files_list():
         'path': real_path,
         'parent': parent,
         'items': items,
+        'dir_info': dir_info,
     })
 
 
@@ -2182,6 +2574,90 @@ def files_delete():
             return jsonify({'status': 'error', 'message': 'Path not found'}), 404
     except OSError as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/files/chown', methods=['POST'])
+@login_required
+def files_chown():
+    """Change ownership of a file or directory"""
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    owner = data.get('owner', 'martijn')
+    group = data.get('group', '')
+    recursive = data.get('recursive', False)
+
+    real_path = os.path.realpath(path)
+    if not is_path_allowed(real_path):
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+
+    # Validate owner/group names
+    if not re.match(r'^[a-zA-Z0-9._-]+$', owner):
+        return jsonify({'status': 'error', 'message': 'Invalid owner name'}), 400
+    if group and not re.match(r'^[a-zA-Z0-9._-]+$', group):
+        return jsonify({'status': 'error', 'message': 'Invalid group name'}), 400
+
+    ownership = f"{owner}:{group}" if group else owner
+    cmd = ['sudo', 'chown']
+    if recursive:
+        cmd.append('-R')
+    cmd.extend([ownership, real_path])
+
+    result = run_cmd_safe(cmd, timeout=30)
+    if result.returncode == 0:
+        label = 'recursively ' if recursive else ''
+        return jsonify({'status': 'ok', 'message': f'Ownership {label}changed to {ownership}'})
+    return jsonify({'status': 'error', 'message': result.stderr.strip() or 'chown failed'}), 500
+
+
+@app.route('/files/chmod', methods=['POST'])
+@login_required
+def files_chmod():
+    """Change permissions of a file or directory"""
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    mode = data.get('mode', '').strip()
+    recursive = data.get('recursive', False)
+
+    real_path = os.path.realpath(path)
+    if not is_path_allowed(real_path):
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+
+    if not re.match(r'^[0-7]{3,4}$', mode):
+        return jsonify({'status': 'error', 'message': 'Invalid mode (use octal like 755)'}), 400
+
+    cmd = ['sudo', 'chmod']
+    if recursive:
+        cmd.append('-R')
+    cmd.extend([mode, real_path])
+
+    result = run_cmd_safe(cmd, timeout=30)
+    if result.returncode == 0:
+        label = 'recursively ' if recursive else ''
+        return jsonify({'status': 'ok', 'message': f'Permissions {label}changed to {mode}'})
+    return jsonify({'status': 'error', 'message': result.stderr.strip() or 'chmod failed'}), 500
+
+
+@app.route('/files/users')
+@login_required
+def files_users():
+    """Get list of system users and groups relevant for web files"""
+    import pwd
+    import grp
+    users = []
+    for name in ['martijn', 'www-data', 'root', 'nobody']:
+        try:
+            pwd.getpwnam(name)
+            users.append(name)
+        except KeyError:
+            pass
+    groups = []
+    for name in ['martijn', 'www-data', 'root', 'nogroup']:
+        try:
+            grp.getgrnam(name)
+            groups.append(name)
+        except KeyError:
+            pass
+    return jsonify({'users': users, 'groups': groups})
 
 
 # ---------------------------------------------------------------------------

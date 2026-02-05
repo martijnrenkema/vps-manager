@@ -8,16 +8,34 @@
     <strong>Access limited to /var/www</strong> — You can only browse, upload and delete files within the website directories. Navigating to parent directories (such as /var or /) is not possible.
 </div>
 
-<div class="file-browser">
+<div class="file-browser" id="fileBrowser">
     <!-- Toolbar -->
     <div class="file-toolbar">
         <div class="breadcrumb" id="breadcrumb"></div>
         <div class="btn-group">
             <button class="btn btn-green" onclick="showMkdirDialog()">{{ icon('folder-plus') }} New folder</button>
             <button class="btn btn-green" onclick="document.getElementById('uploadInput').click()">{{ icon('upload') }} Upload</button>
+            <button class="btn" onclick="showPermsDialog()" title="Permissions">{{ icon('lock') }} Permissions</button>
             <form id="uploadForm" style="display:none">
                 <input type="file" id="uploadInput" multiple onchange="uploadFiles(this.files)">
             </form>
+        </div>
+    </div>
+
+    <!-- Upload progress area -->
+    <div class="upload-progress-area" id="uploadProgressArea" style="display:none">
+        <div class="upload-progress-header">
+            <span id="uploadProgressTitle">Uploading...</span>
+            <button class="btn btn-sm" id="uploadDismissBtn" onclick="dismissUploadProgress()" style="display:none">Dismiss</button>
+        </div>
+        <div class="upload-progress-list" id="uploadProgressList"></div>
+    </div>
+
+    <!-- Drop zone overlay -->
+    <div class="drop-zone-overlay" id="dropZoneOverlay">
+        <div class="drop-zone-content">
+            {{ icon('upload', 32) }}
+            <span>Drop files here to upload</span>
         </div>
     </div>
 
@@ -30,16 +48,84 @@
                         <tr>
                             <th style="width:40px"></th>
                             <th>Name</th>
+                            <th style="width:80px">Owner</th>
                             <th style="width:100px">Size</th>
                             <th style="width:160px">Modified</th>
                             <th style="width:100px">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="fileList">
-                        <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                        <tr><td colspan="6" class="empty-state">Loading...</td></tr>
                     </tbody>
                 </table>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- Permission warning -->
+<div class="alert-info-hint" id="permWarning" style="display:none;background:var(--yellow-bg);border-color:rgba(210,153,34,0.3)">
+    <strong style="color:var(--yellow)">No write access</strong> — This directory is owned by <code id="permWarningOwner">root</code>. Use the Permissions button to change ownership.
+</div>
+
+<!-- Permissions dialog -->
+<div class="confirm-overlay" id="permsOverlay">
+    <div class="confirm-box" style="text-align:left;max-width:520px">
+        <h3 style="color:var(--text-primary);margin-bottom:16px">{{ icon('lock') }} Permissions</h3>
+        <!-- Current info -->
+        <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:12px;margin-bottom:16px;font-size:13px">
+            <div style="display:grid;grid-template-columns:auto 1fr;gap:6px 12px">
+                <span style="color:var(--text-muted)">Path:</span>
+                <code id="permsPath" style="word-break:break-all"></code>
+                <span style="color:var(--text-muted)">Current:</span>
+                <span><span id="permsCurrentOwner"></span> &nbsp; <code id="permsCurrentMode"></code></span>
+            </div>
+        </div>
+        <!-- Ownership -->
+        <div class="form-group">
+            <label>Owner</label>
+            <div style="display:flex;gap:8px">
+                <select class="form-control" id="permsOwner" style="flex:1"></select>
+                <span style="line-height:38px;color:var(--text-muted)">:</span>
+                <select class="form-control" id="permsGroup" style="flex:1"></select>
+            </div>
+        </div>
+        <!-- Chmod matrix -->
+        <div class="form-group">
+            <label>Permissions</label>
+            <div class="chmod-matrix">
+                <div class="chmod-header"></div>
+                <div class="chmod-header">Read</div>
+                <div class="chmod-header">Write</div>
+                <div class="chmod-header">Execute</div>
+                <div class="chmod-label">Owner</div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ur" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_uw" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ux" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-label">Group</div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_gr" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_gw" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_gx" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-label">Others</div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_or" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ow" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ox" onchange="updateOctalFromMatrix()"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+                <span style="font-size:12px;color:var(--text-muted)">Octal:</span>
+                <input type="text" class="form-control" id="permsMode" placeholder="755" maxlength="4" style="width:80px;text-align:center;font-family:monospace;font-size:16px;font-weight:600" oninput="updateMatrixFromOctal()">
+                <span style="font-size:12px;color:var(--text-muted)" id="permsSymbolic">rwxr-xr-x</span>
+            </div>
+        </div>
+        <!-- Options -->
+        <div class="form-group" style="margin-bottom:20px">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="permsRecursive" checked> Apply recursively
+            </label>
+        </div>
+        <div class="btn-group" style="justify-content:flex-end">
+            <button class="btn" onclick="closePerms()">Cancel</button>
+            <button class="btn btn-green" onclick="applyPerms()">{{ icon('save') }} Apply changes</button>
         </div>
     </div>
 </div>
@@ -64,6 +150,8 @@
 <script>
 let currentPath = '/var/www';
 
+let currentDirInfo = {};
+
 function loadDir(path) {
     currentPath = path;
     fetch(`/files/list?path=${encodeURIComponent(path)}`)
@@ -74,8 +162,17 @@ function loadDir(path) {
                 return;
             }
             currentPath = data.path;
+            currentDirInfo = data.dir_info || {};
             renderBreadcrumb(data.path);
             renderFiles(data);
+            // Show permission warning if not writable
+            const warn = document.getElementById('permWarning');
+            if (currentDirInfo.writable === false) {
+                document.getElementById('permWarningOwner').textContent = (currentDirInfo.owner || '?') + ':' + (currentDirInfo.group || '?');
+                warn.style.display = 'block';
+            } else {
+                warn.style.display = 'none';
+            }
         })
         .catch(() => showToast('Unable to load directory', 'error'));
 }
@@ -118,7 +215,7 @@ function renderFiles(data) {
         const tr = document.createElement('tr');
         tr.className = 'file-row';
         tr.ondblclick = () => loadDir(data.parent);
-        tr.innerHTML = `<td class="file-icon">${dirIcon}</td><td></td><td>-</td><td>-</td><td></td>`;
+        tr.innerHTML = `<td class="file-icon">${dirIcon}</td><td></td><td>-</td><td>-</td><td>-</td><td></td>`;
         const link = document.createElement('a');
         link.href = '#';
         link.className = 'file-link';
@@ -130,7 +227,7 @@ function renderFiles(data) {
 
     if (data.items.length === 0) {
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="5" class="empty-state">Folder is empty</td>';
+        tr.innerHTML = '<td colspan="6" class="empty-state">Folder is empty</td>';
         tbody.appendChild(tr);
         return;
     }
@@ -162,6 +259,16 @@ function renderFiles(data) {
             nameTd.appendChild(span);
         }
 
+        // Owner cell
+        const ownerTd = document.createElement('td');
+        ownerTd.style.fontSize = '12px';
+        if (item.owner && item.owner !== 'martijn' && item.owner !== '?') {
+            ownerTd.style.color = 'var(--yellow)';
+        } else {
+            ownerTd.style.color = 'var(--text-muted)';
+        }
+        ownerTd.textContent = item.owner || '-';
+
         // Size & modified cells
         const sizeTd = document.createElement('td');
         sizeTd.textContent = item.size;
@@ -189,6 +296,7 @@ function renderFiles(data) {
 
         tr.appendChild(iconTd);
         tr.appendChild(nameTd);
+        tr.appendChild(ownerTd);
         tr.appendChild(sizeTd);
         tr.appendChild(modTd);
         tr.appendChild(actTd);
@@ -257,34 +365,337 @@ async function doMkdir() {
     }
 }
 
-async function uploadFiles(files) {
-    if (!files.length) return;
-    for (const file of files) {
-        const form = new FormData();
-        form.append('path', currentPath);
-        form.append('file', file);
-        try {
-            const res = await fetch('/files/upload', {method: 'POST', headers: {'X-CSRFToken': csrfToken}, body: form});
-            const data = await res.json();
-            if (res.ok) {
-                showToast(data.message, 'success');
-            } else {
-                showToast(data.message || 'Upload failed', 'error');
-            }
-        } catch (e) {
-            showToast(`Upload failed: ${file.name}`, 'error');
+// --- Permissions ---
+
+const permBits = [
+    ['perm_ur', 'perm_uw', 'perm_ux'],  // owner
+    ['perm_gr', 'perm_gw', 'perm_gx'],  // group
+    ['perm_or', 'perm_ow', 'perm_ox'],  // others
+];
+
+function octalToMatrix(octal) {
+    const str = String(octal).replace(/^0o?/, '').padStart(3, '0');
+    const digits = str.slice(-3).split('').map(Number);
+    for (let i = 0; i < 3; i++) {
+        document.getElementById(permBits[i][0]).checked = !!(digits[i] & 4);
+        document.getElementById(permBits[i][1]).checked = !!(digits[i] & 2);
+        document.getElementById(permBits[i][2]).checked = !!(digits[i] & 1);
+    }
+}
+
+function matrixToOctal() {
+    let result = '';
+    for (let i = 0; i < 3; i++) {
+        let val = 0;
+        if (document.getElementById(permBits[i][0]).checked) val += 4;
+        if (document.getElementById(permBits[i][1]).checked) val += 2;
+        if (document.getElementById(permBits[i][2]).checked) val += 1;
+        result += val;
+    }
+    return result;
+}
+
+function octalToSymbolic(octal) {
+    const str = String(octal).padStart(3, '0').slice(-3);
+    const map = ['---','--x','-w-','-wx','r--','r-x','rw-','rwx'];
+    return str.split('').map(d => map[parseInt(d)] || '---').join('');
+}
+
+function updateOctalFromMatrix() {
+    const oct = matrixToOctal();
+    document.getElementById('permsMode').value = oct;
+    document.getElementById('permsSymbolic').textContent = octalToSymbolic(oct);
+}
+
+function updateMatrixFromOctal() {
+    const val = document.getElementById('permsMode').value.trim();
+    if (/^[0-7]{3,4}$/.test(val)) {
+        octalToMatrix(val);
+        document.getElementById('permsSymbolic').textContent = octalToSymbolic(val);
+    }
+}
+
+let permsUsersLoaded = false;
+
+async function loadPermsUsers() {
+    if (permsUsersLoaded) return;
+    try {
+        const res = await fetch('/files/users');
+        const data = await res.json();
+        const ownerSel = document.getElementById('permsOwner');
+        const groupSel = document.getElementById('permsGroup');
+        ownerSel.innerHTML = '';
+        groupSel.innerHTML = '';
+        for (const u of data.users) {
+            ownerSel.appendChild(new Option(u, u));
+        }
+        for (const g of data.groups) {
+            groupSel.appendChild(new Option(g, g));
+        }
+        permsUsersLoaded = true;
+    } catch (e) {
+        // Fallback: add basic options
+        const ownerSel = document.getElementById('permsOwner');
+        const groupSel = document.getElementById('permsGroup');
+        ownerSel.innerHTML = '';
+        groupSel.innerHTML = '';
+        for (const u of ['martijn', 'www-data', 'root']) {
+            ownerSel.appendChild(new Option(u, u));
+            groupSel.appendChild(new Option(u, u));
         }
     }
-    document.getElementById('uploadInput').value = '';
+}
+
+async function showPermsDialog() {
+    await loadPermsUsers();
+    document.getElementById('permsPath').textContent = currentPath;
+    document.getElementById('permsCurrentOwner').textContent = (currentDirInfo.owner || '?') + ':' + (currentDirInfo.group || '?');
+    const modeStr = (currentDirInfo.mode || '0755').replace('0o', '');
+    document.getElementById('permsCurrentMode').textContent = modeStr;
+    document.getElementById('permsOwner').value = currentDirInfo.owner || 'martijn';
+    document.getElementById('permsGroup').value = currentDirInfo.group || 'martijn';
+    document.getElementById('permsMode').value = modeStr;
+    octalToMatrix(modeStr);
+    document.getElementById('permsSymbolic').textContent = octalToSymbolic(modeStr);
+    document.getElementById('permsOverlay').classList.add('active');
+}
+
+function closePerms() {
+    document.getElementById('permsOverlay').classList.remove('active');
+}
+
+async function applyPerms() {
+    const owner = document.getElementById('permsOwner').value;
+    const group = document.getElementById('permsGroup').value;
+    const mode = document.getElementById('permsMode').value.trim();
+    const recursive = document.getElementById('permsRecursive').checked;
+
+    if (!owner) { showToast('Select an owner', 'error'); return; }
+    if (!mode || !/^[0-7]{3,4}$/.test(mode)) { showToast('Invalid permissions', 'error'); return; }
+
+    closePerms();
+    let errors = [];
+
+    // Apply chown
+    try {
+        const res = await fetch('/files/chown', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({path: currentPath, owner, group, recursive})
+        });
+        const data = await res.json();
+        if (!res.ok) errors.push(data.message || 'chown failed');
+    } catch (e) {
+        errors.push('chown: connection error');
+    }
+
+    // Apply chmod
+    try {
+        const res = await fetch('/files/chmod', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({path: currentPath, mode, recursive})
+        });
+        const data = await res.json();
+        if (!res.ok) errors.push(data.message || 'chmod failed');
+    } catch (e) {
+        errors.push('chmod: connection error');
+    }
+
+    if (errors.length) {
+        showToast(errors.join('; '), 'error');
+    } else {
+        const sym = octalToSymbolic(mode);
+        showToast(`Permissions set to ${owner}:${group} ${mode} (${sym})`, 'success');
+    }
     loadDir(currentPath);
 }
 
-// Close mkdir overlay on backdrop click / escape
+// --- Upload with progress ---
+
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+function uploadFiles(fileList) {
+    const files = Array.from(fileList);
+    if (!files.length) return;
+
+    const area = document.getElementById('uploadProgressArea');
+    const list = document.getElementById('uploadProgressList');
+    const title = document.getElementById('uploadProgressTitle');
+    const dismissBtn = document.getElementById('uploadDismissBtn');
+
+    area.style.display = 'block';
+    dismissBtn.style.display = 'none';
+    list.innerHTML = '';
+
+    let completed = 0;
+    const total = files.length;
+
+    title.textContent = `Uploading 0/${total} files...`;
+
+    // Create progress entries for each file
+    const entries = files.map((file, idx) => {
+        const entry = document.createElement('div');
+        entry.className = 'upload-file-entry';
+        entry.innerHTML = `
+            <div class="upload-file-info">
+                <span class="upload-file-name">${escHtml(file.name)}</span>
+                <span class="upload-file-size">${formatFileSize(file.size)}</span>
+            </div>
+            <div class="progress-bar-bg upload-file-progress">
+                <div class="progress-bar-fill green" id="uploadBar${idx}" style="width:0%"></div>
+            </div>
+            <div class="upload-file-status" id="uploadStatus${idx}">Waiting...</div>
+        `;
+        list.appendChild(entry);
+        return entry;
+    });
+
+    // Upload files sequentially to avoid overloading the server
+    let current = 0;
+
+    function uploadNext() {
+        if (current >= files.length) {
+            title.textContent = `Upload complete: ${completed}/${total} files`;
+            dismissBtn.style.display = 'inline-flex';
+            document.getElementById('uploadInput').value = '';
+            loadDir(currentPath);
+            return;
+        }
+
+        const idx = current;
+        const file = files[idx];
+        current++;
+
+        const statusEl = document.getElementById(`uploadStatus${idx}`);
+        const barEl = document.getElementById(`uploadBar${idx}`);
+        statusEl.textContent = 'Uploading...';
+        statusEl.className = 'upload-file-status';
+
+        const form = new FormData();
+        form.append('csrf_token', csrfToken);
+        form.append('path', currentPath);
+        form.append('file', file);
+
+        const xhr = new XMLHttpRequest();
+
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const pct = Math.round((e.loaded / e.total) * 100);
+                barEl.style.width = pct + '%';
+                statusEl.textContent = pct + '%';
+            }
+        });
+
+        xhr.addEventListener('load', function() {
+            completed++;
+            title.textContent = `Uploading ${completed}/${total} files...`;
+
+            if (xhr.status >= 200 && xhr.status < 300) {
+                barEl.style.width = '100%';
+                barEl.className = 'progress-bar-fill green';
+                statusEl.textContent = 'Done';
+                statusEl.className = 'upload-file-status status-ok';
+                entries[idx].className = 'upload-file-entry upload-done';
+            } else {
+                let msg = 'Error';
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    msg = data.message || 'Error';
+                } catch (e) {}
+                barEl.className = 'progress-bar-fill red';
+                barEl.style.width = '100%';
+                statusEl.textContent = msg;
+                statusEl.className = 'upload-file-status status-err';
+                entries[idx].className = 'upload-file-entry upload-error';
+            }
+
+            uploadNext();
+        });
+
+        xhr.addEventListener('error', function() {
+            completed++;
+            title.textContent = `Uploading ${completed}/${total} files...`;
+            barEl.className = 'progress-bar-fill red';
+            barEl.style.width = '100%';
+            statusEl.textContent = 'Network error';
+            statusEl.className = 'upload-file-status status-err';
+            entries[idx].className = 'upload-file-entry upload-error';
+            uploadNext();
+        });
+
+        xhr.open('POST', '/files/upload');
+        xhr.setRequestHeader('X-CSRFToken', csrfToken);
+        xhr.send(form);
+    }
+
+    uploadNext();
+}
+
+function dismissUploadProgress() {
+    const area = document.getElementById('uploadProgressArea');
+    area.style.display = 'none';
+}
+
+// --- Drag & Drop ---
+
+(function() {
+    const browser = document.getElementById('fileBrowser');
+    const overlay = document.getElementById('dropZoneOverlay');
+    let dragCounter = 0;
+
+    browser.addEventListener('dragenter', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter++;
+        if (dragCounter === 1) {
+            overlay.classList.add('active');
+        }
+    });
+
+    browser.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+    });
+
+    browser.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter--;
+        if (dragCounter <= 0) {
+            dragCounter = 0;
+            overlay.classList.remove('active');
+        }
+    });
+
+    browser.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCounter = 0;
+        overlay.classList.remove('active');
+
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            uploadFiles(files);
+        }
+    });
+})();
+
+// Close overlays on backdrop click / escape
 document.getElementById('mkdirOverlay').addEventListener('click', function(e) {
     if (e.target === this) closeMkdir();
 });
+document.getElementById('permsOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closePerms();
+});
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeMkdir();
+    if (e.key === 'Escape') { closeMkdir(); closePerms(); }
 });
 
 // Initial load

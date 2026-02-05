@@ -148,13 +148,66 @@
     </div>
 </div>
 
+<!-- Site Backups -->
+{% if data.site_backups %}
 <div class="card" style="margin-top:16px">
-    <div class="card-header">{{ icon('database') }} Latest database backups</div>
-    <div class="card-body">
-        {% if data.db_backups %}
-            <pre>{{ data.db_backups }}</pre>
+    <div class="card-header">{{ icon('folder') }} Site Backups</div>
+    <div class="card-body" style="padding:0">
+        <table class="table" style="margin:0;font-size:13px">
+            <thead>
+                <tr>
+                    <th style="padding:10px 16px">Site</th>
+                    <th style="padding:10px 16px">Size</th>
+                    <th style="padding:10px 16px">Last modified</th>
+                    <th style="padding:10px 16px;width:1%"></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for s in data.site_backups %}
+                <tr>
+                    <td style="padding:8px 16px">{{ s.name }}</td>
+                    <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ s.size }}</td>
+                    <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ s.modified }}</td>
+                    <td style="padding:8px 16px;white-space:nowrap">
+                        <a href="/api/backup/download?path={{ s.path|urlencode }}" class="btn btn-sm btn-outline-primary" title="Download as .tar.gz">{{ icon('download') }}</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Database Backup Files -->
+<div class="card" style="margin-top:16px">
+    <div class="card-header">{{ icon('database') }} Database Backups</div>
+    <div class="card-body" style="padding:0">
+        {% if data.db_files %}
+            <table class="table" style="margin:0;font-size:13px">
+                <thead>
+                    <tr>
+                        <th style="padding:10px 16px">File</th>
+                        <th style="padding:10px 16px">Size</th>
+                        <th style="padding:10px 16px">Modified</th>
+                        <th style="padding:10px 16px;width:1%"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for f in data.db_files %}
+                    <tr>
+                        <td style="padding:8px 16px;word-break:break-all">{{ f.name }}</td>
+                        <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ f.size }}</td>
+                        <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ f.modified }}</td>
+                        <td style="padding:8px 16px;white-space:nowrap">
+                            <a href="/api/backup/download?path={{ f.path|urlencode }}" class="btn btn-sm btn-outline-primary" title="Download">{{ icon('download') }}</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         {% else %}
-            <div class="empty-state">No database backups found</div>
+            <div class="empty-state" style="padding:16px">No database backups found</div>
         {% endif %}
     </div>
 </div>
