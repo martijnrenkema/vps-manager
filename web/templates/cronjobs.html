@@ -6,86 +6,345 @@
 {% block content %}
 <!-- Root crontab -->
 <div class="card">
-    <div class="card-header">{{ icon('crown') }} Root crontab</div>
+    <div class="card-header" style="justify-content:space-between">
+        <span>{{ icon('crown') }} Root crontab</span>
+        <div style="display:flex;align-items:center;gap:8px">
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Cron jobs owned by the root user. These run with full system privileges and are typically used for system tasks like backups, log rotation and security updates.">?</span>
+            <button class="btn btn-sm btn-green" onclick="showAddDialog('root')">{{ icon('plus') }} Add</button>
+        </div>
+    </div>
     <div class="card-body">
-        {% if data.root_jobs %}
-            <div class="cron-list">
-                {% for job in data.root_jobs %}
-                <div class="cron-entry">
-                    <div class="cron-schedule">
-                        <span class="badge badge-green">{{ job.human_schedule }}</span>
-                        <code class="cron-raw">{{ job.schedule }}</code>
-                    </div>
-                    <div class="cron-command"><code>{{ job.command }}</code></div>
-                </div>
-                {% endfor %}
-            </div>
-        {% elif data.root %}
-            <pre>{{ data.root }}</pre>
-        {% else %}
-            <span style="color:var(--text-muted)">No root crontab</span>
-        {% endif %}
+        <div class="cron-list" id="rootCronList">
+            <div class="empty-state" style="padding:20px;font-size:13px">Loading...</div>
+        </div>
     </div>
 </div>
 
 <!-- User crontab -->
 <div class="card">
-    <div class="card-header">{{ icon('user') }} User crontab</div>
+    <div class="card-header" style="justify-content:space-between">
+        <span>{{ icon('user') }} User crontab</span>
+        <div style="display:flex;align-items:center;gap:8px">
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Cron jobs owned by the current (non-root) user. These run with limited privileges and are meant for user-level tasks like running scripts and application maintenance.">?</span>
+            <button class="btn btn-sm btn-green" onclick="showAddDialog('user')">{{ icon('plus') }} Add</button>
+        </div>
+    </div>
     <div class="card-body">
-        {% if data.user_jobs %}
-            <div class="cron-list">
-                {% for job in data.user_jobs %}
-                <div class="cron-entry">
-                    <div class="cron-schedule">
-                        <span class="badge badge-green">{{ job.human_schedule }}</span>
-                        <code class="cron-raw">{{ job.schedule }}</code>
-                    </div>
-                    <div class="cron-command"><code>{{ job.command }}</code></div>
-                </div>
-                {% endfor %}
-            </div>
-        {% elif data.user %}
-            <pre>{{ data.user }}</pre>
-        {% else %}
-            <span style="color:var(--text-muted)">No user crontab</span>
-        {% endif %}
+        <div class="cron-list" id="userCronList">
+            <div class="empty-state" style="padding:20px;font-size:13px">Loading...</div>
+        </div>
     </div>
 </div>
 
-<!-- Systemd timers -->
+<!-- Systemd timers (read-only) -->
 <div class="card">
-    <div class="card-header">{{ icon('clock') }} Systemd timers</div>
-    <div class="card-body">
-        {% if data.timer_list %}
-        <div class="table-wrap">
-            <table class="timer-table">
-                <thead>
-                    <tr>
-                        <th>Unit</th>
-                        <th>Activates</th>
-                        <th>Next run</th>
-                        <th>Time left</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for timer in data.timer_list %}
-                    <tr>
-                        <td><strong>{{ timer.unit }}</strong></td>
-                        <td><code>{{ timer.activates }}</code></td>
-                        <td style="font-size:12px;color:var(--text-secondary)">{{ timer.next }}</td>
-                        <td>
-                            <span class="badge badge-green">{{ timer.left }}</span>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% elif data.timers %}
-            <pre>{{ data.timers }}</pre>
-        {% else %}
-            <span style="color:var(--text-muted)">No systemd timers</span>
-        {% endif %}
+    <div class="card-header">{{ icon('clock') }} Systemd timers <span class="tooltip-icon" data-bs-toggle="tooltip" title="Systemd timers are the modern alternative to cron jobs. They are managed by systemd and offer better logging, dependency handling and more precise scheduling. Displayed here as read-only.">?</span></div>
+    <div class="card-body" id="timerSection">
+        <div class="empty-state" style="padding:20px;font-size:13px">Loading...</div>
     </div>
 </div>
+
+<!-- Add/Edit dialog -->
+<div class="confirm-overlay" id="cronOverlay">
+    <div class="confirm-box" style="text-align:left;max-width:560px">
+        <h3 style="color:var(--text-primary);margin-bottom:16px" id="cronDialogTitle">Add Cronjob</h3>
+
+        <!-- Quick presets -->
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">
+            <button class="btn btn-sm" onclick="setPreset('* * * * *')">Every minute</button>
+            <button class="btn btn-sm" onclick="setPreset('*/5 * * * *')">Every 5 min</button>
+            <button class="btn btn-sm" onclick="setPreset('0 * * * *')">Hourly</button>
+            <button class="btn btn-sm" onclick="setPreset('0 0 * * *')">Daily</button>
+            <button class="btn btn-sm" onclick="setPreset('0 0 * * 1')">Weekly</button>
+            <button class="btn btn-sm" onclick="setPreset('0 0 1 * *')">Monthly</button>
+        </div>
+
+        <!-- Schedule fields -->
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px">
+            <div class="form-group" style="margin:0">
+                <label style="font-size:11px">Minute</label>
+                <input type="text" class="form-control" id="cronMinute" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:monospace">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:11px">Hour</label>
+                <input type="text" class="form-control" id="cronHour" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:monospace">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:11px">Day</label>
+                <input type="text" class="form-control" id="cronDom" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:monospace">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:11px">Month</label>
+                <input type="text" class="form-control" id="cronMonth" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:monospace">
+            </div>
+            <div class="form-group" style="margin:0">
+                <label style="font-size:11px">Weekday</label>
+                <input type="text" class="form-control" id="cronDow" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:monospace">
+            </div>
+        </div>
+
+        <!-- Preview -->
+        <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:13px">
+            <span style="color:var(--text-muted)">Schedule:</span>
+            <code id="cronSchedulePreview" style="font-size:12px">* * * * *</code>
+            <span style="margin-left:12px;color:var(--green);font-size:12px" id="cronHumanPreview">Every minute</span>
+        </div>
+
+        <!-- Command -->
+        <div class="form-group">
+            <label>Command</label>
+            <textarea class="form-control" id="cronCommand" rows="3" placeholder="/path/to/script.sh" style="font-family:monospace;font-size:13px;resize:vertical"></textarea>
+        </div>
+
+        <input type="hidden" id="cronEditType" value="user">
+        <input type="hidden" id="cronEditIndex" value="-1">
+
+        <div class="btn-group" style="justify-content:flex-end;margin-top:16px">
+            <button class="btn" onclick="closeCronDialog()">Cancel</button>
+            <button class="btn btn-green" id="cronSaveBtn" onclick="saveCronJob()">{{ icon('save') }} Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let cronData = {};
+
+const cronHumanMap = {
+    '* * * * *': 'Every minute',
+    '*/5 * * * *': 'Every 5 minutes',
+    '*/10 * * * *': 'Every 10 minutes',
+    '*/15 * * * *': 'Every 15 minutes',
+    '*/30 * * * *': 'Every 30 minutes',
+    '0 * * * *': 'Every hour',
+    '0 */2 * * *': 'Every 2 hours',
+    '0 */6 * * *': 'Every 6 hours',
+    '0 0 * * *': 'Daily at 00:00',
+    '0 0 * * 1': 'Weekly on Monday',
+    '0 0 1 * *': 'Monthly on the 1st',
+};
+
+function simpleHumanCron(schedule) {
+    if (cronHumanMap[schedule]) return cronHumanMap[schedule];
+    const p = schedule.split(' ');
+    if (p.length !== 5) return schedule;
+    const [min, hr, dom, mon, dow] = p;
+    if (min.startsWith('*/')) return `Every ${min.slice(2)} minutes`;
+    if (hr.startsWith('*/')) return `Every ${hr.slice(2)} hours`;
+    if (dom === '*' && mon === '*' && dow === '*') return `Daily at ${hr.padStart(2,'0')}:${min.padStart(2,'0')}`;
+    if (dom === '*' && mon === '*' && dow !== '*') {
+        const days = {0:'Sun',1:'Mon',2:'Tue',3:'Wed',4:'Thu',5:'Fri',6:'Sat',7:'Sun'};
+        const dayStr = dow.split(',').map(d => days[d] || d).join(',');
+        return `${dayStr} at ${hr.padStart(2,'0')}:${min.padStart(2,'0')}`;
+    }
+    return schedule;
+}
+
+async function loadCronjobs() {
+    try {
+        const res = await fetch('/api/cronjobs');
+        cronData = await res.json();
+        renderCronJobs();
+    } catch (e) {
+        document.getElementById('rootCronList').innerHTML = '<div class="empty-state">Could not load cronjobs</div>';
+        document.getElementById('userCronList').innerHTML = '<div class="empty-state">Could not load cronjobs</div>';
+    }
+}
+
+function escHtml(str) {
+    const d = document.createElement('div');
+    d.textContent = str;
+    return d.innerHTML;
+}
+
+function renderCronJobs() {
+    renderJobList('rootCronList', cronData.root_jobs || [], 'root');
+    renderJobList('userCronList', cronData.user_jobs || [], 'user');
+    renderTimers(cronData.timer_list || []);
+}
+
+function renderJobList(containerId, jobs, type) {
+    const container = document.getElementById(containerId);
+    if (!jobs.length) {
+        container.innerHTML = '<div class="empty-state" style="padding:20px;font-size:13px">No cron jobs</div>';
+        return;
+    }
+    container.innerHTML = jobs.map((job, idx) => `
+        <div class="cron-entry" style="align-items:center">
+            <div class="cron-schedule">
+                <span class="badge badge-green">${escHtml(job.human_schedule)}</span>
+                <code class="cron-raw">${escHtml(job.schedule)}</code>
+            </div>
+            <div class="cron-command" style="flex:1"><code>${escHtml(job.command)}</code></div>
+            <div class="btn-group" style="flex-shrink:0">
+                <button class="btn btn-sm" onclick="editCronJob('${type}', ${idx})" title="Edit">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                </button>
+                <button class="btn btn-sm btn-red" onclick="deleteCronJob('${type}', ${idx})" title="Delete">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+                </button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderTimers(timers) {
+    const section = document.getElementById('timerSection');
+    if (!timers.length) {
+        section.innerHTML = '<span style="color:var(--text-muted)">No systemd timers</span>';
+        return;
+    }
+    section.innerHTML = `
+        <div class="table-wrap">
+            <table class="timer-table">
+                <thead><tr><th>Unit</th><th>Activates</th><th>Next run</th><th>Time left</th></tr></thead>
+                <tbody>${timers.map(t => `
+                    <tr>
+                        <td><strong>${escHtml(t.unit)}</strong></td>
+                        <td><code>${escHtml(t.activates)}</code></td>
+                        <td style="font-size:12px;color:var(--text-secondary)">${escHtml(t.next)}</td>
+                        <td><span class="badge badge-green">${escHtml(t.left)}</span></td>
+                    </tr>
+                `).join('')}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function updateSchedulePreview() {
+    const schedule = [
+        document.getElementById('cronMinute').value.trim() || '*',
+        document.getElementById('cronHour').value.trim() || '*',
+        document.getElementById('cronDom').value.trim() || '*',
+        document.getElementById('cronMonth').value.trim() || '*',
+        document.getElementById('cronDow').value.trim() || '*',
+    ].join(' ');
+    document.getElementById('cronSchedulePreview').textContent = schedule;
+    document.getElementById('cronHumanPreview').textContent = simpleHumanCron(schedule);
+}
+
+function setPreset(schedule) {
+    const parts = schedule.split(' ');
+    document.getElementById('cronMinute').value = parts[0];
+    document.getElementById('cronHour').value = parts[1];
+    document.getElementById('cronDom').value = parts[2];
+    document.getElementById('cronMonth').value = parts[3];
+    document.getElementById('cronDow').value = parts[4];
+    updateSchedulePreview();
+}
+
+function showAddDialog(type) {
+    document.getElementById('cronDialogTitle').textContent = 'Add Cronjob';
+    document.getElementById('cronEditType').value = type;
+    document.getElementById('cronEditIndex').value = '-1';
+    setPreset('0 0 * * *');
+    document.getElementById('cronCommand').value = '';
+    document.getElementById('cronOverlay').classList.add('active');
+    setTimeout(() => document.getElementById('cronCommand').focus(), 100);
+}
+
+function editCronJob(type, index) {
+    const jobs = type === 'root' ? (cronData.root_jobs || []) : (cronData.user_jobs || []);
+    if (index >= jobs.length) return;
+    const job = jobs[index];
+
+    document.getElementById('cronDialogTitle').textContent = 'Edit Cronjob';
+    document.getElementById('cronEditType').value = type;
+    document.getElementById('cronEditIndex').value = index;
+
+    const parts = job.schedule.split(' ');
+    document.getElementById('cronMinute').value = parts[0] || '*';
+    document.getElementById('cronHour').value = parts[1] || '*';
+    document.getElementById('cronDom').value = parts[2] || '*';
+    document.getElementById('cronMonth').value = parts[3] || '*';
+    document.getElementById('cronDow').value = parts[4] || '*';
+    document.getElementById('cronCommand').value = job.command;
+    updateSchedulePreview();
+
+    document.getElementById('cronOverlay').classList.add('active');
+}
+
+function closeCronDialog() {
+    document.getElementById('cronOverlay').classList.remove('active');
+}
+
+async function saveCronJob() {
+    const type = document.getElementById('cronEditType').value;
+    const index = parseInt(document.getElementById('cronEditIndex').value);
+    const schedule = [
+        document.getElementById('cronMinute').value.trim() || '*',
+        document.getElementById('cronHour').value.trim() || '*',
+        document.getElementById('cronDom').value.trim() || '*',
+        document.getElementById('cronMonth').value.trim() || '*',
+        document.getElementById('cronDow').value.trim() || '*',
+    ].join(' ');
+    const command = document.getElementById('cronCommand').value.trim();
+
+    if (!command) {
+        showToast('Command is required', 'error');
+        return;
+    }
+
+    const isEdit = index >= 0;
+    const url = isEdit ? '/api/cronjobs/edit' : '/api/cronjobs/add';
+    const body = isEdit
+        ? {type, index, schedule, command}
+        : {type, schedule, command};
+
+    closeCronDialog();
+
+    try {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify(body)
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            loadCronjobs();
+        } else {
+            showToast(data.message || 'Error', 'error');
+        }
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+}
+
+function deleteCronJob(type, index) {
+    const jobs = type === 'root' ? (cronData.root_jobs || []) : (cronData.user_jobs || []);
+    if (index >= jobs.length) return;
+    const cmd = jobs[index].command;
+
+    showConfirm('Delete Cronjob', `Delete this cronjob?\n${cmd.substring(0, 80)}`, async () => {
+        try {
+            const res = await fetch('/api/cronjobs/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify({type, index})
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+                loadCronjobs();
+            } else {
+                showToast(data.message || 'Error', 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    });
+}
+
+// Close dialog on backdrop / escape
+document.getElementById('cronOverlay').addEventListener('click', function(e) {
+    if (e.target === this) closeCronDialog();
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeCronDialog();
+});
+
+loadCronjobs();
+</script>
 {% endblock %}

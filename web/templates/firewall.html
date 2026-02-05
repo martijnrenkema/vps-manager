@@ -169,14 +169,16 @@
 </div>
 
 <div class="card" style="margin-top:16px">
-        <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
-        <div class="card-body">
-            {% if data.sessions %}
-                <pre>{{ data.sessions }}</pre>
-            {% else %}
-                <span style="color:var(--text-muted)">No active sessions</span>
-            {% endif %}
-        </div>
+    <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
+    <div class="card-body">
+        {% if data.sessions %}
+            <pre>{{ data.sessions }}</pre>
+        {% else %}
+            <span style="color:var(--text-muted)">No active sessions</span>
+        {% endif %}
+    </div>
+</div>
+
 <div class="card" style="margin-top:16px">
     <div class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</div>
     <div class="card-body">

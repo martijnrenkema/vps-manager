@@ -130,6 +130,28 @@
     </div>
 </div>
 
+<!-- File editor overlay -->
+<div class="editor-overlay" id="editorOverlay" style="display:none">
+    <div class="editor-header">
+        <div style="display:flex;align-items:center;gap:12px;min-width:0">
+            {{ icon('edit') }}
+            <span id="editorFileName" style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-sm btn-green" onclick="saveEditor()">{{ icon('save') }} Save</button>
+            <button class="btn btn-sm" onclick="closeEditor()">Close</button>
+        </div>
+    </div>
+    <div class="editor-container">
+        <div class="editor-line-numbers" id="editorLineNumbers"></div>
+        <textarea class="editor-textarea" id="editorTextarea" spellcheck="false"></textarea>
+    </div>
+    <div class="editor-statusbar">
+        <span id="editorStatus">Ready</span>
+        <span id="editorInfo"></span>
+    </div>
+</div>
+
 <!-- Mkdir dialog -->
 <div class="confirm-overlay" id="mkdirOverlay">
     <div class="confirm-box">
@@ -279,6 +301,16 @@ function renderFiles(data) {
         const actTd = document.createElement('td');
         actTd.className = 'file-actions';
         if (item.type === 'file') {
+            // Edit button for text files
+            if (isEditable(item.name)) {
+                const ed = document.createElement('button');
+                ed.className = 'btn btn-sm';
+                ed.title = 'Edit';
+                ed.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>';
+                ed.onclick = () => openEditor(fullPath);
+                actTd.appendChild(ed);
+                actTd.appendChild(document.createTextNode(' '));
+            }
             const dl = document.createElement('a');
             dl.href = '/files/download?path=' + encodeURIComponent(fullPath);
             dl.className = 'btn btn-sm';
@@ -687,6 +719,129 @@ function dismissUploadProgress() {
     });
 })();
 
+// --- File Editor ---
+
+const EDITABLE_EXT = new Set([
+    '.conf', '.env', '.json', '.html', '.css', '.js', '.py', '.php', '.sh',
+    '.txt', '.md', '.yml', '.yaml', '.xml', '.ini', '.cfg', '.log',
+    '.htaccess', '.tsx', '.ts', '.jsx', '.sql', '.toml', '.svg',
+]);
+
+function isEditable(name) {
+    const dot = name.lastIndexOf('.');
+    if (dot < 0) return false;
+    return EDITABLE_EXT.has(name.substring(dot).toLowerCase());
+}
+
+let editorPath = '';
+let editorChanged = false;
+
+function updateEditorLineNumbers() {
+    const textarea = document.getElementById('editorTextarea');
+    const lines = textarea.value.split('\n').length;
+    document.getElementById('editorLineNumbers').innerHTML = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+}
+
+async function openEditor(path) {
+    editorPath = path;
+    editorChanged = false;
+    const overlay = document.getElementById('editorOverlay');
+    const textarea = document.getElementById('editorTextarea');
+    const status = document.getElementById('editorStatus');
+    const info = document.getElementById('editorInfo');
+
+    document.getElementById('editorFileName').textContent = path;
+    textarea.value = '';
+    status.textContent = 'Loading...';
+    status.style.color = 'var(--text-muted)';
+    info.textContent = '';
+    overlay.style.display = 'flex';
+
+    try {
+        const res = await fetch('/files/read?path=' + encodeURIComponent(path));
+        const data = await res.json();
+        if (data.status === 'ok') {
+            textarea.value = data.content;
+            updateEditorLineNumbers();
+            status.textContent = data.writable ? 'Ready' : 'Read-only';
+            status.style.color = data.writable ? 'var(--text-muted)' : 'var(--yellow)';
+            info.textContent = `${data.content.split('\n').length} lines`;
+            textarea.readOnly = !data.writable;
+        } else {
+            status.textContent = data.message || 'Error';
+            status.style.color = 'var(--red)';
+        }
+    } catch (e) {
+        status.textContent = 'Connection error';
+        status.style.color = 'var(--red)';
+    }
+}
+
+function closeEditor() {
+    if (editorChanged && !confirm('Discard unsaved changes?')) return;
+    document.getElementById('editorOverlay').style.display = 'none';
+    editorPath = '';
+    editorChanged = false;
+}
+
+async function saveEditor() {
+    if (!editorPath) return;
+    const status = document.getElementById('editorStatus');
+    status.textContent = 'Saving...';
+    status.style.color = 'var(--text-muted)';
+
+    try {
+        const res = await fetch('/files/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({path: editorPath, content: document.getElementById('editorTextarea').value})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            status.textContent = 'Saved';
+            status.style.color = 'var(--green)';
+            editorChanged = false;
+        } else {
+            showToast(data.message || 'Error', 'error');
+            status.textContent = 'Save failed';
+            status.style.color = 'var(--red)';
+        }
+    } catch (e) {
+        showToast('Connection error', 'error');
+        status.textContent = 'Error';
+        status.style.color = 'var(--red)';
+    }
+}
+
+document.getElementById('editorTextarea').addEventListener('input', function() {
+    editorChanged = true;
+    document.getElementById('editorStatus').textContent = 'Modified (unsaved)';
+    document.getElementById('editorStatus').style.color = 'var(--yellow)';
+    updateEditorLineNumbers();
+});
+
+document.getElementById('editorTextarea').addEventListener('scroll', function() {
+    document.getElementById('editorLineNumbers').scrollTop = this.scrollTop;
+});
+
+// Tab support in editor
+document.getElementById('editorTextarea').addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 4;
+        editorChanged = true;
+    }
+    // Ctrl+S / Cmd+S
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveEditor();
+    }
+});
+
 // Close overlays on backdrop click / escape
 document.getElementById('mkdirOverlay').addEventListener('click', function(e) {
     if (e.target === this) closeMkdir();
@@ -695,7 +850,14 @@ document.getElementById('permsOverlay').addEventListener('click', function(e) {
     if (e.target === this) closePerms();
 });
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') { closeMkdir(); closePerms(); }
+    if (e.key === 'Escape') {
+        if (document.getElementById('editorOverlay').style.display === 'flex') {
+            closeEditor();
+        } else {
+            closeMkdir();
+            closePerms();
+        }
+    }
 });
 
 // Initial load

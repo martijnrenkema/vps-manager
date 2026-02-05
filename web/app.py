@@ -98,6 +98,32 @@ NOTIFICATION_HISTORY_PATH = DATA_DIR / 'notification_history.json'
 NOTIFICATION_COOLDOWN = CONFIG.get('notification_cooldown', 3600)
 MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
 METRICS_PATH = DATA_DIR / 'metrics.json'
+
+# ---------------------------------------------------------------------------
+# Audit Log
+# ---------------------------------------------------------------------------
+
+AUDIT_LOG_PATH = DATA_DIR / 'audit_log.json'
+AUDIT_MAX_ENTRIES = 1000
+
+
+def log_audit(action, details=None):
+    """Log an action to the audit trail"""
+    entry = {
+        'timestamp': datetime.now().isoformat(),
+        'user': session.get('username', 'system') if request else 'system',
+        'ip': request.remote_addr if request else '-',
+        'action': action,
+        'details': details or {},
+    }
+    try:
+        log = json.loads(AUDIT_LOG_PATH.read_text()) if AUDIT_LOG_PATH.exists() else []
+    except (json.JSONDecodeError, OSError):
+        log = []
+    log.append(entry)
+    if len(log) > AUDIT_MAX_ENTRIES:
+        log = log[-AUDIT_MAX_ENTRIES:]
+    AUDIT_LOG_PATH.write_text(json.dumps(log, indent=2))
 _metrics_lock = threading.Lock()
 _prev_net = {'rx': None, 'tx': None, 'ts': None}
 
@@ -699,6 +725,7 @@ def login():
                     session.permanent = True
                     session['logged_in'] = True
                     session['username'] = username
+                    log_audit('login', {'method': '2fa'})
                     return redirect(url_for('dashboard'))
                 else:
                     _record_attempt(client_ip)
@@ -720,14 +747,17 @@ def login():
             session.permanent = True
             session['logged_in'] = True
             session['username'] = username
+            log_audit('login', {'method': 'password'})
             return redirect(url_for('dashboard'))
         _record_attempt(client_ip)
+        log_audit('login_failed', {'username': username})
         flash('Invalid username or password', 'danger')
     return render_template('login.html', show_2fa=show_2fa)
 
 
 @app.route('/logout')
 def logout():
+    log_audit('logout')
     session.clear()
     return redirect(url_for('login'))
 
@@ -1865,6 +1895,7 @@ def pm2_restart(name):
         return jsonify({'status': 'error', 'message': 'Invalid process name'}), 400
     result = run_cmd_safe(["pm2", "restart", name])
     if result.returncode == 0:
+        log_audit('pm2_restart', {'process': name})
         return jsonify({'status': 'ok', 'message': f"'{name}' restarted"})
     return jsonify({'status': 'error', 'message': f"Could not restart '{name}': {result.stderr}"}), 500
 
@@ -1876,6 +1907,7 @@ def pm2_stop(name):
         return jsonify({'status': 'error', 'message': 'Invalid process name'}), 400
     result = run_cmd_safe(["pm2", "stop", name])
     if result.returncode == 0:
+        log_audit('pm2_stop', {'process': name})
         return jsonify({'status': 'ok', 'message': f"'{name}' stopped"})
     return jsonify({'status': 'error', 'message': f"Could not stop '{name}': {result.stderr}"}), 500
 
@@ -1887,6 +1919,7 @@ def pm2_start(name):
         return jsonify({'status': 'error', 'message': 'Invalid process name'}), 400
     result = run_cmd_safe(["pm2", "start", name])
     if result.returncode == 0:
+        log_audit('pm2_start', {'process': name})
         return jsonify({'status': 'ok', 'message': f"'{name}' started"})
     return jsonify({'status': 'error', 'message': f"Could not start '{name}': {result.stderr}"}), 500
 
@@ -1951,6 +1984,7 @@ def service_action(action, name):
         return jsonify({'status': 'error', 'message': 'Invalid service name'}), 400
     result = run_cmd_safe(["sudo", "systemctl", action, name], timeout=30)
     if result.returncode == 0:
+        log_audit(f'service_{action}', {'service': name})
         return jsonify({'status': 'ok', 'message': f"'{name}' {action} successful"})
     return jsonify({'status': 'error', 'message': f"Could not {action} '{name}': {result.stderr}"}), 500
 
@@ -2058,6 +2092,8 @@ def firewall_ban():
     ufw_ok = ufw_result.returncode == 0
     ufw_msg = ufw_result.stdout.strip() or ufw_result.stderr.strip()
 
+    if f2b_ok or ufw_ok:
+        log_audit('firewall_ban', {'ip': ip, 'jail': jail})
     if f2b_ok and ufw_ok:
         return jsonify({'status': 'ok', 'message': f'{ip} banned in {jail} + UFW rule added'})
     elif f2b_ok:
@@ -2070,7 +2106,7 @@ def firewall_ban():
 @app.route('/firewall/unban', methods=['POST'])
 @login_required
 def firewall_unban():
-    """Unban an IP from a fail2ban jail"""
+    """Unban an IP from a fail2ban jail and remove UFW deny rule"""
     data = request.get_json() or {}
     ip = data.get('ip', '').strip()
     jail = data.get('jail', 'sshd').strip()
@@ -2081,9 +2117,20 @@ def firewall_unban():
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
     result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'unbanip', ip], timeout=15)
-    if result.returncode == 0:
-        return jsonify({'status': 'ok', 'message': f'{ip} unbanned from {jail}'})
-    return jsonify({'status': 'error', 'message': result.stderr.strip() or 'Unban failed'}), 500
+    f2b_ok = result.returncode == 0
+    f2b_msg = result.stdout.strip() or result.stderr.strip()
+
+    # Also remove UFW deny rule (matches the ban flow which adds both)
+    ufw_result = run_cmd_safe(['sudo', 'ufw', 'delete', 'deny', 'from', ip], timeout=15)
+    ufw_ok = ufw_result.returncode == 0
+
+    if f2b_ok:
+        log_audit('firewall_unban', {'ip': ip, 'jail': jail})
+    if f2b_ok and ufw_ok:
+        return jsonify({'status': 'ok', 'message': f'{ip} unbanned from {jail} + UFW rule removed'})
+    elif f2b_ok:
+        return jsonify({'status': 'ok', 'message': f'{ip} unbanned from {jail} (no UFW rule found or already removed)'})
+    return jsonify({'status': 'error', 'message': f2b_msg or 'Unban failed'}), 500
 
 
 @app.route('/firewall/whitelist', methods=['GET'])
@@ -2171,6 +2218,7 @@ def firewall_whitelist_set():
 
     # Reload fail2ban
     reload_result = run_cmd_safe(['sudo', 'fail2ban-client', 'reload'], timeout=30)
+    log_audit('firewall_whitelist', {'ips': validated})
     if reload_result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f'Whitelist updated ({len(validated)} entries), fail2ban reloaded'})
     return jsonify({'status': 'ok', 'message': f'Whitelist updated but fail2ban reload failed: {reload_result.stderr.strip()}'})
@@ -2331,15 +2379,18 @@ def update_install():
 
     # Copy web/ files to app root (repo has files in web/ subfolder,
     # but PM2 runs from the repo root directory)
+    copy_ok = True
     web_src = os.path.join(APP_DIR, 'web')
     if os.path.isdir(web_src):
         copy_result = run_cmd(
             f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
-            f"{web_src}/requirements.txt {web_src}/vps-backup.sh {APP_DIR}/ 2>&1 ; "
-            f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 ; "
+            f"{web_src}/requirements.txt {web_src}/vps-backup.sh {APP_DIR}/ 2>&1 && "
+            f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 && "
             f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
             timeout=15
         )
+        if copy_result.returncode != 0:
+            copy_ok = False
 
     # Read the new version from the freshly copied VERSION file
     new_version = _get_current_version()
@@ -2348,12 +2399,20 @@ def update_install():
     pm2_result = run_cmd_safe(["pm2", "restart", "vps-manager"], timeout=15)
     restart_ok = pm2_result.returncode == 0
 
+    warnings = []
+    if not copy_ok:
+        warnings.append('file copy failed')
+    if not restart_ok:
+        warnings.append('restart pending')
+
+    log_audit('self_update', {'from': current_before, 'to': new_version})
     return jsonify({
-        'status': 'ok',
-        'message': 'Update installed' + (' - restart pending' if not restart_ok else ''),
+        'status': 'ok' if copy_ok else 'warning',
+        'message': 'Update installed' + (f' ({", ".join(warnings)})' if warnings else ''),
         'previous_version': current_before,
         'new_version': new_version,
         'restart': 'ok' if restart_ok else 'failed',
+        'copy': 'ok' if copy_ok else 'failed',
         'output': result.stdout[-500:],
     })
 
@@ -2397,8 +2456,7 @@ def databases():
 @app.route('/cronjobs')
 @login_required
 def cronjobs():
-    data = get_cronjobs()
-    return render_template('cronjobs.html', data=data)
+    return render_template('cronjobs.html')
 
 
 @app.route('/disk')
@@ -2595,6 +2653,7 @@ def files_mkdir():
 
     try:
         os.makedirs(real_path, exist_ok=False)
+        log_audit('file_mkdir', {'path': real_path})
         return jsonify({'status': 'ok', 'message': f"Folder '{name}' created"})
     except FileExistsError:
         return jsonify({'status': 'error', 'message': 'Folder already exists'}), 400
@@ -2637,10 +2696,13 @@ def files_upload():
         return jsonify({'status': 'error', 'message': 'No file selected'}), 400
 
     filename = secure_filename(file.filename)
+    if not filename:
+        return jsonify({'status': 'error', 'message': 'Invalid filename'}), 400
     dest = os.path.join(real_path, filename)
 
     try:
         file.save(dest)
+        log_audit('file_upload', {'path': dest})
         return jsonify({'status': 'ok', 'message': f"'{filename}' uploaded"})
     except OSError as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -2662,9 +2724,11 @@ def files_delete():
     try:
         if os.path.isdir(real_path):
             shutil.rmtree(real_path)
+            log_audit('file_delete', {'path': real_path, 'type': 'dir'})
             return jsonify({'status': 'ok', 'message': 'Folder deleted'})
         elif os.path.isfile(real_path):
             os.remove(real_path)
+            log_audit('file_delete', {'path': real_path, 'type': 'file'})
             return jsonify({'status': 'ok', 'message': 'File deleted'})
         else:
             return jsonify({'status': 'error', 'message': 'Path not found'}), 404
@@ -2700,6 +2764,7 @@ def files_chown():
 
     result = run_cmd_safe(cmd, timeout=30)
     if result.returncode == 0:
+        log_audit('file_chown', {'path': real_path, 'owner': ownership, 'recursive': recursive})
         label = 'recursively ' if recursive else ''
         return jsonify({'status': 'ok', 'message': f'Ownership {label}changed to {ownership}'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or 'chown failed'}), 500
@@ -2728,6 +2793,7 @@ def files_chmod():
 
     result = run_cmd_safe(cmd, timeout=30)
     if result.returncode == 0:
+        log_audit('file_chmod', {'path': real_path, 'mode': mode, 'recursive': recursive})
         label = 'recursively ' if recursive else ''
         return jsonify({'status': 'ok', 'message': f'Permissions {label}changed to {mode}'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or 'chmod failed'}), 500
@@ -2930,10 +2996,15 @@ def notification_dismiss():
     if index is None:
         return jsonify({'status': 'error', 'message': 'Missing index'}), 400
 
+    try:
+        index = int(index)
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
+
     history = _load_notification_history()
     # History is stored oldest-first; the API returns newest-first,
     # so the front-end index maps to reversed order.
-    reversed_idx = len(history) - 1 - int(index)
+    reversed_idx = len(history) - 1 - index
     if 0 <= reversed_idx < len(history):
         history.pop(reversed_idx)
         _save_notification_history(history)
@@ -2947,6 +3018,53 @@ def settings():
     return render_template('settings.html', config=CONFIG, has_2fa=HAS_2FA)
 
 
+def validate_config(data):
+    """Validate config values. Returns (is_valid, errors)"""
+    errors = []
+
+    if 'thresholds' in data:
+        t = data['thresholds']
+        for key in ('disk_warning', 'disk_critical', 'memory_warning', 'swap_warning'):
+            if key in t:
+                if not isinstance(t[key], (int, float)) or t[key] < 1 or t[key] > 100:
+                    errors.append(f'{key} must be between 1-100')
+        for key in ('ssl_warning_days', 'ssl_critical_days'):
+            if key in t:
+                if not isinstance(t[key], (int, float)) or t[key] < 1:
+                    errors.append(f'{key} must be at least 1')
+
+    if 'monitor_interval' in data:
+        if not isinstance(data['monitor_interval'], int) or data['monitor_interval'] < 30:
+            errors.append('monitor_interval must be at least 30 seconds')
+
+    if 'notification_cooldown' in data:
+        if not isinstance(data['notification_cooldown'], int) or data['notification_cooldown'] < 60:
+            errors.append('notification_cooldown must be at least 60 seconds')
+
+    if 'services' in data:
+        if not isinstance(data['services'], list):
+            errors.append('services must be a list')
+        else:
+            for s in data['services']:
+                if not re.match(r'^[a-zA-Z0-9._-]+$', s):
+                    errors.append(f'Invalid service name: {s}')
+
+    if 'file_browser' in data:
+        fb = data['file_browser']
+        if 'allowed_paths' in fb:
+            for p in fb['allowed_paths']:
+                if not p.startswith('/'):
+                    errors.append(f'Allowed path must be absolute: {p}')
+
+    if 'ddos_detection' in data:
+        dd = data['ddos_detection']
+        for key in ('connection_threshold', 'syn_threshold', 'single_ip_threshold'):
+            if key in dd and (not isinstance(dd[key], int) or dd[key] < 1):
+                errors.append(f'{key} must be a positive integer')
+
+    return (len(errors) == 0, errors)
+
+
 @app.route('/api/config', methods=['POST'])
 @login_required
 def update_config():
@@ -2954,6 +3072,11 @@ def update_config():
     data = request.get_json() or {}
     if not data:
         return jsonify({'status': 'error', 'message': 'No data received'}), 400
+
+    # Validate config
+    is_valid, errors = validate_config(data)
+    if not is_valid:
+        return jsonify({'status': 'error', 'message': 'Validation failed', 'errors': errors}), 400
 
     # Merge into config (don't overwrite auth section from here)
     for key in data:
@@ -2970,6 +3093,7 @@ def update_config():
     NOTIFICATION_COOLDOWN = CONFIG.get('notification_cooldown', 3600)
     MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
 
+    log_audit('config_update', {'keys': list(data.keys())})
     return jsonify({'status': 'ok', 'message': 'Settings saved'})
 
 
@@ -2993,6 +3117,7 @@ def change_password():
     CONFIG['auth']['password_hash'] = PASSWORD_HASH
     save_config(CONFIG)
 
+    log_audit('password_change')
     return jsonify({'status': 'ok', 'message': 'Password changed successfully'})
 
 
@@ -3047,6 +3172,7 @@ def verify_2fa():
     save_config(CONFIG)
     session.pop('pending_totp_secret', None)
 
+    log_audit('2fa_enable')
     return jsonify({'status': 'ok', 'message': '2FA enabled successfully'})
 
 
@@ -3062,6 +3188,7 @@ def disable_2fa():
     CONFIG['auth']['totp_secret'] = None
     save_config(CONFIG)
 
+    log_audit('2fa_disable')
     return jsonify({'status': 'ok', 'message': '2FA disabled'})
 
 
@@ -3108,6 +3235,7 @@ def backup_webhook():
 @app.route('/reboot', methods=['POST'])
 @login_required
 def reboot():
+    log_audit('server_reboot')
     run_cmd("sudo reboot")
     return jsonify({'status': 'ok', 'message': 'Server is rebooting...'})
 
@@ -3147,6 +3275,514 @@ def api_refresh(section):
     if handler:
         return jsonify(handler())
     return jsonify({'error': 'Unknown section'}), 404
+
+
+# ---------------------------------------------------------------------------
+# Audit Log routes
+# ---------------------------------------------------------------------------
+
+@app.route('/audit')
+@login_required
+def audit():
+    return render_template('audit.html')
+
+
+@app.route('/api/audit')
+@login_required
+def api_audit():
+    """JSON API for audit log with optional filters"""
+    try:
+        log = json.loads(AUDIT_LOG_PATH.read_text()) if AUDIT_LOG_PATH.exists() else []
+    except (json.JSONDecodeError, OSError):
+        log = []
+
+    # Filter by action
+    action_filter = request.args.get('action', '')
+    if action_filter:
+        log = [e for e in log if e.get('action') == action_filter]
+
+    # Filter by date range
+    date_from = request.args.get('from', '')
+    date_to = request.args.get('to', '')
+    if date_from:
+        log = [e for e in log if e.get('timestamp', '') >= date_from]
+    if date_to:
+        log = [e for e in log if e.get('timestamp', '') <= date_to]
+
+    # Return newest first
+    return jsonify(list(reversed(log)))
+
+
+@app.route('/api/audit/clear', methods=['POST'])
+@login_required
+def audit_clear():
+    log_audit('audit_clear')
+    AUDIT_LOG_PATH.write_text('[]')
+    return jsonify({'status': 'ok', 'message': 'Audit log cleared'})
+
+
+# ---------------------------------------------------------------------------
+# File Editor routes
+# ---------------------------------------------------------------------------
+
+EDITABLE_EXTENSIONS = {
+    '.conf', '.env', '.json', '.html', '.css', '.js', '.py', '.php', '.sh',
+    '.txt', '.md', '.yml', '.yaml', '.xml', '.ini', '.cfg', '.log',
+    '.htaccess', '.tsx', '.ts', '.jsx', '.sql', '.toml', '.svg',
+}
+
+
+@app.route('/files/read')
+@login_required
+def files_read():
+    """Read file content for in-browser editing"""
+    path = request.args.get('path', '')
+    real_path = os.path.realpath(path)
+
+    if not os.path.isfile(real_path):
+        return jsonify({'status': 'error', 'message': 'File not found'}), 404
+
+    if not is_path_allowed(real_path):
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+
+    # Check file size (max 1MB)
+    try:
+        size = os.path.getsize(real_path)
+    except OSError:
+        return jsonify({'status': 'error', 'message': 'Cannot read file'}), 500
+
+    if size > 1024 * 1024:
+        return jsonify({'status': 'error', 'message': 'File too large (max 1MB)'}), 400
+
+    # Read and check for binary content
+    try:
+        with open(real_path, 'rb') as f:
+            raw = f.read()
+        if b'\x00' in raw[:8192]:
+            return jsonify({'status': 'error', 'message': 'Binary file cannot be edited'}), 400
+        content = raw.decode('utf-8', errors='replace')
+    except OSError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    writable = os.access(real_path, os.W_OK)
+    return jsonify({'status': 'ok', 'content': content, 'writable': writable})
+
+
+@app.route('/files/save', methods=['POST'])
+@login_required
+def files_save():
+    """Save file content from in-browser editor"""
+    data = request.get_json() or {}
+    path = data.get('path', '')
+    content = data.get('content', '')
+
+    if not path:
+        return jsonify({'status': 'error', 'message': 'No path specified'}), 400
+
+    real_path = os.path.realpath(path)
+
+    if not is_path_allowed(real_path):
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+
+    if not os.path.isfile(real_path):
+        return jsonify({'status': 'error', 'message': 'File not found'}), 404
+
+    try:
+        with open(real_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        log_audit('file_save', {'path': real_path})
+        return jsonify({'status': 'ok', 'message': 'File saved'})
+    except OSError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Cronjob Editor routes
+# ---------------------------------------------------------------------------
+
+def _parse_crontab_lines(text):
+    """Parse crontab text, returning all lines and structured job list"""
+    lines = text.split('\n')
+    jobs = []
+    job_idx = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        # Skip env var lines
+        first_word = stripped.split()[0] if stripped.split() else ''
+        if '=' in first_word:
+            continue
+        parts = stripped.split()
+        if len(parts) >= 6:
+            jobs.append({
+                'index': job_idx,
+                'line_num': i,
+                'schedule': ' '.join(parts[:5]),
+                'command': ' '.join(parts[5:]),
+                'human_schedule': _cron_to_human(parts[:5]),
+            })
+            job_idx += 1
+    return lines, jobs
+
+
+def _validate_cron_field(value, min_val, max_val):
+    """Validate a single cron schedule field"""
+    if value == '*':
+        return True
+    for part in value.split(','):
+        part = part.strip()
+        if '/' in part:
+            base, step = part.split('/', 1)
+            if not step.isdigit() or int(step) < 1:
+                return False
+            if base != '*':
+                if not base.isdigit() or not (min_val <= int(base) <= max_val):
+                    return False
+        elif '-' in part:
+            lo, hi = part.split('-', 1)
+            if not lo.isdigit() or not hi.isdigit():
+                return False
+            if not (min_val <= int(lo) <= max_val) or not (min_val <= int(hi) <= max_val):
+                return False
+        else:
+            if not part.isdigit() or not (min_val <= int(part) <= max_val):
+                return False
+    return True
+
+
+def _validate_cron_schedule(schedule):
+    """Validate a full cron schedule string. Returns (is_valid, error_msg)"""
+    parts = schedule.split()
+    if len(parts) != 5:
+        return False, 'Schedule must have 5 fields'
+    limits = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
+    names = ['minute', 'hour', 'day of month', 'month', 'day of week']
+    for i, (val, (lo, hi)) in enumerate(zip(parts, limits)):
+        if not _validate_cron_field(val, lo, hi):
+            return False, f'Invalid {names[i]}: {val}'
+    return True, ''
+
+
+@app.route('/api/cronjobs')
+@login_required
+def api_cronjobs():
+    """JSON API for cronjob data"""
+    data = get_cronjobs()
+    return jsonify(data)
+
+
+@app.route('/api/cronjobs/add', methods=['POST'])
+@login_required
+def cronjobs_add():
+    """Add a new cron entry"""
+    data = request.get_json() or {}
+    schedule = data.get('schedule', '').strip()
+    command = data.get('command', '').strip()
+    cron_type = data.get('type', 'user')
+
+    if not schedule or not command:
+        return jsonify({'status': 'error', 'message': 'Schedule and command are required'}), 400
+
+    is_valid, err = _validate_cron_schedule(schedule)
+    if not is_valid:
+        return jsonify({'status': 'error', 'message': err}), 400
+
+    new_line = f'{schedule} {command}'
+
+    if cron_type == 'root':
+        result = run_cmd("sudo crontab -l 2>/dev/null")
+        current = result.stdout if result.returncode == 0 else ''
+    else:
+        result = run_cmd("crontab -l 2>/dev/null")
+        current = result.stdout if result.returncode == 0 else ''
+
+    # Append new line
+    if current and not current.endswith('\n'):
+        current += '\n'
+    current += new_line + '\n'
+
+    if cron_type == 'root':
+        write_result = run_cmd(f"echo {shlex.quote(current)} | sudo crontab -", timeout=10)
+    else:
+        write_result = run_cmd(f"echo {shlex.quote(current)} | crontab -", timeout=10)
+
+    if write_result.returncode == 0:
+        log_audit('cronjob_add', {'type': cron_type, 'schedule': schedule, 'command': command})
+        return jsonify({'status': 'ok', 'message': 'Cronjob added'})
+    return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to add cronjob'}), 500
+
+
+@app.route('/api/cronjobs/edit', methods=['POST'])
+@login_required
+def cronjobs_edit():
+    """Edit an existing cron entry by index"""
+    data = request.get_json() or {}
+    index = data.get('index')
+    schedule = data.get('schedule', '').strip()
+    command = data.get('command', '').strip()
+    cron_type = data.get('type', 'user')
+
+    if index is None or not schedule or not command:
+        return jsonify({'status': 'error', 'message': 'Index, schedule, and command are required'}), 400
+
+    is_valid, err = _validate_cron_schedule(schedule)
+    if not is_valid:
+        return jsonify({'status': 'error', 'message': err}), 400
+
+    try:
+        index = int(index)
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
+
+    if cron_type == 'root':
+        result = run_cmd("sudo crontab -l 2>/dev/null")
+    else:
+        result = run_cmd("crontab -l 2>/dev/null")
+
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Could not read crontab'}), 500
+
+    lines, jobs = _parse_crontab_lines(result.stdout)
+
+    if index < 0 or index >= len(jobs):
+        return jsonify({'status': 'error', 'message': 'Job index out of range'}), 400
+
+    job = jobs[index]
+    lines[job['line_num']] = f'{schedule} {command}'
+    new_content = '\n'.join(lines)
+    if not new_content.endswith('\n'):
+        new_content += '\n'
+
+    if cron_type == 'root':
+        write_result = run_cmd(f"echo {shlex.quote(new_content)} | sudo crontab -", timeout=10)
+    else:
+        write_result = run_cmd(f"echo {shlex.quote(new_content)} | crontab -", timeout=10)
+
+    if write_result.returncode == 0:
+        log_audit('cronjob_edit', {'type': cron_type, 'index': index, 'schedule': schedule, 'command': command})
+        return jsonify({'status': 'ok', 'message': 'Cronjob updated'})
+    return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to edit cronjob'}), 500
+
+
+@app.route('/api/cronjobs/delete', methods=['POST'])
+@login_required
+def cronjobs_delete():
+    """Delete a cron entry by index"""
+    data = request.get_json() or {}
+    index = data.get('index')
+    cron_type = data.get('type', 'user')
+
+    if index is None:
+        return jsonify({'status': 'error', 'message': 'Index is required'}), 400
+
+    try:
+        index = int(index)
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
+
+    if cron_type == 'root':
+        result = run_cmd("sudo crontab -l 2>/dev/null")
+    else:
+        result = run_cmd("crontab -l 2>/dev/null")
+
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Could not read crontab'}), 500
+
+    lines, jobs = _parse_crontab_lines(result.stdout)
+
+    if index < 0 or index >= len(jobs):
+        return jsonify({'status': 'error', 'message': 'Job index out of range'}), 400
+
+    job = jobs[index]
+    deleted_cmd = lines[job['line_num']]
+    del lines[job['line_num']]
+    new_content = '\n'.join(lines)
+    if not new_content.endswith('\n'):
+        new_content += '\n'
+
+    if cron_type == 'root':
+        write_result = run_cmd(f"echo {shlex.quote(new_content)} | sudo crontab -", timeout=10)
+    else:
+        write_result = run_cmd(f"echo {shlex.quote(new_content)} | crontab -", timeout=10)
+
+    if write_result.returncode == 0:
+        log_audit('cronjob_delete', {'type': cron_type, 'index': index, 'entry': deleted_cmd.strip()})
+        return jsonify({'status': 'ok', 'message': 'Cronjob deleted'})
+    return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to delete cronjob'}), 500
+
+
+# ---------------------------------------------------------------------------
+# Nginx Config Editor routes
+# ---------------------------------------------------------------------------
+
+def list_nginx_configs():
+    """List enabled + available site configs"""
+    configs = {'enabled': [], 'available': []}
+
+    result = run_cmd("sudo ls /etc/nginx/sites-enabled/ 2>/dev/null", timeout=10)
+    if result.returncode == 0:
+        configs['enabled'] = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+
+    result = run_cmd("sudo ls /etc/nginx/sites-available/ 2>/dev/null", timeout=10)
+    if result.returncode == 0:
+        all_available = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
+        configs['available'] = [n for n in all_available if n not in configs['enabled']]
+
+    return configs
+
+
+def validate_nginx():
+    """Run nginx -t, return (is_valid, output)"""
+    result = run_cmd_safe(["sudo", "nginx", "-t"], timeout=15)
+    output = (result.stderr or '') + (result.stdout or '')
+    return result.returncode == 0, output.strip()
+
+
+@app.route('/nginx-config')
+@login_required
+def nginx_config():
+    configs = list_nginx_configs()
+    return render_template('nginx_config.html', configs=configs)
+
+
+@app.route('/api/nginx/config/read')
+@login_required
+def nginx_config_read():
+    """Read an nginx config file"""
+    name = request.args.get('name', '')
+    config_type = request.args.get('type', 'enabled')
+
+    if not name or not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+
+    if config_type not in ('enabled', 'available'):
+        return jsonify({'status': 'error', 'message': 'Invalid type'}), 400
+
+    path = f'/etc/nginx/sites-{config_type}/{name}'
+    result = run_cmd(f"sudo cat {shlex.quote(path)}", timeout=10)
+    if result.returncode == 0:
+        return jsonify({'status': 'ok', 'content': result.stdout, 'name': name, 'type': config_type})
+    return jsonify({'status': 'error', 'message': 'Could not read config'}), 500
+
+
+@app.route('/api/nginx/config/save', methods=['POST'])
+@login_required
+def nginx_config_save():
+    """Save nginx config with validation and reload"""
+    data = request.get_json() or {}
+    name = data.get('name', '')
+    content = data.get('content', '')
+    config_type = data.get('type', 'enabled')
+
+    if not name or not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+
+    if config_type not in ('enabled', 'available'):
+        return jsonify({'status': 'error', 'message': 'Invalid type'}), 400
+
+    path = f'/etc/nginx/sites-{config_type}/{name}'
+
+    # Backup current config
+    run_cmd(f"sudo cp {shlex.quote(path)} {shlex.quote(path + '.backup')} 2>/dev/null", timeout=10)
+
+    # Write content via temp file
+    temp_path = str(DATA_DIR / f'nginx_temp_{name}')
+    try:
+        with open(temp_path, 'w') as f:
+            f.write(content)
+    except OSError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    # Copy to nginx dir
+    cp_result = run_cmd(f"sudo cp {shlex.quote(temp_path)} {shlex.quote(path)}", timeout=10)
+    try:
+        os.remove(temp_path)
+    except OSError:
+        pass
+
+    if cp_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Failed to write config'}), 500
+
+    # Validate nginx config
+    is_valid, output = validate_nginx()
+    if not is_valid:
+        # Restore backup
+        run_cmd(f"sudo cp {shlex.quote(path + '.backup')} {shlex.quote(path)} 2>/dev/null", timeout=10)
+        run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
+        return jsonify({'status': 'error', 'message': 'Nginx config test failed', 'output': output}), 400
+
+    # Reload nginx
+    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    # Clean up backup
+    run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
+
+    log_audit('nginx_config_save', {'name': name, 'type': config_type})
+
+    if reload_result.returncode == 0:
+        return jsonify({'status': 'ok', 'message': 'Config saved and nginx reloaded'})
+    return jsonify({'status': 'ok', 'message': 'Config saved but nginx reload failed'})
+
+
+@app.route('/api/nginx/config/enable', methods=['POST'])
+@login_required
+def nginx_config_enable():
+    """Enable a site by creating symlink"""
+    data = request.get_json() or {}
+    name = data.get('name', '')
+
+    if not name or not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+
+    available = f'/etc/nginx/sites-available/{name}'
+    enabled = f'/etc/nginx/sites-enabled/{name}'
+
+    # Check if available exists
+    check = run_cmd(f"sudo test -f {shlex.quote(available)} && echo ok", timeout=5)
+    if 'ok' not in check.stdout:
+        return jsonify({'status': 'error', 'message': 'Config not found in sites-available'}), 404
+
+    result = run_cmd(f"sudo ln -sf {shlex.quote(available)} {shlex.quote(enabled)}", timeout=10)
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Failed to create symlink'}), 500
+
+    # Validate and reload
+    is_valid, output = validate_nginx()
+    if not is_valid:
+        run_cmd(f"sudo rm -f {shlex.quote(enabled)}", timeout=10)
+        return jsonify({'status': 'error', 'message': 'Nginx config test failed after enabling', 'output': output}), 400
+
+    run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    log_audit('nginx_config_enable', {'name': name})
+    return jsonify({'status': 'ok', 'message': f'{name} enabled and nginx reloaded'})
+
+
+@app.route('/api/nginx/config/disable', methods=['POST'])
+@login_required
+def nginx_config_disable():
+    """Disable a site by removing symlink from sites-enabled"""
+    data = request.get_json() or {}
+    name = data.get('name', '')
+
+    if not name or not is_safe_name(name):
+        return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+
+    enabled = f'/etc/nginx/sites-enabled/{name}'
+    result = run_cmd(f"sudo rm -f {shlex.quote(enabled)}", timeout=10)
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Failed to remove symlink'}), 500
+
+    run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    log_audit('nginx_config_disable', {'name': name})
+    return jsonify({'status': 'ok', 'message': f'{name} disabled and nginx reloaded'})
+
+
+@app.route('/api/nginx/validate', methods=['POST'])
+@login_required
+def nginx_validate_route():
+    """Test nginx configuration"""
+    is_valid, output = validate_nginx()
+    return jsonify({'status': 'ok' if is_valid else 'error', 'valid': is_valid, 'output': output})
 
 
 # ---------------------------------------------------------------------------
