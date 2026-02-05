@@ -20,13 +20,15 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
 - **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
 - **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
-- **File Browser** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown)
+- **File Browser & Editor** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown), in-browser file editing
 - **Web Terminal** - Browser-based command execution
-- **Cron & Timers** - Crontab and systemd timers with human-readable schedules
+- **Cronjob Editor** - Full CRUD for user and root crontabs with schedule validation, human-readable descriptions
+- **Nginx Config Editor** - Edit, enable/disable site configs with built-in `nginx -t` validation
 - **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
 - **Push Notifications** - Web Push alerts for critical events, configurable categories, deduplication
+- **Audit Log** - Full audit trail for all actions with user, IP, and timestamp
 - **2FA Authentication** - TOTP two-factor auth with QR code setup
-- **Settings Panel** - All configuration via web UI, password management
+- **Settings Panel** - All configuration via web UI, config validation, password management
 
 ## Quick Start
 
@@ -83,25 +85,27 @@ web/
 │   ├── manifest.json   # PWA manifest
 │   └── *.png           # App icons
 └── templates/
-    ├── base.html       # Layout with sidebar navigation
-    ├── login.html      # Login + 2FA
-    ├── dashboard.html  # Server overview with metrics charts
-    ├── services.html   # Service monitoring
-    ├── websites.html   # Hosted sites
-    ├── ssl.html        # SSL certificates
-    ├── pm2.html        # PM2 processes
-    ├── updates.html    # System + app updates
-    ├── firewall.html   # Firewall, banning & whitelist
-    ├── nginx_logs.html # Log viewer
-    ├── databases.html  # MariaDB databases
-    ├── files.html      # File browser with upload & permissions
-    ├── terminal.html   # Web terminal
-    ├── cronjobs.html   # Cron & timers
-    ├── disk.html       # Disk usage
-    ├── backup.html     # Backup status & downloads
+    ├── base.html        # Layout with sidebar navigation
+    ├── login.html       # Login + 2FA
+    ├── dashboard.html   # Server overview with metrics charts
+    ├── services.html    # Service monitoring
+    ├── websites.html    # Hosted sites
+    ├── ssl.html         # SSL certificates
+    ├── pm2.html         # PM2 processes
+    ├── updates.html     # System + app updates
+    ├── firewall.html    # Firewall, banning & whitelist
+    ├── nginx_logs.html  # Log viewer
+    ├── nginx_config.html # Nginx site config editor
+    ├── databases.html   # MariaDB databases
+    ├── files.html       # File browser, editor & permissions
+    ├── terminal.html    # Web terminal
+    ├── cronjobs.html    # Cronjob CRUD editor & timers
+    ├── disk.html        # Disk usage
+    ├── backup.html      # Backup status & downloads
     ├── notifications.html # Push notification settings
-    ├── settings.html   # Configuration panel
-    └── icons.html      # SVG icon macros
+    ├── audit.html       # Audit log viewer
+    ├── settings.html    # Configuration panel
+    └── icons.html       # SVG icon macros
 ```
 
 ## Configuration
