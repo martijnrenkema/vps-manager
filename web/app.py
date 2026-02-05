@@ -3046,15 +3046,20 @@ def validate_config(data):
             errors.append('services must be a list')
         else:
             for s in data['services']:
-                if not re.match(r'^[a-zA-Z0-9._-]+$', s):
+                if not isinstance(s, str) or not re.match(r'^[a-zA-Z0-9._-]+$', s):
                     errors.append(f'Invalid service name: {s}')
 
     if 'file_browser' in data:
         fb = data['file_browser']
-        if 'allowed_paths' in fb:
-            for p in fb['allowed_paths']:
-                if not p.startswith('/'):
-                    errors.append(f'Allowed path must be absolute: {p}')
+        if not isinstance(fb, dict):
+            errors.append('file_browser must be an object')
+        elif 'allowed_paths' in fb:
+            if not isinstance(fb['allowed_paths'], list):
+                errors.append('allowed_paths must be a list')
+            else:
+                for p in fb['allowed_paths']:
+                    if not isinstance(p, str) or not p.startswith('/'):
+                        errors.append(f'Allowed path must be an absolute path string: {p}')
 
     if 'ddos_detection' in data:
         dd = data['ddos_detection']
@@ -3426,7 +3431,19 @@ def _parse_crontab_lines(text):
     return lines, jobs
 
 
-def _validate_cron_field(value, min_val, max_val):
+_MONTH_NAMES = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+                 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+_DOW_NAMES = {'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat': 6}
+
+
+def _cron_value_to_int(val, names_map):
+    """Convert a cron value (digit or name) to int. Returns None if invalid."""
+    if val.isdigit():
+        return int(val)
+    return names_map.get(val.lower())
+
+
+def _validate_cron_field(value, min_val, max_val, names_map=None):
     """Validate a single cron schedule field"""
     if value == '*':
         return True
@@ -3436,17 +3453,32 @@ def _validate_cron_field(value, min_val, max_val):
             base, step = part.split('/', 1)
             if not step.isdigit() or int(step) < 1:
                 return False
-            if base != '*':
-                if not base.isdigit() or not (min_val <= int(base) <= max_val):
+            if base == '*':
+                continue
+            # Base can be a range (e.g. 1-10/2) or a single value
+            if '-' in base:
+                lo_s, hi_s = base.split('-', 1)
+                lo = _cron_value_to_int(lo_s, names_map or {})
+                hi = _cron_value_to_int(hi_s, names_map or {})
+                if lo is None or hi is None:
+                    return False
+                if not (min_val <= lo <= max_val) or not (min_val <= hi <= max_val):
+                    return False
+            else:
+                n = _cron_value_to_int(base, names_map or {})
+                if n is None or not (min_val <= n <= max_val):
                     return False
         elif '-' in part:
-            lo, hi = part.split('-', 1)
-            if not lo.isdigit() or not hi.isdigit():
+            lo_s, hi_s = part.split('-', 1)
+            lo = _cron_value_to_int(lo_s, names_map or {})
+            hi = _cron_value_to_int(hi_s, names_map or {})
+            if lo is None or hi is None:
                 return False
-            if not (min_val <= int(lo) <= max_val) or not (min_val <= int(hi) <= max_val):
+            if not (min_val <= lo <= max_val) or not (min_val <= hi <= max_val):
                 return False
         else:
-            if not part.isdigit() or not (min_val <= int(part) <= max_val):
+            n = _cron_value_to_int(part, names_map or {})
+            if n is None or not (min_val <= n <= max_val):
                 return False
     return True
 
@@ -3457,10 +3489,11 @@ def _validate_cron_schedule(schedule):
     if len(parts) != 5:
         return False, 'Schedule must have 5 fields'
     limits = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
-    names = ['minute', 'hour', 'day of month', 'month', 'day of week']
+    names_maps = [None, None, None, _MONTH_NAMES, _DOW_NAMES]
+    field_names = ['minute', 'hour', 'day of month', 'month', 'day of week']
     for i, (val, (lo, hi)) in enumerate(zip(parts, limits)):
-        if not _validate_cron_field(val, lo, hi):
-            return False, f'Invalid {names[i]}: {val}'
+        if not _validate_cron_field(val, lo, hi, names_maps[i]):
+            return False, f'Invalid {field_names[i]}: {val}'
     return True, ''
 
 
@@ -3752,7 +3785,9 @@ def nginx_config_enable():
         run_cmd(f"sudo rm -f {shlex.quote(enabled)}", timeout=10)
         return jsonify({'status': 'error', 'message': 'Nginx config test failed after enabling', 'output': output}), 400
 
-    run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    if reload_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Nginx reload failed after enabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_enable', {'name': name})
     return jsonify({'status': 'ok', 'message': f'{name} enabled and nginx reloaded'})
 
@@ -3772,7 +3807,9 @@ def nginx_config_disable():
     if result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Failed to remove symlink'}), 500
 
-    run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
+    if reload_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Nginx reload failed after disabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_disable', {'name': name})
     return jsonify({'status': 'ok', 'message': f'{name} disabled and nginx reloaded'})
 
