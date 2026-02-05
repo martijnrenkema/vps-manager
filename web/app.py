@@ -2294,7 +2294,19 @@ def update_install():
             'output': (result.stderr or result.stdout)[-500:],
         }), 500
 
-    # Read the new version from the freshly pulled VERSION file
+    # Copy web/ files to app root (repo has files in web/ subfolder,
+    # but PM2 runs from the repo root directory)
+    web_src = os.path.join(APP_DIR, 'web')
+    if os.path.isdir(web_src):
+        copy_result = run_cmd(
+            f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
+            f"{web_src}/requirements.txt {web_src}/vps-backup.sh {APP_DIR}/ 2>&1 ; "
+            f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 ; "
+            f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
+            timeout=15
+        )
+
+    # Read the new version from the freshly copied VERSION file
     new_version = _get_current_version()
 
     # Restart PM2 process
