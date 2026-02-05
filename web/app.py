@@ -1517,19 +1517,19 @@ def _cron_to_human(parts):
 
     # Common patterns
     if minute == '*' and hour == '*':
-        return "Elke minuut"
+        return "Every minute"
     if minute.startswith('*/'):
-        return f"Elke {minute[2:]} minuten"
+        return f"Every {minute[2:]} minutes"
     if hour.startswith('*/'):
-        return f"Elke {hour[2:]} uur"
+        return f"Every {hour[2:]} hours"
     if dom == '*' and month == '*' and dow == '*':
-        return f"Dagelijks om {hour.zfill(2)}:{minute.zfill(2)}"
+        return f"Daily at {hour.zfill(2)}:{minute.zfill(2)}"
     if dom == '*' and month == '*' and dow != '*':
-        days_map = {'0': 'zo', '1': 'ma', '2': 'di', '3': 'wo', '4': 'do', '5': 'vr', '6': 'za', '7': 'zo'}
+        days_map = {'0': 'Sun', '1': 'Mon', '2': 'Tue', '3': 'Wed', '4': 'Thu', '5': 'Fri', '6': 'Sat', '7': 'Sun'}
         day_names = ','.join(days_map.get(d.strip(), d.strip()) for d in dow.split(','))
-        return f"{day_names} om {hour.zfill(2)}:{minute.zfill(2)}"
+        return f"{day_names} at {hour.zfill(2)}:{minute.zfill(2)}"
     if month == '*' and dow == '*':
-        return f"Dag {dom} om {hour.zfill(2)}:{minute.zfill(2)}"
+        return f"Day {dom} at {hour.zfill(2)}:{minute.zfill(2)}"
     return f"{minute} {hour} {dom} {month} {dow}"
 
 

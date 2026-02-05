@@ -390,7 +390,7 @@ async function doMkdir() {
             showToast(data.message, 'success');
             loadDir(currentPath);
         } else {
-            showToast(data.message || 'Fout', 'error');
+            showToast(data.message || 'Error', 'error');
         }
     } catch (e) {
         showToast('Connection error', 'error');

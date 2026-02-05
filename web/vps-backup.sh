@@ -49,7 +49,7 @@ find "$WWW_DIR" -maxdepth 3 -name "*.db" -type f ! -path "*/node_modules/*" 2>/d
     cp "$dbfile" "$BACKUP_DIR/databases/${safename}_$DATE.db" 2>/dev/null || true
 done
 
-# Cleanup database dumps ouder dan 7 dagen
+# Cleanup database dumps older than 7 days
 find "$BACKUP_DIR/databases" -type f -mtime +7 -delete
 
 # =============================================================================
@@ -70,7 +70,7 @@ find "$WWW_DIR" -maxdepth 2 -name "wp-config.php" -type f 2>/dev/null | while re
     cp "$wpconfig" "$BACKUP_DIR/configs/${sitename}-wp-config_$DATE.php" 2>/dev/null || true
 done
 
-# Cleanup configs ouder dan 7 dagen
+# Cleanup configs older than 7 days
 find "$BACKUP_DIR/configs" -type f -mtime +7 -delete
 
 # =============================================================================
@@ -121,10 +121,10 @@ chmod -R 644 "$BACKUP_DIR"/databases/* "$BACKUP_DIR"/configs/* 2>/dev/null || tr
 find "$BACKUP_DIR" -type d -exec chmod 755 {} \;
 find "$BACKUP_DIR/sites" -type f -exec chmod 644 {} \;
 
-# Cleanup oude checksum bestanden (7 dagen retentie)
+# Cleanup old checksum files (7 days retention)
 find "$BACKUP_DIR" -maxdepth 1 -name "checksums_*.sha256" -mtime +7 -delete
 
-# Genereer checksums met relatieve paden
+# Generate checksums with relative paths
 cd "$BACKUP_DIR"
 : > "$CHECKSUM_FILE"
 for f in databases/*_$DATE.* configs/*_$DATE.*; do
