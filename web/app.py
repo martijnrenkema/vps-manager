@@ -3651,6 +3651,63 @@ def cronjobs_delete():
     return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to delete cronjob'}), 500
 
 
+@app.route('/api/cronjobs/run', methods=['POST'])
+@login_required
+def cronjobs_run():
+    """Run a cron job command immediately"""
+    data = request.get_json() or {}
+    index = data.get('index')
+    cron_type = data.get('type', 'user')
+
+    if index is None:
+        return jsonify({'status': 'error', 'message': 'Index is required'}), 400
+
+    try:
+        index = int(index)
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
+
+    if cron_type == 'root':
+        result = run_cmd("sudo crontab -l 2>/dev/null")
+    else:
+        result = run_cmd("crontab -l 2>/dev/null")
+
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Could not read crontab'}), 500
+
+    lines, jobs = _parse_crontab_lines(result.stdout)
+
+    if index < 0 or index >= len(jobs):
+        return jsonify({'status': 'error', 'message': 'Job index out of range'}), 400
+
+    job = jobs[index]
+    command = job['command']
+
+    if cron_type == 'root':
+        run_result = run_cmd(f"sudo bash -c {shlex.quote(command)}", timeout=120)
+    else:
+        run_result = run_cmd(f"bash -c {shlex.quote(command)}", timeout=120)
+
+    log_audit('cronjob_run', {'type': cron_type, 'command': command, 'exit_code': run_result.returncode})
+
+    output = run_result.stdout.strip()
+    errors = run_result.stderr.strip()
+
+    if run_result.returncode == 0:
+        return jsonify({
+            'status': 'ok',
+            'message': 'Cronjob executed successfully',
+            'output': output[:2000] if output else '',
+            'errors': errors[:2000] if errors else ''
+        })
+    return jsonify({
+        'status': 'error',
+        'message': f'Command exited with code {run_result.returncode}',
+        'output': output[:2000] if output else '',
+        'errors': errors[:2000] if errors else ''
+    }), 200
+
+
 # ---------------------------------------------------------------------------
 # Nginx Config Editor routes
 # ---------------------------------------------------------------------------

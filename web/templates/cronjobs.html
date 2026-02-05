@@ -178,6 +178,9 @@ function renderJobList(containerId, jobs, type) {
             </div>
             <div class="cron-command" style="flex:1"><code>${escHtml(job.command)}</code></div>
             <div class="btn-group" style="flex-shrink:0">
+                <button class="btn btn-sm btn-green" onclick="runCronJob('${type}', ${idx})" title="Run now">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>
                 <button class="btn btn-sm" onclick="editCronJob('${type}', ${idx})" title="Edit">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                 </button>
@@ -310,6 +313,37 @@ async function saveCronJob() {
     } catch (e) {
         showToast('Connection error', 'error');
     }
+}
+
+function runCronJob(type, index) {
+    const jobs = type === 'root' ? (cronData.root_jobs || []) : (cronData.user_jobs || []);
+    if (index >= jobs.length) return;
+    const cmd = jobs[index].command;
+
+    showConfirm('Run Cronjob', `Run this command now?\n${cmd.substring(0, 120)}`, async () => {
+        showToast('Running cronjob...', 'info');
+        try {
+            const res = await fetch('/api/cronjobs/run', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify({type, index})
+            });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                let msg = 'Cronjob executed successfully';
+                if (data.output) msg += '\n\nOutput:\n' + data.output.substring(0, 500);
+                if (data.errors) msg += '\n\nStderr:\n' + data.errors.substring(0, 500);
+                showToast(msg, 'success');
+            } else {
+                let msg = data.message || 'Execution failed';
+                if (data.output) msg += '\n\nOutput:\n' + data.output.substring(0, 500);
+                if (data.errors) msg += '\n\nStderr:\n' + data.errors.substring(0, 500);
+                showToast(msg, 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    });
 }
 
 function deleteCronJob(type, index) {
