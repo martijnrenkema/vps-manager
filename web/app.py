@@ -542,12 +542,25 @@ def get_server_uptime_short():
         return '?'
 
 
+VERSION_FILE = Path(__file__).parent / 'VERSION'
+APP_DIR = '/var/www/vps.dmmusic.nl'
+
+
+def _get_current_version():
+    """Read current version from VERSION file"""
+    try:
+        return VERSION_FILE.read_text().strip()
+    except (OSError, FileNotFoundError):
+        return '0.0.0'
+
+
 @app.context_processor
 def inject_global_info():
     return {
         'server_ip': get_server_ip(),
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
+        'app_version': _get_current_version(),
     }
 
 
@@ -2131,7 +2144,9 @@ def firewall_whitelist_set():
 @app.route('/firewall/banned-ips')
 @login_required
 def firewall_banned_ips():
-    """Get structured list of currently banned IPs per jail"""
+    """Get structured list of currently banned IPs per jail with timing info"""
+    import sqlite3
+
     jails_data = []
 
     # Get list of active jails
@@ -2145,6 +2160,36 @@ def firewall_banned_ips():
 
     jail_names = [j.strip() for j in jail_match.group(1).split(',') if j.strip()]
 
+    # Read ban timing info from fail2ban SQLite database
+    ban_info = {}
+    db_path = '/var/lib/fail2ban/fail2ban.sqlite3'
+    try:
+        # Copy db to temp location (original is root-owned)
+        import tempfile
+        tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
+        tmp.close()
+        cp_result = run_cmd_safe(['sudo', 'cp', db_path, tmp.name], timeout=5)
+        run_cmd_safe(['sudo', 'chmod', '644', tmp.name], timeout=5)
+        if cp_result.returncode == 0:
+            conn = sqlite3.connect(tmp.name)
+            now = int(time.time())
+            rows = conn.execute(
+                'SELECT jail, ip, timeofban, bantime, bancount FROM bans ORDER BY timeofban DESC'
+            ).fetchall()
+            conn.close()
+            for jail, ip, timeofban, bantime, bancount in rows:
+                key = f"{jail}:{ip}"
+                if key not in ban_info:
+                    ban_info[key] = {
+                        'timeofban': timeofban,
+                        'bantime': bantime,
+                        'bancount': bancount,
+                        'remaining': (timeofban + bantime) - now if bantime > 0 else -1,
+                    }
+        os.unlink(tmp.name)
+    except Exception:
+        pass
+
     for jail_name in jail_names:
         jail_result = run_cmd(f"sudo fail2ban-client status {shlex.quote(jail_name)} 2>/dev/null", timeout=10)
         if jail_result.returncode != 0:
@@ -2154,11 +2199,27 @@ def firewall_banned_ips():
         ip_match = re.search(r'Banned IP list:\s*(.*)', jail_result.stdout)
         if ip_match:
             ip_str = ip_match.group(1).strip()
-            ips = [ip.strip() for ip in ip_str.split() if ip.strip()] if ip_str else []
+            ip_list = [ip.strip() for ip in ip_str.split() if ip.strip()] if ip_str else []
         else:
-            ips = []
+            ip_list = []
 
-        jails_data.append({'jail': jail_name, 'ips': ips})
+        ips_with_info = []
+        for ip in ip_list:
+            info = ban_info.get(f"{jail_name}:{ip}", {})
+            entry = {'ip': ip}
+            if info:
+                entry['banned_at'] = datetime.fromtimestamp(info['timeofban']).strftime('%Y-%m-%d %H:%M:%S')
+                entry['bancount'] = info.get('bancount', 1)
+                if info['bantime'] < 0:
+                    entry['duration'] = 'permanent'
+                    entry['remaining'] = 'permanent'
+                else:
+                    entry['duration'] = info['bantime']
+                    remaining = info['remaining']
+                    entry['remaining'] = max(0, remaining)
+            ips_with_info.append(entry)
+
+        jails_data.append({'jail': jail_name, 'ips': ips_with_info})
 
     return jsonify(jails_data)
 
@@ -2182,18 +2243,6 @@ def install_updates():
 # ---------------------------------------------------------------------------
 # VPS Manager self-update (GitHub releases)
 # ---------------------------------------------------------------------------
-
-VERSION_FILE = Path(__file__).parent / 'VERSION'
-APP_DIR = '/var/www/vps.dmmusic.nl'
-
-
-def _get_current_version():
-    """Read current version from VERSION file"""
-    try:
-        return VERSION_FILE.read_text().strip()
-    except (OSError, FileNotFoundError):
-        return '0.0.0'
-
 
 @app.route('/api/update/check')
 @login_required

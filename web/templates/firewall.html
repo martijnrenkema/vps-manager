@@ -311,6 +311,27 @@
     }
 
     // --- Banned IPs ---
+    function formatDuration(seconds) {
+        if (seconds === 'permanent' || seconds < 0) return '<span class="badge badge-red">permanent</span>';
+        if (seconds <= 0) return '<span style="color:var(--text-muted)">expiring...</span>';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        const s = seconds % 60;
+        if (h > 0) return `${h}h ${m}m`;
+        if (m > 0) return `${m}m ${s}s`;
+        return `${s}s`;
+    }
+
+    function formatBanDuration(seconds) {
+        if (seconds === 'permanent' || seconds < 0) return 'permanent';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (h > 0) return `${h}h ${m}m`;
+        return `${m}m`;
+    }
+
+    let bannedIpsInterval = null;
+
     async function loadBannedIps() {
         const container = document.getElementById('bannedIpsContainer');
         try {
@@ -322,21 +343,36 @@
 
             if (totalBanned === 0) {
                 container.innerHTML = '<span class="badge badge-green">No banned IPs</span>';
+                if (bannedIpsInterval) { clearInterval(bannedIpsInterval); bannedIpsInterval = null; }
                 return;
             }
 
-            let html = '<div class="table-wrap"><table><thead><tr><th>IP Address</th><th>Jail</th><th style="width:80px">Action</th></tr></thead><tbody>';
+            let html = '<div class="table-wrap"><table><thead><tr><th>IP Address</th><th>Jail</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
             jails.forEach(j => {
-                j.ips.forEach(ip => {
+                j.ips.forEach(entry => {
+                    const ip = typeof entry === 'string' ? entry : entry.ip;
+                    const bannedAt = entry.banned_at || '-';
+                    const duration = entry.duration != null ? formatBanDuration(entry.duration) : '-';
+                    const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
+                    const bancount = entry.bancount || 1;
+                    const countBadge = bancount > 1 ? ` <span class="badge badge-red" title="Banned ${bancount} times" style="font-size:10px">${bancount}x</span>` : '';
                     html += `<tr>
-                        <td><code>${escHtml(ip)}</code></td>
+                        <td><code>${escHtml(ip)}</code>${countBadge}</td>
                         <td><span class="badge badge-yellow">${escHtml(j.jail)}</span></td>
+                        <td style="font-size:12px;color:var(--text-muted)">${escHtml(bannedAt)}</td>
+                        <td style="font-size:12px">${duration}</td>
+                        <td>${remaining}</td>
                         <td><button class="btn btn-sm btn-green" onclick="unbanIp('${escHtml(ip)}', '${escHtml(j.jail)}')">Unban</button></td>
                     </tr>`;
                 });
             });
             html += '</tbody></table></div>';
             container.innerHTML = html;
+
+            // Auto-refresh every 30s while bans are active
+            if (!bannedIpsInterval) {
+                bannedIpsInterval = setInterval(loadBannedIps, 30000);
+            }
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Failed to load banned IPs</div>';
         }

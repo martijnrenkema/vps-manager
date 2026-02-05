@@ -172,6 +172,13 @@ body {
     margin-right: 10px;
 }
 
+.sidebar-version {
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 0 0 8px;
+    opacity: 0.6;
+}
+
 /* Main content */
 .main-content {
     margin-left: var(--sidebar-width);
