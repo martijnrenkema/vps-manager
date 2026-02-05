@@ -2006,8 +2006,8 @@ def backup_download():
 
     real_path = os.path.realpath(path)
     backup_cfg = CONFIG.get('backup', {})
-    backup_dir = os.path.realpath(backup_cfg.get('backup_dir', '/var/backups/vps/'))
-    db_backup_dir = os.path.realpath(backup_cfg.get('db_backup_dir', '/var/backups/vps/databases/'))
+    backup_dir = os.path.realpath(backup_cfg.get('backup_dir') or '/var/backups/vps/')
+    db_backup_dir = os.path.realpath(backup_cfg.get('db_backup_dir') or '/var/backups/vps/databases/')
 
     # Only allow paths within backup directories
     allowed = False
@@ -2252,8 +2252,8 @@ def firewall_banned_ips():
         tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
         tmp.close()
         cp_result = run_cmd_safe(['sudo', 'cp', db_path, tmp.name], timeout=5)
-        run_cmd_safe(['sudo', 'chmod', '644', tmp.name], timeout=5)
-        if cp_result.returncode == 0:
+        chmod_result = run_cmd_safe(['sudo', 'chmod', '644', tmp.name], timeout=5)
+        if cp_result.returncode == 0 and chmod_result.returncode == 0:
             conn = sqlite3.connect(tmp.name)
             now = int(time.time())
             rows = conn.execute(
@@ -2667,11 +2667,11 @@ def files_download():
     path = request.args.get('path', '')
     real_path = os.path.realpath(path)
 
-    if not os.path.isfile(real_path):
-        return jsonify({'error': 'File not found'}), 404
-
     if not is_path_allowed(real_path):
         return jsonify({'error': 'Access denied'}), 403
+
+    if not os.path.isfile(real_path):
+        return jsonify({'error': 'File not found'}), 404
 
     return send_file(real_path, as_attachment=True)
 
@@ -2682,11 +2682,11 @@ def files_upload():
     path = request.form.get('path', '/var/www')
     real_path = os.path.realpath(path)
 
-    if not os.path.isdir(real_path):
-        return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
-
     if not is_path_allowed(real_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+
+    if not os.path.isdir(real_path):
+        return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
 
     if 'file' not in request.files:
         return jsonify({'status': 'error', 'message': 'No file received'}), 400
@@ -3023,15 +3023,18 @@ def validate_config(data):
     errors = []
 
     if 'thresholds' in data:
-        t = data['thresholds']
-        for key in ('disk_warning', 'disk_critical', 'memory_warning', 'swap_warning'):
-            if key in t:
-                if not isinstance(t[key], (int, float)) or t[key] < 1 or t[key] > 100:
-                    errors.append(f'{key} must be between 1-100')
-        for key in ('ssl_warning_days', 'ssl_critical_days'):
-            if key in t:
-                if not isinstance(t[key], (int, float)) or t[key] < 1:
-                    errors.append(f'{key} must be at least 1')
+        if not isinstance(data['thresholds'], dict):
+            errors.append('thresholds must be an object')
+        else:
+            t = data['thresholds']
+            for key in ('disk_warning', 'disk_critical', 'memory_warning', 'swap_warning'):
+                if key in t:
+                    if not isinstance(t[key], (int, float)) or t[key] < 1 or t[key] > 100:
+                        errors.append(f'{key} must be between 1-100')
+            for key in ('ssl_warning_days', 'ssl_critical_days'):
+                if key in t:
+                    if not isinstance(t[key], (int, float)) or t[key] < 1:
+                        errors.append(f'{key} must be at least 1')
 
     if 'monitor_interval' in data:
         if not isinstance(data['monitor_interval'], int) or data['monitor_interval'] < 30:
@@ -3062,10 +3065,13 @@ def validate_config(data):
                         errors.append(f'Allowed path must be an absolute path string: {p}')
 
     if 'ddos_detection' in data:
-        dd = data['ddos_detection']
-        for key in ('connection_threshold', 'syn_threshold', 'single_ip_threshold'):
-            if key in dd and (not isinstance(dd[key], int) or dd[key] < 1):
-                errors.append(f'{key} must be a positive integer')
+        if not isinstance(data['ddos_detection'], dict):
+            errors.append('ddos_detection must be an object')
+        else:
+            dd = data['ddos_detection']
+            for key in ('connection_threshold', 'syn_threshold', 'single_ip_threshold'):
+                if key in dd and (not isinstance(dd[key], int) or dd[key] < 1):
+                    errors.append(f'{key} must be a positive integer')
 
     return (len(errors) == 0, errors)
 
@@ -3344,11 +3350,11 @@ def files_read():
     path = request.args.get('path', '')
     real_path = os.path.realpath(path)
 
-    if not os.path.isfile(real_path):
-        return jsonify({'status': 'error', 'message': 'File not found'}), 404
-
     if not is_path_allowed(real_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+
+    if not os.path.isfile(real_path):
+        return jsonify({'status': 'error', 'message': 'File not found'}), 404
 
     # Check file size (max 1MB)
     try:
