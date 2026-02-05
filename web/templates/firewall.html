@@ -168,25 +168,7 @@
     </div>
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
-    <div class="card">
-        <div class="card-header">
-            {{ icon('ban') }} Banned IPs (all jails)
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Currently blocked IPs. Bans expire after the configured ban time unless permanent bans are enabled.">?</span>
-        </div>
-        <div class="card-body">
-            {% if data.banned %}
-                {% if data.banned in ['[{}]', '[]'] %}
-                    <span class="badge badge-green">No banned IPs</span>
-                {% else %}
-                    <pre style="color:var(--red)">{{ data.banned }}</pre>
-                {% endif %}
-            {% else %}
-                <div class="empty-state">No data</div>
-            {% endif %}
-        </div>
-    </div>
-    <div class="card">
+<div class="card" style="margin-top:16px">
         <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
         <div class="card-body">
             {% if data.sessions %}
@@ -195,9 +177,6 @@
                 <span style="color:var(--text-muted)">No active sessions</span>
             {% endif %}
         </div>
-    </div>
-</div>
-
 <div class="card" style="margin-top:16px">
     <div class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</div>
     <div class="card-body">

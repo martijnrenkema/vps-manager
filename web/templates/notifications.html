@@ -109,6 +109,17 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">App Updates</div>
+                        <div class="notif-category-desc">New VPS Manager release available on GitHub</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-app_update" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
             </div>
 
             <button class="btn btn-green" onclick="savePreferences()" style="margin-top:16px;">Save Preferences</button>
@@ -252,6 +263,7 @@
                 document.getElementById('pref-security').checked = prefs.security !== false;
                 document.getElementById('pref-ddos').checked = prefs.ddos !== false;
                 document.getElementById('pref-backup').checked = prefs.backup !== false;
+                document.getElementById('pref-app_update').checked = prefs.app_update !== false;
             }
         } catch (e) {
             // Use defaults
@@ -267,6 +279,7 @@
             security: document.getElementById('pref-security').checked,
             ddos: document.getElementById('pref-ddos').checked,
             backup: document.getElementById('pref-backup').checked,
+            app_update: document.getElementById('pref-app_update').checked,
         };
 
         try {

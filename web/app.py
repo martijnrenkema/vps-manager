@@ -227,7 +227,10 @@ def _classify_alert(alert):
     """Classify an alert into a notification category"""
     msg = alert.get('message', '').lower()
     severity = alert.get('severity', '')
+    key = alert.get('key', '')
 
+    if key == 'app_update_available':
+        return 'app_update'
     if 'ddos' in msg or 'syn flood' in msg or 'connections from single' in msg:
         return 'ddos'
     if 'backup' in msg:
@@ -412,6 +415,10 @@ def _monitor_loop():
             backup_alerts = check_backup_alerts()
             alerts.extend(backup_alerts)
 
+            # Add app update alert
+            app_update_alerts = check_app_update_alert()
+            alerts.extend(app_update_alerts)
+
             _, private_key_pem = _get_vapid_keys()
             notif_log = _load_notification_log()
             now = time.time()
@@ -552,6 +559,34 @@ def _get_current_version():
         return VERSION_FILE.read_text().strip()
     except (OSError, FileNotFoundError):
         return '0.0.0'
+
+
+def check_app_update_alert():
+    """Check GitHub for a new VPS Manager release and return an alert if available"""
+    import urllib.request
+
+    current = _get_current_version()
+    url = 'https://api.github.com/repos/martijnrenkema/vps-manager/releases/latest'
+    req = urllib.request.Request(url, headers={
+        'User-Agent': 'VPS-Manager/' + current,
+        'Accept': 'application/vnd.github.v3+json',
+    })
+
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+    except Exception:
+        return []
+
+    latest = data.get('tag_name', '').lstrip('v')
+    if latest and latest != current:
+        return [{
+            'severity': 'info',
+            'message': f"VPS Manager update available: v{current} → v{latest}",
+            'link': '/updates',
+            'key': 'app_update_available',
+        }]
+    return []
 
 
 @app.context_processor
