@@ -54,34 +54,74 @@
     </div>
 </div>
 
-<!-- Webhook Info -->
+<!-- NAS Transfer Stats -->
+{% if data.nas_pull %}
 <div class="card" style="margin-bottom:16px">
-    <div class="card-header">{{ icon('link') }} Webhook Endpoint</div>
+    <div class="card-header">{{ icon('download-cloud') }} Last NAS Pull</div>
     <div class="card-body">
-        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
-            Add webhook calls to your backup scripts to track status. Use <code>localhost</code> for scripts running on the VPS, or the public URL for remote scripts (e.g. NAS pull).
-        </p>
-
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">VPS backup script (localhost)</div>
-        <pre style="font-size:12px;margin-bottom:16px">WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
-
-# Report success:
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "success", "details": "Backup completed"}'
-
-# Report failure:
-curl -s -X POST "$WEBHOOK_URL" \
-  -H "Content-Type: application/json" \
-  -d '{"status": "failure", "details": "Error message"}'</pre>
-
-        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Remote pull script (NAS / offsite)</div>
-        <pre style="font-size:12px">WEBHOOK_URL="{{ request.url_root }}api/backup/webhook"
-
-# Same format, uses the public HTTPS URL.
-# No extra ports needed — connects via existing HTTPS.</pre>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px">
+            {% if data.nas_pull.transferred %}
+            <div class="stat-card" style="border:none;padding:0;text-align:center">
+                <div class="value" style="font-size:20px;color:var(--primary)">{{ data.nas_pull.transferred }}</div>
+                <div class="label">Transferred</div>
+            </div>
+            {% endif %}
+            {% if data.nas_pull.speedup %}
+            <div class="stat-card" style="border:none;padding:0;text-align:center">
+                <div class="value" style="font-size:20px;color:var(--primary)">{{ data.nas_pull.speedup }}x</div>
+                <div class="label">Speedup</div>
+            </div>
+            {% endif %}
+            {% if data.nas_pull.disk_size %}
+            <div class="stat-card" style="border:none;padding:0;text-align:center">
+                <div class="value" style="font-size:20px">{{ data.nas_pull.disk_size }}</div>
+                <div class="label">Total on disk</div>
+            </div>
+            {% endif %}
+            {% if data.nas_pull.checksums %}
+            <div class="stat-card" style="border:none;padding:0;text-align:center">
+                <div class="value" style="font-size:20px;color:{% if data.nas_pull.checksums_failed %}var(--red){% else %}var(--green){% endif %}">{{ data.nas_pull.checksums }}</div>
+                <div class="label">Checksums{% if data.nas_pull.checksums_failed %} ({{ data.nas_pull.checksums_failed }} failed){% endif %}</div>
+            </div>
+            {% endif %}
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:12px">{{ data.nas_pull.timestamp }}</div>
     </div>
 </div>
+{% endif %}
+
+<!-- History Table -->
+{% if data.history %}
+<div class="card" style="margin-bottom:16px">
+    <div class="card-header">{{ icon('clock') }} Run History</div>
+    <div class="card-body" style="padding:0">
+        <table class="table" style="margin:0;font-size:13px">
+            <thead>
+                <tr>
+                    <th style="padding:10px 16px">Time</th>
+                    <th style="padding:10px 16px">Status</th>
+                    <th style="padding:10px 16px">Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for entry in data.history|reverse %}
+                <tr>
+                    <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ entry.timestamp[:16]|replace('T', ' ') if entry.timestamp else '-' }}</td>
+                    <td style="padding:8px 16px">
+                        {% if entry.status == 'success' %}
+                            <span style="color:var(--green);font-weight:500">OK</span>
+                        {% else %}
+                            <span style="color:var(--red);font-weight:500">FAIL</span>
+                        {% endif %}
+                    </td>
+                    <td style="padding:8px 16px;color:var(--text-secondary)">{{ entry.details[:120] if entry.details else '-' }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
 
 <div class="grid-2col">
     <div class="card">
@@ -118,4 +158,33 @@ curl -s -X POST "$WEBHOOK_URL" \
         {% endif %}
     </div>
 </div>
+
+<!-- Webhook Info (collapsible) -->
+<details class="card card-collapsible" style="margin-top:16px">
+    <summary class="card-header">{{ icon('send') }} Webhook Setup</summary>
+    <div class="card-body">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+            Add webhook calls to your backup scripts to track status. Use <code>localhost</code> for scripts running on the VPS, or the public URL for remote scripts (e.g. NAS pull).
+        </p>
+
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">VPS backup script (localhost)</div>
+        <pre style="font-size:12px;margin-bottom:16px">WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
+
+# Report success:
+curl -s -X POST "$WEBHOOK_URL" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "success", "details": "Backup completed"}'
+
+# Report failure:
+curl -s -X POST "$WEBHOOK_URL" \
+  -H "Content-Type: application/json" \
+  -d '{"status": "failure", "details": "Error message"}'</pre>
+
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Remote pull script (NAS / offsite)</div>
+        <pre style="font-size:12px">WEBHOOK_URL="{{ request.url_root }}api/backup/webhook"
+
+# Same format, uses the public HTTPS URL.
+# No extra ports needed — connects via existing HTTPS.</pre>
+    </div>
+</details>
 {% endblock %}

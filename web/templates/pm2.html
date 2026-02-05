@@ -42,13 +42,13 @@
                         <td>{{ p.restarts }}</td>
                         <td>
                             <div class="btn-group">
-                                <button class="btn btn-sm btn-green" onclick="pm2Action('restart', {{ p.name | tojson }})">Restart</button>
+                                <button class="btn btn-sm btn-green" onclick="pm2Action('restart', {{ p.name | tojson | forceescape }})">Restart</button>
                                 {% if p.status == 'online' %}
-                                    <button class="btn btn-sm btn-yellow" onclick="pm2Action('stop', {{ p.name | tojson }})">Stop</button>
+                                    <button class="btn btn-sm btn-yellow" onclick="pm2Action('stop', {{ p.name | tojson | forceescape }})">Stop</button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-green" onclick="pm2Action('start', {{ p.name | tojson }})">Start</button>
+                                    <button class="btn btn-sm btn-green" onclick="pm2Action('start', {{ p.name | tojson | forceescape }})">Start</button>
                                 {% endif %}
-                                <button class="btn btn-sm" onclick="showLogs({{ p.name | tojson }})">Logs</button>
+                                <button class="btn btn-sm" onclick="showLogs({{ p.name | tojson | forceescape }})">Logs</button>
                             </div>
                         </td>
                     </tr>

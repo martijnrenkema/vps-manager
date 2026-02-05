@@ -34,11 +34,11 @@
                         <td><span style="color:var(--text-secondary)">{{ svc.uptime or '-' }}</span></td>
                         <td>
                             <div class="btn-group">
-                                <button class="btn btn-sm btn-yellow" onclick="serviceAction('restart', {{ svc.name | tojson }})">Restart</button>
+                                <button class="btn btn-sm btn-yellow" onclick="serviceAction('restart', {{ svc.name | tojson | forceescape }})">Restart</button>
                                 {% if svc.status == 'active' %}
-                                    <button class="btn btn-sm btn-red" onclick="serviceAction('stop', {{ svc.name | tojson }})">Stop</button>
+                                    <button class="btn btn-sm btn-red" onclick="serviceAction('stop', {{ svc.name | tojson | forceescape }})">Stop</button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-green" onclick="serviceAction('start', {{ svc.name | tojson }})">Start</button>
+                                    <button class="btn btn-sm btn-green" onclick="serviceAction('start', {{ svc.name | tojson | forceescape }})">Start</button>
                                 {% endif %}
                             </div>
                         </td>

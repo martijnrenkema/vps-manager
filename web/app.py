@@ -178,20 +178,36 @@ def _save_notification_history(history):
 
 
 def _add_notification_history(title, body, category):
-    """Add an entry to notification history"""
+    """Add an entry to notification history, deduplicating active alerts.
+
+    If an unread entry with the same category and body already exists,
+    update its timestamp instead of creating a duplicate.
+    """
     history = _load_notification_history()
+
+    # Check for existing unread entry with same category + body
+    for item in history:
+        if not item.get('read') and item.get('category') == category and item.get('body') == body:
+            item['timestamp'] = datetime.now().isoformat()
+            item['count'] = item.get('count', 1) + 1
+            _save_notification_history(history)
+            return
+
     history.append({
         'timestamp': datetime.now().isoformat(),
         'title': title,
         'body': body,
         'category': category,
         'read': False,
+        'count': 1,
     })
     _save_notification_history(history)
 
 
 def _send_push(subscription_info, payload, private_key_pem):
-    """Send a push notification to a single subscription"""
+    """Send a push notification to a single subscription.
+    Returns: True=sent, False=expired (remove sub), None=transient error (keep sub)
+    """
     try:
         webpush(
             subscription_info=subscription_info,
@@ -204,7 +220,7 @@ def _send_push(subscription_info, payload, private_key_pem):
         if e.response and e.response.status_code in (404, 410):
             return False  # Subscription expired, should be removed
         logger.warning(f"Push failed: {e}")
-        return True  # Keep subscription, transient error
+        return None  # Transient error, keep subscription
 
 
 def _classify_alert(alert):
@@ -396,63 +412,90 @@ def _monitor_loop():
             backup_alerts = check_backup_alerts()
             alerts.extend(backup_alerts)
 
-            if not alerts:
-                time.sleep(MONITOR_INTERVAL)
-                continue
-
             _, private_key_pem = _get_vapid_keys()
             notif_log = _load_notification_log()
             now = time.time()
             log_changed = False
 
-            for alert in alerts:
-                category = _classify_alert(alert)
-                alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
+            # Build set of current alert keys so we can detect resolved alerts
+            current_alert_keys = set()
 
-                # Check cooldown
-                last_sent = notif_log.get(alert_key, 0)
-                if now - last_sent < NOTIFICATION_COOLDOWN:
-                    continue
+            if alerts:
+                for alert in alerts:
+                    category = _classify_alert(alert)
+                    alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
+                    current_alert_keys.add(alert_key)
 
-                payload = {
-                    'title': 'VPS Manager',
-                    'body': alert['message'],
-                    'tag': category,
-                    'url': alert.get('link') or '/',
-                }
+                    log_entry = notif_log.get(alert_key)
 
-                # Send to matching subscribers
-                expired = []
-                for i, sub in enumerate(subs):
-                    prefs = sub.get('preferences', {})
-                    if not prefs.get(category, category != 'updates'):
+                    # State-based dedup: skip if already notified with the same message
+                    # Only re-send if the message content changed (e.g. "2 updates" -> "5 updates")
+                    if isinstance(log_entry, dict):
+                        if log_entry.get('message') == alert['message']:
+                            continue
+                    elif isinstance(log_entry, (int, float)):
+                        # Legacy cooldown format: migrate to new format, skip this cycle
+                        notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
+                        log_changed = True
                         continue
 
-                    sub_info = {
-                        'endpoint': sub['endpoint'],
-                        'keys': sub['keys'],
+                    payload = {
+                        'title': 'VPS Manager',
+                        'body': alert['message'],
+                        'tag': category,
+                        'url': alert.get('link') or '/',
                     }
-                    alive = _send_push(sub_info, payload, private_key_pem)
-                    if not alive:
-                        expired.append(i)
 
-                # Remove expired subscriptions
-                if expired:
-                    subs = [s for i, s in enumerate(subs) if i not in expired]
-                    _save_subscriptions(subs)
+                    # Send to matching subscribers
+                    expired = []
+                    sent_count = 0
+                    for i, sub in enumerate(subs):
+                        prefs = sub.get('preferences', {})
+                        if not prefs.get(category, category != 'updates'):
+                            continue
 
-                notif_log[alert_key] = now
+                        sub_info = {
+                            'endpoint': sub['endpoint'],
+                            'keys': sub['keys'],
+                        }
+                        result = _send_push(sub_info, payload, private_key_pem)
+                        if result is False:
+                            expired.append(i)
+                        elif result is True:
+                            sent_count += 1
+
+                    # Remove expired subscriptions
+                    if expired:
+                        subs = [s for i, s in enumerate(subs) if i not in expired]
+                        _save_subscriptions(subs)
+
+                    if sent_count > 0:
+                        notif_log[alert_key] = {'ts': now, 'message': alert['message']}
+                        log_changed = True
+                        logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
+
+                        # Save to notification history
+                        _add_notification_history(
+                            payload['title'],
+                            payload['body'],
+                            category,
+                        )
+                    else:
+                        logger.warning(f"Push skipped (no matching subscribers): {alert['message']} [category={category}]")
+
+            # Remove log entries for alerts that have resolved, so they
+            # trigger a new notification if they come back later
+            resolved_keys = [k for k in notif_log if k not in current_alert_keys]
+            for k in resolved_keys:
+                del notif_log[k]
                 log_changed = True
 
-                # Save to notification history
-                _add_notification_history(
-                    payload['title'],
-                    payload['body'],
-                    category,
-                )
-
-            # Clean old entries from log (>24h)
-            cleaned = {k: v for k, v in notif_log.items() if now - v < 86400}
+            # Clean entries older than 7 days as a safety net
+            cleaned = {}
+            for k, v in notif_log.items():
+                ts = v.get('ts', 0) if isinstance(v, dict) else v
+                if now - ts < 604800:
+                    cleaned[k] = v
             if len(cleaned) != len(notif_log) or log_changed:
                 _save_notification_log(cleaned)
 
@@ -1007,6 +1050,41 @@ def get_backup_status():
     status = _load_backup_status()
     data['status'] = status
     data['history'] = status.get('history', [])[-10:]
+
+    # Parse transfer stats from last NAS pull
+    data['nas_pull'] = None
+    for entry in reversed(status.get('history', [])):
+        if entry.get('status') == 'success' and 'NAS pull' in entry.get('details', ''):
+            details = entry['details']
+            pull_stats = {'timestamp': entry.get('timestamp', '')[:19]}
+            # Parse "transferred: 3473931 bytes"
+            m = re.search(r'transferred:\s*([\d,]+)\s*bytes', details)
+            if m:
+                raw = int(m.group(1).replace(',', ''))
+                if raw >= 1048576:
+                    pull_stats['transferred'] = f"{raw / 1048576:.1f} MB"
+                elif raw >= 1024:
+                    pull_stats['transferred'] = f"{raw / 1024:.1f} KB"
+                else:
+                    pull_stats['transferred'] = f"{raw} B"
+            # Parse "speedup: 202.01"
+            m = re.search(r'speedup:\s*([\d.]+)', details)
+            if m:
+                pull_stats['speedup'] = m.group(1)
+            # Parse "6/6 checksums OK"
+            m = re.search(r'(\d+/\d+)\s*checksums\s*OK', details)
+            if m:
+                pull_stats['checksums'] = m.group(1)
+            # Parse "FAILED"
+            m = re.search(r'(\d+)\s*FAILED', details)
+            if m:
+                pull_stats['checksums_failed'] = m.group(1)
+            # Parse disk size "696M on disk"
+            m = re.search(r'([\d.]+[KMGT]?)\s*on disk', details)
+            if m:
+                pull_stats['disk_size'] = m.group(1)
+            data['nas_pull'] = pull_stats
+            break
 
     # Parse log for success/failure if no webhook data yet
     if not data['history'] and data['log']:
@@ -2186,11 +2264,13 @@ def push_test():
         'url': '/notifications',
     }
 
-    alive = _send_push({'endpoint': sub['endpoint'], 'keys': sub['keys']}, payload, private_key_pem)
-    if not alive:
+    result = _send_push({'endpoint': sub['endpoint'], 'keys': sub['keys']}, payload, private_key_pem)
+    if result is False:
         subs = [s for s in subs if s.get('endpoint') != endpoint]
         _save_subscriptions(subs)
         return jsonify({'status': 'error', 'message': 'Subscription expired'}), 410
+    if result is None:
+        return jsonify({'status': 'error', 'message': 'Push failed (transient error)'}), 502
 
     _add_notification_history(payload['title'], payload['body'], 'test')
     return jsonify({'status': 'ok', 'message': 'Test notification sent'})
@@ -2255,6 +2335,38 @@ def notification_read():
         item['read'] = True
     _save_notification_history(history)
     return jsonify({'status': 'ok', 'message': 'All notifications marked as read'})
+
+
+@app.route('/api/notifications/clear', methods=['POST'])
+@login_required
+def notification_clear():
+    """Clear all notification history and reset the notification log.
+
+    This allows alerts to be sent again if they are still active.
+    """
+    _save_notification_history([])
+    _save_notification_log({})
+    return jsonify({'status': 'ok', 'message': 'Notifications cleared'})
+
+
+@app.route('/api/notifications/dismiss', methods=['POST'])
+@login_required
+def notification_dismiss():
+    """Dismiss (remove) a single notification by index."""
+    data = request.get_json() or {}
+    index = data.get('index')
+    if index is None:
+        return jsonify({'status': 'error', 'message': 'Missing index'}), 400
+
+    history = _load_notification_history()
+    # History is stored oldest-first; the API returns newest-first,
+    # so the front-end index maps to reversed order.
+    reversed_idx = len(history) - 1 - int(index)
+    if 0 <= reversed_idx < len(history):
+        history.pop(reversed_idx)
+        _save_notification_history(history)
+        return jsonify({'status': 'ok', 'message': 'Notification dismissed'})
+    return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
 
 
 @app.route('/settings')
