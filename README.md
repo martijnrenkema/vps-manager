@@ -1,6 +1,6 @@
 # VPS Manager
 
-Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provides a complete management interface via the browser.
+Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provides a complete management interface via the browser. Built for Ubuntu/Debian systems using `apt`, `systemctl`, `ufw`, and `fail2ban`.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![Flask](https://img.shields.io/badge/Flask-Web_Dashboard-green)
