@@ -141,9 +141,17 @@
             </div>
 
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Services</h4>
-            <div class="form-group" style="max-width:400px">
+            <div class="form-group" style="max-width:500px">
                 <label>Monitored services (comma-separated)</label>
-                <input type="text" class="form-control" id="cfg_services" value="{{ config.services | join(', ') }}">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="text" class="form-control" id="cfg_services" value="{{ config.services | join(', ') }}" style="flex:1">
+                    <button type="button" class="btn" onclick="detectServices()" id="detectServicesBtn">{{ icon('refresh') }} Detect</button>
+                </div>
+            </div>
+            <div id="detectedServices" style="display:none;margin-bottom:16px">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">Select services to add:</div>
+                <div id="detectedServicesList" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+                <button type="button" class="btn btn-green btn-sm" onclick="applyDetectedServices()" style="margin-top:10px">Apply Selected</button>
             </div>
 
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">phpMyAdmin</h4>
@@ -247,6 +255,57 @@ async function disable2FA() {
     } catch(e) {
         showToast('Error: ' + e.message, 'error');
     }
+}
+
+async function detectServices() {
+    const btn = document.getElementById('detectServicesBtn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/services/detect');
+        const services = await res.json();
+        if (!services.length) {
+            showToast('No services detected', 'error');
+            btn.disabled = false;
+            return;
+        }
+
+        const current = document.getElementById('cfg_services').value.split(',').map(s => s.trim()).filter(Boolean);
+        const container = document.getElementById('detectedServicesList');
+        container.innerHTML = '';
+
+        services.forEach(svc => {
+            const isExisting = current.includes(svc);
+            const badge = document.createElement('label');
+            badge.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;font-size:12px;cursor:pointer;border:1px solid var(--border);background:var(--bg-tertiary);transition:all 0.15s';
+            const cb = document.createElement('input');
+            cb.type = 'checkbox';
+            cb.value = svc;
+            cb.checked = true;
+            cb.style.cssText = 'accent-color:var(--green);cursor:pointer';
+            if (isExisting) {
+                badge.style.opacity = '0.5';
+                badge.title = 'Already monitored';
+            }
+            badge.appendChild(cb);
+            badge.appendChild(document.createTextNode(svc));
+            container.appendChild(badge);
+        });
+
+        document.getElementById('detectedServices').style.display = 'block';
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+    btn.disabled = false;
+}
+
+function applyDetectedServices() {
+    const current = document.getElementById('cfg_services').value.split(',').map(s => s.trim()).filter(Boolean);
+    const checkboxes = document.querySelectorAll('#detectedServicesList input[type="checkbox"]:checked');
+    const newServices = new Set(current);
+    checkboxes.forEach(cb => newServices.add(cb.value));
+    document.getElementById('cfg_services').value = Array.from(newServices).join(', ');
+    document.getElementById('detectedServices').style.display = 'none';
+    showToast(`${newServices.size} services configured`, 'success');
 }
 
 async function saveConfig(e) {

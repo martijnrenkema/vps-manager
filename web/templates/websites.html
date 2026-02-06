@@ -17,6 +17,7 @@
                         <th>Type</th>
                         <th>Location</th>
                         <th>Config</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -47,6 +48,10 @@
                         </td>
                         <td><code>{{ site.location }}</code></td>
                         <td><code style="color:var(--text-muted)">{{ site.config }}</code></td>
+                        <td style="white-space:nowrap">
+                            <a href="/nginx-config?select={{ site.config|urlencode }}" class="btn btn-sm" title="Edit config">{{ icon('edit') }} Config</a>
+                            <a href="/nginx-logs" class="btn btn-sm" title="View logs">{{ icon('file-text') }} Logs</a>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>

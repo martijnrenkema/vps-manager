@@ -924,6 +924,19 @@ code {
     .top-bar .meta span:not(:last-child) {
         display: none;
     }
+
+    .card-body {
+        overflow-x: hidden;
+    }
+
+    .card-body table {
+        font-size: 12px;
+    }
+
+    .card-body pre {
+        word-break: break-word;
+        font-size: 10px;
+    }
 }
 
 /* Confirm dialog */
@@ -1920,9 +1933,28 @@ code {
     }
     .nginx-config-sidebar {
         max-height: 200px;
+        overflow-y: auto;
+    }
+    .nginx-config-sidebar .card-body {
+        padding: 4px !important;
+    }
+    .nginx-config-item {
+        padding: 6px 8px;
+        font-size: 12px;
     }
     .nginx-editor-main {
         min-height: 400px;
+    }
+    .nginx-editor-main .card-header {
+        flex-wrap: wrap;
+    }
+    .nginx-editor-main .card-header .btn-group {
+        width: 100%;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+    .nginx-editor-main .editor-textarea {
+        font-size: 11px;
     }
 }
 

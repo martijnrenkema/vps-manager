@@ -11,11 +11,69 @@
             <span class="tooltip-icon" data-bs-toggle="tooltip" title="UFW (Uncomplicated Firewall) controls which network connections are allowed or blocked on the server.">?</span>
         </div>
         <div class="card-body">
-            {% if data.ufw %}
+            {% if data.ufw_rules %}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th style="width:60px"></th></tr></thead>
+                    <tbody>
+                        {% for rule in data.ufw_rules %}
+                        <tr>
+                            <td>{{ rule.number }}</td>
+                            <td><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</td>
+                            <td>
+                                {% if rule.action == 'ALLOW' %}
+                                    <span class="badge badge-green">{{ rule.action }}</span>
+                                {% elif rule.action == 'DENY' or rule.action == 'REJECT' %}
+                                    <span class="badge badge-red">{{ rule.action }}</span>
+                                {% elif rule.action == 'LIMIT' %}
+                                    <span class="badge badge-yellow">{{ rule.action }}</span>
+                                {% else %}
+                                    <span class="badge">{{ rule.action }}</span>
+                                {% endif %}
+                            </td>
+                            <td>{{ rule.from_addr }}</td>
+                            <td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('{{ rule.number }}')">{{ icon('trash') }}</button></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% elif data.ufw %}
                 <pre>{{ data.ufw }}</pre>
             {% else %}
                 <div class="empty-state">Unable to retrieve UFW status</div>
             {% endif %}
+
+            <!-- Add Rule Form -->
+            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
+                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Add Rule</div>
+                <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+                    <div class="form-group" style="margin-bottom:0;min-width:90px">
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Port</label>
+                        <input type="number" id="ufwPort" class="form-control" placeholder="80" min="1" max="65535" style="width:90px">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;min-width:90px">
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Protocol</label>
+                        <select id="ufwProto" class="form-control" style="width:90px">
+                            <option value="tcp">TCP</option>
+                            <option value="udp">UDP</option>
+                            <option value="any">Both</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;min-width:150px;flex:1">
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">From IP (blank = Anywhere)</label>
+                        <input type="text" id="ufwFrom" class="form-control" placeholder="Anywhere">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;min-width:90px">
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Action</label>
+                        <select id="ufwAction" class="form-control" style="width:90px">
+                            <option value="allow">Allow</option>
+                            <option value="deny">Deny</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-green" onclick="addUfwRule()">+ Add</button>
+                </div>
+            </div>
         </div>
     </div>
     <div class="card">
@@ -259,6 +317,56 @@
 <script>
     let whitelistIps = [];
 
+    // --- UFW Rules ---
+    async function addUfwRule() {
+        const port = document.getElementById('ufwPort').value.trim();
+        const proto = document.getElementById('ufwProto').value;
+        const from_ip = document.getElementById('ufwFrom').value.trim();
+        const action = document.getElementById('ufwAction').value;
+        if (!port) { showToast('Enter a port number', 'error'); return; }
+        const portNum = parseInt(port);
+        if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+            showToast('Port must be between 1 and 65535', 'error'); return;
+        }
+        try {
+            const res = await fetch('/firewall/ufw/add', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify({port, proto, from_ip, action}),
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+                setTimeout(() => location.reload(), 800);
+            } else {
+                showToast(data.message || 'Failed to add rule', 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    }
+
+    async function deleteUfwRule(ruleNumber) {
+        showConfirm('Delete UFW Rule', `Delete rule #${ruleNumber}?`, async function() {
+            try {
+                const res = await fetch('/firewall/ufw/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    body: JSON.stringify({rule_number: ruleNumber}),
+                });
+                const data = await res.json();
+                if (res.ok) {
+                    showToast(data.message, 'success');
+                    setTimeout(() => location.reload(), 800);
+                } else {
+                    showToast(data.message || 'Failed to delete rule', 'error');
+                }
+            } catch (e) {
+                showToast('Connection error', 'error');
+            }
+        });
+    }
+
     // --- Ban IP ---
     async function banIp() {
         const ip = document.getElementById('banIpInput').value.trim();
@@ -337,8 +445,10 @@
                     const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
                     const bancount = entry.bancount || 1;
                     const countBadge = bancount > 1 ? ` <span class="badge badge-red" title="Banned ${bancount} times" style="font-size:10px">${bancount}x</span>` : '';
+                    const flag = entry.countryCode ? countryFlag(entry.countryCode) + ' ' : '';
+                    const countryTitle = entry.country ? ` title="${escHtml(entry.country)}"` : '';
                     html += `<tr>
-                        <td><code>${escHtml(ip)}</code>${countBadge}</td>
+                        <td><span${countryTitle}>${flag}</span><code>${escHtml(ip)}</code>${countBadge}</td>
                         <td><span class="badge badge-yellow">${escHtml(j.jail)}</span></td>
                         <td style="font-size:12px;color:var(--text-muted)">${escHtml(bannedAt)}</td>
                         <td style="font-size:12px">${duration}</td>
@@ -456,6 +566,14 @@
         const d = document.createElement('div');
         d.textContent = str;
         return d.innerHTML;
+    }
+
+    function countryFlag(countryCode) {
+        if (!countryCode || countryCode.length !== 2) return '';
+        const cc = countryCode.toUpperCase();
+        const first = String.fromCodePoint(0x1F1E6 + cc.charCodeAt(0) - 65);
+        const second = String.fromCodePoint(0x1F1E6 + cc.charCodeAt(1) - 65);
+        return first + second;
     }
 
     // Load data on page load

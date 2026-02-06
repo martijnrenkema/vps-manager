@@ -1280,16 +1280,45 @@ def _seconds_to_human(seconds):
         return str(seconds)
 
 
+def parse_ufw_rules(ufw_output):
+    """Parse 'sudo ufw status numbered' output into a list of dicts"""
+    rules = []
+    for line in ufw_output.split('\n'):
+        line = line.strip()
+        # Match lines like: [ 1] 22/tcp                     ALLOW IN    Anywhere
+        match = re.match(
+            r'\[\s*(\d+)\]\s+(.+?)\s+(ALLOW|DENY|REJECT|LIMIT)\s+(IN|OUT|FWD)?\s*(.*)',
+            line
+        )
+        if match:
+            number = match.group(1)
+            to = match.group(2).strip()
+            action = match.group(3).strip()
+            direction = (match.group(4) or '').strip()
+            from_addr = match.group(5).strip() or 'Anywhere'
+            v6 = '(v6)' in to or '(v6)' in from_addr
+            rules.append({
+                'number': number,
+                'to': to.replace('(v6)', '').strip(),
+                'action': action,
+                'direction': direction,
+                'from_addr': from_addr.replace('(v6)', '').strip(),
+                'v6': v6,
+            })
+    return rules
+
+
 def get_firewall_security():
     """Get firewall and security info"""
     data = {
-        'ufw': '', 'fail2ban': '', 'banned': '', 'sessions': '', 'auth_log': '',
+        'ufw': '', 'ufw_rules': [], 'fail2ban': '', 'banned': '', 'sessions': '', 'auth_log': '',
         'f2b_config': {}, 'jails': [],
     }
 
     result = run_cmd("sudo ufw status numbered 2>/dev/null")
     if result.returncode == 0:
         data['ufw'] = result.stdout.strip()
+        data['ufw_rules'] = parse_ufw_rules(result.stdout)
 
     result = run_cmd("sudo fail2ban-client status sshd 2>/dev/null")
     if result.returncode == 0:
@@ -2224,6 +2253,109 @@ def firewall_whitelist_set():
     return jsonify({'status': 'ok', 'message': f'Whitelist updated but fail2ban reload failed: {reload_result.stderr.strip()}'})
 
 
+@app.route('/firewall/ufw/add', methods=['POST'])
+@login_required
+def firewall_ufw_add():
+    """Add a UFW rule"""
+    data = request.get_json() or {}
+    port = data.get('port', '').strip()
+    proto = data.get('proto', 'tcp').strip().lower()
+    action = data.get('action', 'allow').strip().lower()
+    from_ip = data.get('from_ip', '').strip()
+
+    # Validate action
+    if action not in ('allow', 'deny'):
+        return jsonify({'status': 'error', 'message': 'Action must be allow or deny'}), 400
+
+    # Validate protocol
+    if proto not in ('tcp', 'udp', 'any'):
+        return jsonify({'status': 'error', 'message': 'Protocol must be tcp, udp, or any'}), 400
+
+    # Validate port
+    try:
+        port_num = int(port)
+        if not (1 <= port_num <= 65535):
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'message': 'Port must be between 1 and 65535'}), 400
+
+    # Build the command
+    if from_ip and from_ip.lower() != 'anywhere':
+        if not _is_valid_ip_or_cidr(from_ip):
+            return jsonify({'status': 'error', 'message': 'Invalid source IP/CIDR'}), 400
+        # sudo ufw allow from IP to any port PORT proto PROTO
+        cmd = ['sudo', 'ufw', action, 'from', from_ip, 'to', 'any', 'port', port]
+        if proto != 'any':
+            cmd.extend(['proto', proto])
+    else:
+        # sudo ufw allow PORT/PROTO or sudo ufw allow PORT
+        if proto != 'any':
+            cmd = ['sudo', 'ufw', action, f'{port}/{proto}']
+        else:
+            cmd = ['sudo', 'ufw', action, port]
+
+    result = run_cmd_safe(cmd, timeout=15)
+    if result.returncode == 0:
+        log_audit('ufw_add_rule', {'port': port, 'proto': proto, 'action': action, 'from': from_ip or 'anywhere'})
+        return jsonify({'status': 'ok', 'message': f'UFW rule added: {action} {port}/{proto}'})
+    return jsonify({'status': 'error', 'message': result.stderr.strip() or result.stdout.strip() or 'Failed to add rule'}), 500
+
+
+@app.route('/firewall/ufw/delete', methods=['POST'])
+@login_required
+def firewall_ufw_delete():
+    """Delete a UFW rule by number"""
+    data = request.get_json() or {}
+    rule_number = data.get('rule_number', '').strip()
+
+    try:
+        num = int(rule_number)
+        if num < 1:
+            raise ValueError
+    except (ValueError, TypeError):
+        return jsonify({'status': 'error', 'message': 'Invalid rule number'}), 400
+
+    result = run_cmd_safe(['sudo', 'ufw', '--force', 'delete', str(num)], timeout=15)
+    if result.returncode == 0:
+        log_audit('ufw_delete_rule', {'rule_number': str(num)})
+        return jsonify({'status': 'ok', 'message': f'UFW rule #{num} deleted'})
+    return jsonify({'status': 'error', 'message': result.stderr.strip() or result.stdout.strip() or 'Failed to delete rule'}), 500
+
+
+def lookup_ip_countries(ip_list):
+    """Batch lookup country info for a list of IPs via ip-api.com"""
+    import urllib.request
+
+    if not ip_list:
+        return {}
+
+    # ip-api.com batch endpoint, max 100 per request
+    results = {}
+    batch_size = 100
+    for i in range(0, len(ip_list), batch_size):
+        batch = ip_list[i:i + batch_size]
+        payload = json.dumps([{'query': ip, 'fields': 'query,country,countryCode'} for ip in batch])
+        req = urllib.request.Request(
+            'http://ip-api.com/batch',
+            data=payload.encode('utf-8'),
+            headers={'Content-Type': 'application/json'},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                data = json.loads(resp.read().decode())
+            for entry in data:
+                ip = entry.get('query', '')
+                if entry.get('countryCode'):
+                    results[ip] = {
+                        'country': entry.get('country', ''),
+                        'countryCode': entry.get('countryCode', ''),
+                    }
+        except Exception:
+            pass  # Graceful fallback: no country data
+
+    return results
+
+
 @app.route('/firewall/banned-ips')
 @login_required
 def firewall_banned_ips():
@@ -2303,6 +2435,21 @@ def firewall_banned_ips():
             ips_with_info.append(entry)
 
         jails_data.append({'jail': jail_name, 'ips': ips_with_info})
+
+    # Lookup country info for all banned IPs
+    all_ips = []
+    for jail_data in jails_data:
+        for entry in jail_data['ips']:
+            if entry['ip'] not in all_ips:
+                all_ips.append(entry['ip'])
+
+    country_map = lookup_ip_countries(all_ips)
+    for jail_data in jails_data:
+        for entry in jail_data['ips']:
+            geo = country_map.get(entry['ip'])
+            if geo:
+                entry['country'] = geo['country']
+                entry['countryCode'] = geo['countryCode']
 
     return jsonify(jails_data)
 
@@ -3016,6 +3163,38 @@ def notification_dismiss():
 @login_required
 def settings():
     return render_template('settings.html', config=CONFIG, has_2fa=HAS_2FA)
+
+
+@app.route('/api/services/detect')
+@login_required
+def detect_services():
+    """Auto-detect running services that are relevant to monitor"""
+    result = run_cmd(
+        "systemctl list-units --type=service --state=running --no-legend --plain 2>/dev/null",
+        timeout=15
+    )
+    if result.returncode != 0:
+        return jsonify([])
+
+    # Known relevant service prefixes/names
+    relevant = {
+        'nginx', 'mariadb', 'mysql', 'mysqld', 'fail2ban', 'ufw', 'cron',
+        'ssh', 'sshd', 'postfix', 'dovecot', 'redis', 'redis-server',
+        'memcached', 'docker', 'containerd', 'certbot',
+    }
+    relevant_prefixes = ('php', 'pm2-', 'postgresql', 'mongo')
+
+    detected = []
+    for line in result.stdout.strip().split('\n'):
+        parts = line.split()
+        if not parts:
+            continue
+        svc = parts[0].replace('.service', '')
+        if svc in relevant or any(svc.startswith(p) for p in relevant_prefixes):
+            detected.append(svc)
+
+    detected.sort()
+    return jsonify(detected)
 
 
 def validate_config(data):
@@ -3739,7 +3918,8 @@ def validate_nginx():
 @login_required
 def nginx_config():
     configs = list_nginx_configs()
-    return render_template('nginx_config.html', configs=configs)
+    selected = request.args.get('select', '')
+    return render_template('nginx_config.html', configs=configs, selected=selected)
 
 
 @app.route('/api/nginx/config/read')
