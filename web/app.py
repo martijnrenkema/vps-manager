@@ -2454,6 +2454,93 @@ def firewall_banned_ips():
     return jsonify(jails_data)
 
 
+UPDATES_HISTORY_PATH = DATA_DIR / 'updates_history.json'
+UPDATES_HISTORY_MAX = 100
+
+
+def _save_update_history(source, status, details=''):
+    """Save an update event to history (source: manual/unattended)"""
+    entry = {
+        'timestamp': datetime.now().isoformat(),
+        'source': source,
+        'status': status,
+        'details': details,
+    }
+    try:
+        history = json.loads(UPDATES_HISTORY_PATH.read_text()) if UPDATES_HISTORY_PATH.exists() else []
+    except (json.JSONDecodeError, OSError):
+        history = []
+    history.append(entry)
+    if len(history) > UPDATES_HISTORY_MAX:
+        history = history[-UPDATES_HISTORY_MAX:]
+    UPDATES_HISTORY_PATH.write_text(json.dumps(history, indent=2))
+
+
+def _parse_unattended_upgrades_log():
+    """Parse /var/log/unattended-upgrades/unattended-upgrades.log for recent activity"""
+    log_path = '/var/log/unattended-upgrades/unattended-upgrades.log'
+    entries = []
+    try:
+        with open(log_path, 'r') as f:
+            lines = f.readlines()
+    except (FileNotFoundError, PermissionError):
+        return entries
+
+    current_date = None
+    current_packages = []
+    for line in lines:
+        line = line.strip()
+        # Lines look like: 2025-01-15 06:25:04,123 INFO Packages that will be upgraded: pkg1 pkg2
+        # or: 2025-01-15 06:25:30,456 INFO All upgrades installed
+        if not line:
+            continue
+        # Extract date from log line
+        if len(line) > 19 and line[4] == '-' and line[10] == ' ':
+            date_str = line[:19]
+            msg = line[24:] if len(line) > 24 else ''  # Skip past log level
+
+            if 'INFO' in line and 'Packages that will be upgraded:' in line:
+                parts = line.split('Packages that will be upgraded:')
+                if len(parts) > 1:
+                    current_packages = [p.strip() for p in parts[1].strip().split() if p.strip()]
+                    current_date = date_str[:10]
+
+            elif 'INFO' in line and 'All upgrades installed' in line:
+                entries.append({
+                    'timestamp': date_str.replace(',', '.'),
+                    'source': 'unattended',
+                    'status': 'success',
+                    'details': f"{len(current_packages)} packages: {', '.join(current_packages[:10])}{'...' if len(current_packages) > 10 else ''}",
+                })
+                current_packages = []
+
+            elif 'ERROR' in line or 'WARNING' in line:
+                if 'dpkg' in line.lower() or 'upgrade' in line.lower() or 'fail' in line.lower():
+                    entries.append({
+                        'timestamp': date_str.replace(',', '.'),
+                        'source': 'unattended',
+                        'status': 'failure',
+                        'details': msg[:150],
+                    })
+
+    return entries[-20:]  # Last 20 entries
+
+
+@app.route('/api/updates/history')
+@login_required
+def updates_history():
+    # Combine manual history with unattended-upgrades log
+    try:
+        manual = json.loads(UPDATES_HISTORY_PATH.read_text()) if UPDATES_HISTORY_PATH.exists() else []
+    except (json.JSONDecodeError, OSError):
+        manual = []
+
+    unattended = _parse_unattended_upgrades_log()
+    combined = manual + unattended
+    combined.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    return jsonify(combined[:50])
+
+
 @app.route('/updates')
 @login_required
 def updates():
@@ -2466,7 +2553,11 @@ def updates():
 def install_updates():
     result = run_cmd("sudo apt upgrade -y 2>&1", timeout=300)
     if result.returncode == 0:
+        log_audit('system_updates_install', {'output': result.stdout[-200:]})
+        _save_update_history('manual', 'success', result.stdout[-200:])
         return jsonify({'status': 'ok', 'message': 'Updates installed', 'output': result.stdout[-500:]})
+    log_audit('system_updates_install_failed', {'error': result.stderr[-200:]})
+    _save_update_history('manual', 'failure', result.stderr[-200:])
     return jsonify({'status': 'error', 'message': 'Installation error', 'output': result.stderr[-500:]}), 500
 
 
@@ -2817,10 +2908,21 @@ def files_download():
     if not is_path_allowed(real_path):
         return jsonify({'error': 'Access denied'}), 403
 
-    if not os.path.isfile(real_path):
-        return jsonify({'error': 'File not found'}), 404
+    if os.path.isfile(real_path):
+        return send_file(real_path, as_attachment=True)
 
-    return send_file(real_path, as_attachment=True)
+    if os.path.isdir(real_path):
+        import tarfile
+        buf = io.BytesIO()
+        dirname = os.path.basename(real_path)
+        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
+            tar.add(real_path, arcname=dirname)
+        buf.seek(0)
+        return send_file(buf, as_attachment=True,
+                         download_name=f"{dirname}.tar.gz",
+                         mimetype='application/gzip')
+
+    return jsonify({'error': 'Not found'}), 404
 
 
 @app.route('/files/upload', methods=['POST'])

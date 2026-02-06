@@ -176,6 +176,17 @@
 </div>
 {% endif %}
 
+<!-- Update History -->
+<div class="card" style="margin-top:16px">
+    <div class="card-header">{{ icon('clock') }} Update History</div>
+    <div class="card-body">
+        <div id="historyTimeline" style="display:flex;gap:3px;margin-bottom:16px;flex-wrap:wrap"></div>
+        <div id="historyTable"></div>
+        <div id="historyEmpty" style="display:none;color:var(--text-muted);font-size:13px">No update history found</div>
+        <div id="historyLoading" style="color:var(--text-muted);font-size:13px">Loading history...</div>
+    </div>
+</div>
+
 <div id="updateProgress" style="display:none;margin-top:16px">
     <div class="card">
         <div class="card-header">{{ icon('terminal') }} Installation progress</div>
@@ -339,6 +350,65 @@ async function installAppUpdate() {
         setTimeout(function() { location.reload(); }, 5000);
     }
 }
+
+// Load update history
+async function loadHistory() {
+    try {
+        const res = await fetch('/api/updates/history');
+        const data = await res.json();
+
+        document.getElementById('historyLoading').style.display = 'none';
+
+        if (!data.length) {
+            document.getElementById('historyEmpty').style.display = 'block';
+            return;
+        }
+
+        // Timeline dots (last 30)
+        const timeline = document.getElementById('historyTimeline');
+        const dots = data.slice(0, 30).reverse();
+        dots.forEach(entry => {
+            const dot = document.createElement('div');
+            dot.style.cssText = 'width:10px;height:10px;border-radius:50%;cursor:default;';
+            if (entry.status === 'success') {
+                dot.style.background = 'var(--green)';
+            } else {
+                dot.style.background = 'var(--red)';
+            }
+            dot.title = (entry.timestamp || '').substring(0, 16).replace('T', ' ') + ' - ' + entry.source + ' (' + entry.status + ')';
+            timeline.appendChild(dot);
+        });
+
+        // Table
+        let html = '<div class="table-wrap"><table class="table" style="margin:0;font-size:13px"><thead><tr>';
+        html += '<th style="padding:10px 16px">Time</th>';
+        html += '<th style="padding:10px 16px">Source</th>';
+        html += '<th style="padding:10px 16px">Status</th>';
+        html += '<th style="padding:10px 16px">Details</th>';
+        html += '</tr></thead><tbody>';
+
+        data.forEach(entry => {
+            const time = (entry.timestamp || '').substring(0, 16).replace('T', ' ');
+            const sourceBadge = entry.source === 'unattended'
+                ? '<span class="badge" style="background:var(--purple-bg,rgba(139,92,246,0.15));color:var(--purple,#a78bfa);font-size:11px">auto</span>'
+                : '<span class="badge" style="background:var(--bg-tertiary);color:var(--text-secondary);font-size:11px">manual</span>';
+            const statusColor = entry.status === 'success' ? 'var(--green)' : 'var(--red)';
+            const statusText = entry.status === 'success' ? 'OK' : 'FAIL';
+            html += '<tr>';
+            html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + time + '</td>';
+            html += '<td style="padding:8px 16px">' + sourceBadge + '</td>';
+            html += '<td style="padding:8px 16px"><span style="color:' + statusColor + ';font-weight:500">' + statusText + '</span></td>';
+            html += '<td style="padding:8px 16px;color:var(--text-secondary)">' + (entry.details || '-').substring(0, 120) + '</td>';
+            html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+        document.getElementById('historyTable').innerHTML = html;
+    } catch (e) {
+        document.getElementById('historyLoading').textContent = 'Failed to load history';
+    }
+}
+loadHistory();
 
 // Load current version on page load
 (function() {

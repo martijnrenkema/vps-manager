@@ -318,6 +318,14 @@ function renderFiles(data) {
             dl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
             actTd.appendChild(dl);
             actTd.appendChild(document.createTextNode(' '));
+        } else if (item.type === 'directory') {
+            const dl = document.createElement('a');
+            dl.href = '/files/download?path=' + encodeURIComponent(fullPath);
+            dl.className = 'btn btn-sm';
+            dl.title = 'Download as .tar.gz';
+            dl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
+            actTd.appendChild(dl);
+            actTd.appendChild(document.createTextNode(' '));
         }
         const del = document.createElement('button');
         del.className = 'btn btn-sm btn-red';
