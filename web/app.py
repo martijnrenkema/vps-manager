@@ -2846,7 +2846,37 @@ def files_list():
 
     items = []
     try:
-        for name in sorted(os.listdir(norm_path)):
+        entries = sorted(os.listdir(norm_path))
+    except PermissionError:
+        # Fallback: use sudo find for directories we don't have read access to
+        result = run_cmd_safe(['sudo', 'find', norm_path, '-maxdepth', '1', '-mindepth', '1',
+                               '-printf', '%f\\t%y\\t%U\\t%s\\t%T@\\t%#m\\n'], timeout=10)
+        if result.returncode != 0:
+            return jsonify({'status': 'error', 'message': 'No read permissions on this directory'}), 403
+        entries = None
+        for line in result.stdout.strip().split('\n'):
+            if not line:
+                continue
+            parts = line.split('\t')
+            if len(parts) < 6:
+                continue
+            fname, ftype, fowner, fsize, ftime, fmode = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
+            is_dir = ftype == 'd'
+            try:
+                modified = datetime.fromtimestamp(float(ftime)).strftime('%Y-%m-%d %H:%M')
+            except (ValueError, OSError):
+                modified = '-'
+            items.append({
+                'name': fname,
+                'type': 'dir' if is_dir else 'file',
+                'size': '-' if is_dir else format_file_size(int(fsize)) if fsize.isdigit() else fsize,
+                'modified': modified,
+                'owner': fowner,
+                'mode': fmode,
+            })
+
+    if entries is not None:
+        for name in entries:
             full = os.path.join(norm_path, name)
             try:
                 st = os.stat(full)
@@ -2885,8 +2915,6 @@ def files_list():
                     'owner': '?',
                     'mode': '?',
                 })
-    except PermissionError:
-        return jsonify({'status': 'error', 'message': 'No read permissions on this directory'}), 403
 
     # Sort: dirs first, then files
     items.sort(key=lambda x: (0 if x['type'] == 'dir' else 1, x['name'].lower()))
