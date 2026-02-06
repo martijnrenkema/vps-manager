@@ -1879,9 +1879,9 @@ def get_ddos_stats():
 def is_path_allowed(path):
     """Check if path is within allowed directories (whitelist approach)"""
     allowed = CONFIG.get('file_browser', {}).get('allowed_paths', ['/var/www'])
-    real = os.path.realpath(path)
+    norm = os.path.abspath(path)
     for a in allowed:
-        if real == a or real.startswith(a + '/'):
+        if norm == a or norm.startswith(a + '/'):
             return True
     return False
 
@@ -2816,12 +2816,12 @@ def files():
 def files_list():
     default_path = CONFIG.get('file_browser', {}).get('default_path', '/var/www')
     path = request.args.get('path', default_path)
-    real_path = os.path.realpath(path)
+    norm_path = os.path.abspath(path)
 
-    if not os.path.isdir(real_path):
+    if not os.path.isdir(norm_path):
         return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
 
-    if not is_path_allowed(real_path):
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     # Get owner/permissions of current directory
@@ -2830,7 +2830,7 @@ def files_list():
     import stat as stat_module
     dir_info = {}
     try:
-        dir_stat = os.stat(real_path)
+        dir_stat = os.stat(norm_path)
         try:
             dir_info['owner'] = pwd.getpwuid(dir_stat.st_uid).pw_name
         except KeyError:
@@ -2840,14 +2840,14 @@ def files_list():
         except KeyError:
             dir_info['group'] = str(dir_stat.st_gid)
         dir_info['mode'] = oct(stat_module.S_IMODE(dir_stat.st_mode))
-        dir_info['writable'] = os.access(real_path, os.W_OK)
+        dir_info['writable'] = os.access(norm_path, os.W_OK)
     except OSError:
         dir_info = {'owner': '?', 'group': '?', 'mode': '?', 'writable': False}
 
     items = []
     try:
-        for name in sorted(os.listdir(real_path)):
-            full = os.path.join(real_path, name)
+        for name in sorted(os.listdir(norm_path)):
+            full = os.path.join(norm_path, name)
             try:
                 st = os.stat(full)
                 is_dir = os.path.isdir(full)
@@ -2865,9 +2865,21 @@ def files_list():
                     'mode': oct(stat_module.S_IMODE(st.st_mode)),
                 })
             except (OSError, PermissionError):
+                # Fallback: try lstat to determine type (works for symlinks where stat fails)
+                item_type = 'unknown'
+                try:
+                    lst = os.lstat(full)
+                    if stat_module.S_ISDIR(lst.st_mode):
+                        item_type = 'dir'
+                    elif stat_module.S_ISLNK(lst.st_mode):
+                        item_type = 'dir' if os.path.isdir(full) else 'file'
+                    else:
+                        item_type = 'file'
+                except OSError:
+                    pass
                 items.append({
                     'name': name,
-                    'type': 'unknown',
+                    'type': item_type,
                     'size': '-',
                     'modified': '-',
                     'owner': '?',
@@ -2879,11 +2891,11 @@ def files_list():
     # Sort: dirs first, then files
     items.sort(key=lambda x: (0 if x['type'] == 'dir' else 1, x['name'].lower()))
 
-    parent_path = os.path.dirname(real_path)
-    parent = parent_path if (real_path != '/' and is_path_allowed(parent_path)) else None
+    parent_path = os.path.dirname(norm_path)
+    parent = parent_path if (norm_path != '/' and is_path_allowed(parent_path)) else None
 
     return jsonify({
-        'path': real_path,
+        'path': norm_path,
         'parent': parent,
         'items': items,
         'dir_info': dir_info,
@@ -2900,13 +2912,13 @@ def files_mkdir():
     if not name or '/' in name or name.startswith('.'):
         return jsonify({'status': 'error', 'message': 'Invalid folder name'}), 400
 
-    real_path = os.path.realpath(os.path.join(path, name))
-    if not is_path_allowed(real_path):
+    norm_path = os.path.abspath(os.path.join(path, name))
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     try:
-        os.makedirs(real_path, exist_ok=False)
-        log_audit('file_mkdir', {'path': real_path})
+        os.makedirs(norm_path, exist_ok=False)
+        log_audit('file_mkdir', {'path': norm_path})
         return jsonify({'status': 'ok', 'message': f"Folder '{name}' created"})
     except FileExistsError:
         return jsonify({'status': 'error', 'message': 'Folder already exists'}), 400
@@ -2918,20 +2930,20 @@ def files_mkdir():
 @login_required
 def files_download():
     path = request.args.get('path', '')
-    real_path = os.path.realpath(path)
+    norm_path = os.path.abspath(path)
 
-    if not is_path_allowed(real_path):
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
-    if os.path.isfile(real_path):
-        return send_file(real_path, as_attachment=True)
+    if os.path.isfile(norm_path):
+        return send_file(norm_path, as_attachment=True)
 
-    if os.path.isdir(real_path):
+    if os.path.isdir(norm_path):
         import tarfile
         buf = io.BytesIO()
-        dirname = os.path.basename(real_path)
+        dirname = os.path.basename(norm_path)
         with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-            tar.add(real_path, arcname=dirname)
+            tar.add(norm_path, arcname=dirname)
         buf.seek(0)
         return send_file(buf, as_attachment=True,
                          download_name=f"{dirname}.tar.gz",
@@ -2944,12 +2956,12 @@ def files_download():
 @login_required
 def files_upload():
     path = request.form.get('path', '/var/www')
-    real_path = os.path.realpath(path)
+    norm_path = os.path.abspath(path)
 
-    if not is_path_allowed(real_path):
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
-    if not os.path.isdir(real_path):
+    if not os.path.isdir(norm_path):
         return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
 
     if 'file' not in request.files:
@@ -2962,7 +2974,7 @@ def files_upload():
     filename = secure_filename(file.filename)
     if not filename:
         return jsonify({'status': 'error', 'message': 'Invalid filename'}), 400
-    dest = os.path.join(real_path, filename)
+    dest = os.path.join(norm_path, filename)
 
     try:
         file.save(dest)
@@ -2977,22 +2989,22 @@ def files_upload():
 def files_delete():
     data = request.get_json() or {}
     path = data.get('path', '')
-    real_path = os.path.realpath(path)
+    norm_path = os.path.abspath(path)
 
-    if not is_path_allowed(real_path):
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
-    if real_path in ('/', '/var', '/var/www', '/etc', '/home', '/root'):
+    if norm_path in ('/', '/var', '/var/www', '/etc', '/home', '/root'):
         return jsonify({'status': 'error', 'message': 'Cannot delete system directory'}), 403
 
     try:
-        if os.path.isdir(real_path):
-            shutil.rmtree(real_path)
-            log_audit('file_delete', {'path': real_path, 'type': 'dir'})
+        if os.path.isdir(norm_path):
+            shutil.rmtree(norm_path)
+            log_audit('file_delete', {'path': norm_path, 'type': 'dir'})
             return jsonify({'status': 'ok', 'message': 'Folder deleted'})
-        elif os.path.isfile(real_path):
-            os.remove(real_path)
-            log_audit('file_delete', {'path': real_path, 'type': 'file'})
+        elif os.path.isfile(norm_path):
+            os.remove(norm_path)
+            log_audit('file_delete', {'path': norm_path, 'type': 'file'})
             return jsonify({'status': 'ok', 'message': 'File deleted'})
         else:
             return jsonify({'status': 'error', 'message': 'Path not found'}), 404
@@ -3010,8 +3022,8 @@ def files_chown():
     group = data.get('group', '')
     recursive = data.get('recursive', False)
 
-    real_path = os.path.realpath(path)
-    if not is_path_allowed(real_path):
+    norm_path = os.path.abspath(path)
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     # Validate owner/group names
@@ -3024,11 +3036,11 @@ def files_chown():
     cmd = ['sudo', 'chown']
     if recursive:
         cmd.append('-R')
-    cmd.extend([ownership, real_path])
+    cmd.extend([ownership, norm_path])
 
     result = run_cmd_safe(cmd, timeout=30)
     if result.returncode == 0:
-        log_audit('file_chown', {'path': real_path, 'owner': ownership, 'recursive': recursive})
+        log_audit('file_chown', {'path': norm_path, 'owner': ownership, 'recursive': recursive})
         label = 'recursively ' if recursive else ''
         return jsonify({'status': 'ok', 'message': f'Ownership {label}changed to {ownership}'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or 'chown failed'}), 500
@@ -3043,8 +3055,8 @@ def files_chmod():
     mode = data.get('mode', '').strip()
     recursive = data.get('recursive', False)
 
-    real_path = os.path.realpath(path)
-    if not is_path_allowed(real_path):
+    norm_path = os.path.abspath(path)
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     if not re.match(r'^[0-7]{3,4}$', mode):
@@ -3053,11 +3065,11 @@ def files_chmod():
     cmd = ['sudo', 'chmod']
     if recursive:
         cmd.append('-R')
-    cmd.extend([mode, real_path])
+    cmd.extend([mode, norm_path])
 
     result = run_cmd_safe(cmd, timeout=30)
     if result.returncode == 0:
-        log_audit('file_chmod', {'path': real_path, 'mode': mode, 'recursive': recursive})
+        log_audit('file_chmod', {'path': norm_path, 'mode': mode, 'recursive': recursive})
         label = 'recursively ' if recursive else ''
         return jsonify({'status': 'ok', 'message': f'Permissions {label}changed to {mode}'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or 'chmod failed'}), 500
@@ -3643,17 +3655,17 @@ EDITABLE_EXTENSIONS = {
 def files_read():
     """Read file content for in-browser editing"""
     path = request.args.get('path', '')
-    real_path = os.path.realpath(path)
+    norm_path = os.path.abspath(path)
 
-    if not is_path_allowed(real_path):
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
-    if not os.path.isfile(real_path):
+    if not os.path.isfile(norm_path):
         return jsonify({'status': 'error', 'message': 'File not found'}), 404
 
     # Check file size (max 1MB)
     try:
-        size = os.path.getsize(real_path)
+        size = os.path.getsize(norm_path)
     except OSError:
         return jsonify({'status': 'error', 'message': 'Cannot read file'}), 500
 
@@ -3662,7 +3674,7 @@ def files_read():
 
     # Read and check for binary content
     try:
-        with open(real_path, 'rb') as f:
+        with open(norm_path, 'rb') as f:
             raw = f.read()
         if b'\x00' in raw[:8192]:
             return jsonify({'status': 'error', 'message': 'Binary file cannot be edited'}), 400
@@ -3670,7 +3682,7 @@ def files_read():
     except OSError as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
-    writable = os.access(real_path, os.W_OK)
+    writable = os.access(norm_path, os.W_OK)
     return jsonify({'status': 'ok', 'content': content, 'writable': writable})
 
 
@@ -3685,18 +3697,18 @@ def files_save():
     if not path:
         return jsonify({'status': 'error', 'message': 'No path specified'}), 400
 
-    real_path = os.path.realpath(path)
+    norm_path = os.path.abspath(path)
 
-    if not is_path_allowed(real_path):
+    if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
-    if not os.path.isfile(real_path):
+    if not os.path.isfile(norm_path):
         return jsonify({'status': 'error', 'message': 'File not found'}), 404
 
     try:
-        with open(real_path, 'w', encoding='utf-8') as f:
+        with open(norm_path, 'w', encoding='utf-8') as f:
             f.write(content)
-        log_audit('file_save', {'path': real_path})
+        log_audit('file_save', {'path': norm_path})
         return jsonify({'status': 'ok', 'message': 'File saved'})
     except OSError as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
