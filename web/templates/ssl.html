@@ -38,7 +38,7 @@
                             {% endif %}
                         </td>
                         <td>
-                            <button class="btn btn-sm" onclick="renewCert('{{ cert.domain.split(' ')[0] }}')">Renew</button>
+                            <button class="btn btn-sm" onclick="renewCert({{ cert.domain.split(' ')[0] | tojson }})">Renew</button>
                         </td>
                     </tr>
                     {% endfor %}

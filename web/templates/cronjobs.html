@@ -152,12 +152,6 @@ async function loadCronjobs() {
     }
 }
 
-function escHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-}
-
 function renderCronJobs() {
     renderJobList('rootCronList', cronData.root_jobs || [], 'root');
     renderJobList('userCronList', cronData.user_jobs || [], 'user');
@@ -376,7 +370,7 @@ document.getElementById('cronOverlay').addEventListener('click', function(e) {
     if (e.target === this) closeCronDialog();
 });
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') closeCronDialog();
+    if (e.key === 'Escape' && document.getElementById('cronOverlay').style.display !== 'none') closeCronDialog();
 });
 
 loadCronjobs();

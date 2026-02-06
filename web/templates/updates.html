@@ -398,7 +398,7 @@ async function loadHistory() {
             html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + time + '</td>';
             html += '<td style="padding:8px 16px">' + sourceBadge + '</td>';
             html += '<td style="padding:8px 16px"><span style="color:' + statusColor + ';font-weight:500">' + statusText + '</span></td>';
-            html += '<td style="padding:8px 16px;color:var(--text-secondary)">' + (entry.details || '-').substring(0, 120) + '</td>';
+            html += '<td style="padding:8px 16px;color:var(--text-secondary)">' + escHtml((entry.details || '-').substring(0, 120)) + '</td>';
             html += '</tr>';
         });
 

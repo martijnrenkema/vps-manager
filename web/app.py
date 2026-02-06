@@ -9,6 +9,7 @@ import os
 import re
 import io
 import json
+import hmac
 import shlex
 import shutil
 import subprocess
@@ -53,6 +54,7 @@ else:
     _secret_key_file.parent.mkdir(exist_ok=True)
     _generated = os.urandom(32)
     _secret_key_file.write_bytes(_generated)
+    os.chmod(_secret_key_file, 0o600)
     app.secret_key = _generated
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB upload limit
@@ -95,9 +97,9 @@ SUBSCRIPTIONS_PATH = DATA_DIR / 'subscriptions.json'
 NOTIFICATION_LOG_PATH = DATA_DIR / 'notification_log.json'
 NOTIFICATION_HISTORY_PATH = DATA_DIR / 'notification_history.json'
 
-NOTIFICATION_COOLDOWN = CONFIG.get('notification_cooldown', 3600)
 MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
 METRICS_PATH = DATA_DIR / 'metrics.json'
+_SEVERITY_ORDER = {'error': 0, 'warning': 1, 'info': 2}
 
 # ---------------------------------------------------------------------------
 # Audit Log
@@ -105,6 +107,7 @@ METRICS_PATH = DATA_DIR / 'metrics.json'
 
 AUDIT_LOG_PATH = DATA_DIR / 'audit_log.json'
 AUDIT_MAX_ENTRIES = 1000
+_audit_lock = threading.Lock()
 
 
 def log_audit(action, details=None):
@@ -116,14 +119,15 @@ def log_audit(action, details=None):
         'action': action,
         'details': details or {},
     }
-    try:
-        log = json.loads(AUDIT_LOG_PATH.read_text()) if AUDIT_LOG_PATH.exists() else []
-    except (json.JSONDecodeError, OSError):
-        log = []
-    log.append(entry)
-    if len(log) > AUDIT_MAX_ENTRIES:
-        log = log[-AUDIT_MAX_ENTRIES:]
-    AUDIT_LOG_PATH.write_text(json.dumps(log, indent=2))
+    with _audit_lock:
+        try:
+            log = json.loads(AUDIT_LOG_PATH.read_text()) if AUDIT_LOG_PATH.exists() else []
+        except (json.JSONDecodeError, OSError):
+            log = []
+        log.append(entry)
+        if len(log) > AUDIT_MAX_ENTRIES:
+            log = log[-AUDIT_MAX_ENTRIES:]
+        AUDIT_LOG_PATH.write_text(json.dumps(log, indent=2))
 _metrics_lock = threading.Lock()
 _prev_net = {'rx': None, 'tx': None, 'ts': None}
 
@@ -532,8 +536,8 @@ def _monitor_loop():
             if len(cleaned) != len(notif_log) or log_changed:
                 _save_notification_log(cleaned)
 
-        except Exception as e:
-            logger.warning(f"Monitor error: {e}")
+        except Exception:
+            logger.warning("Monitor error", exc_info=True)
 
         time.sleep(MONITOR_INTERVAL)
 
@@ -819,41 +823,50 @@ def get_server_overview():
 
     # Parse memory
     mem_parts = mem_line.split()
-    if len(mem_parts) >= 7:
-        mem_total = int(mem_parts[1])
-        mem_used = int(mem_parts[2])
-        mem_available = int(mem_parts[6])
-        mem_pct = round(mem_used / mem_total * 100) if mem_total else 0
-        mem_total_gb = f"{mem_total / (1024**3):.1f}"
-        mem_used_gb = f"{mem_used / (1024**3):.1f}"
-        mem_avail_gb = f"{mem_available / (1024**3):.1f}"
-    else:
+    try:
+        if len(mem_parts) >= 7:
+            mem_total = int(mem_parts[1])
+            mem_used = int(mem_parts[2])
+            mem_available = int(mem_parts[6])
+            mem_pct = round(mem_used / mem_total * 100) if mem_total else 0
+            mem_total_gb = f"{mem_total / (1024**3):.1f}"
+            mem_used_gb = f"{mem_used / (1024**3):.1f}"
+            mem_avail_gb = f"{mem_available / (1024**3):.1f}"
+        else:
+            raise ValueError("Not enough memory fields")
+    except (ValueError, IndexError):
         mem_total_gb = mem_used_gb = mem_avail_gb = "?"
         mem_pct = 0
 
     # Parse swap
     swap_parts = swap_line.split()
     swap_pct = 0
-    if len(swap_parts) >= 3:
-        swap_total = int(swap_parts[1])
-        swap_used = int(swap_parts[2])
-        if swap_total > 0:
-            swap_str = f"{swap_used / (1024**3):.1f}G / {swap_total / (1024**3):.1f}G"
-            swap_pct = round(swap_used / swap_total * 100)
+    try:
+        if len(swap_parts) >= 3:
+            swap_total = int(swap_parts[1])
+            swap_used = int(swap_parts[2])
+            if swap_total > 0:
+                swap_str = f"{swap_used / (1024**3):.1f}G / {swap_total / (1024**3):.1f}G"
+                swap_pct = round(swap_used / swap_total * 100)
+            else:
+                swap_str = "Disabled"
         else:
-            swap_str = "Disabled"
-    else:
+            swap_str = "?"
+    except (ValueError, IndexError):
         swap_str = "?"
 
     # Parse disk
     disk_parts = disk_line.split()
-    if len(disk_parts) >= 6:
-        disk_size = disk_parts[1]
-        disk_used = disk_parts[2]
-        disk_avail = disk_parts[3]
-        disk_pct_str = disk_parts[4]
-        disk_pct = int(disk_pct_str.rstrip('%'))
-    else:
+    try:
+        if len(disk_parts) >= 6:
+            disk_size = disk_parts[1]
+            disk_used = disk_parts[2]
+            disk_avail = disk_parts[3]
+            disk_pct_str = disk_parts[4]
+            disk_pct = int(disk_pct_str.rstrip('%'))
+        else:
+            raise ValueError("Not enough disk fields")
+    except (ValueError, IndexError):
         disk_size = disk_used = disk_avail = disk_pct_str = "?"
         disk_pct = 0
 
@@ -884,7 +897,7 @@ def get_server_overview():
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
     sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
-    result = run_cmd(f"ls {sites_dir}")
+    result = run_cmd_safe(["ls", sites_dir])
     if result.returncode != 0:
         return []
 
@@ -893,8 +906,9 @@ def get_nginx_sites():
     sites = []
 
     for config in configs:
-        info_result = run_cmd(
-            f"grep -E 'server_name|root |proxy_pass' {sites_dir}{config} 2>/dev/null"
+        config_path = os.path.join(sites_dir, config)
+        info_result = run_cmd_safe(
+            ["grep", "-E", "server_name|root |proxy_pass", config_path]
         )
         if info_result.returncode != 0:
             continue
@@ -921,8 +935,8 @@ def get_nginx_sites():
 
         if domains:
             # Check HTTP status for first domain
-            http_result = run_cmd(
-                f"curl -s -o /dev/null -w '%{{http_code}}' https://{domains[0]} --max-time 5",
+            http_result = run_cmd_safe(
+                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"https://{domains[0]}", "--max-time", "5"],
                 timeout=10
             )
             http_status = http_result.stdout.strip() if http_result.stdout else '---'
@@ -1047,7 +1061,7 @@ def get_services_status():
             php_found = True
         final_services.append(svc)
 
-    result = run_cmd(f"systemctl is-active {' '.join(final_services)}")
+    result = run_cmd_safe(["systemctl", "is-active"] + final_services)
     statuses = result.stdout.strip().split('\n') if result.stdout else []
 
     svc_list = []
@@ -1055,8 +1069,8 @@ def get_services_status():
         status = statuses[i].strip() if i < len(statuses) else 'unknown'
         uptime = ''
         if status == 'active':
-            up_result = run_cmd(
-                f"systemctl show {service} --property=ActiveEnterTimestamp --value 2>/dev/null"
+            up_result = run_cmd_safe(
+                ["systemctl", "show", service, "--property=ActiveEnterTimestamp", "--value"]
             )
             if up_result.returncode == 0 and up_result.stdout.strip():
                 try:
@@ -1113,15 +1127,15 @@ def get_backup_status():
     data = {'log': '', 'size': '', 'db_backups': '', 'status': None, 'history': [],
             'backup_files': [], 'db_files': [], 'site_backups': []}
 
-    result = run_cmd(f"tail -5 {log_path} 2>/dev/null")
+    result = run_cmd_safe(["tail", "-5", log_path])
     if result.returncode == 0:
         data['log'] = result.stdout.strip()
 
-    result = run_cmd(f"du -sh {backup_dir} 2>/dev/null")
+    result = run_cmd_safe(["du", "-sh", backup_dir])
     if result.returncode == 0:
         data['size'] = result.stdout.strip()
 
-    result = run_cmd(f"ls -lt {db_backup_dir} 2>/dev/null | head -5")
+    result = run_cmd(f"ls -lt {shlex.quote(db_backup_dir)} 2>/dev/null | head -5")
     if result.returncode == 0:
         data['db_backups'] = result.stdout.strip()
 
@@ -1454,7 +1468,7 @@ def get_nginx_logs():
     data = {'errors': [], 'per_site': [], 'access_summary': [], 'php_errors': []}
 
     # Nginx error log - parsed into structured entries
-    result = run_cmd(f"sudo tail -20 {error_log} 2>/dev/null")
+    result = run_cmd_safe(["sudo", "tail", "-20", error_log])
     if result.returncode == 0 and result.stdout.strip():
         for line in result.stdout.strip().split('\n'):
             if line.strip():
@@ -1466,9 +1480,9 @@ def get_nginx_logs():
         log_files = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
         for log_file in log_files:
             name = os.path.basename(log_file)
-            size_result = run_cmd(f"wc -l < {log_file} 2>/dev/null")
+            size_result = run_cmd(f"wc -l < {shlex.quote(log_file)} 2>/dev/null")
             line_count = size_result.stdout.strip() if size_result.returncode == 0 else '?'
-            last_result = run_cmd(f"tail -1 {log_file} 2>/dev/null")
+            last_result = run_cmd_safe(["tail", "-1", log_file])
             last_line = last_result.stdout.strip()[:100] if last_result.stdout.strip() else 'empty'
             # Derive site name from log filename
             site = name.replace('-error.log', '').replace('.error.log', '').replace('error.log', 'global')
@@ -1580,11 +1594,14 @@ def _parse_systemd_timers(text):
         return timers
 
     # Get column start positions from header
-    col_next = header.index('NEXT')
-    col_left = header.index('LEFT')
-    col_last = header.index('LAST')
-    col_unit = header.index('UNIT')
-    col_activates = header.index('ACTIVATES')
+    try:
+        col_next = header.index('NEXT')
+        col_left = header.index('LEFT')
+        col_last = header.index('LAST')
+        col_unit = header.index('UNIT')
+        col_activates = header.index('ACTIVATES')
+    except ValueError:
+        return timers
 
     for line in lines:
         if not line.strip() or line == header or 'timers listed' in line:
@@ -1752,8 +1769,7 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         alerts.append({'severity': 'warning', 'message': msg, 'link': '/updates', 'key': 'updates_available'})
 
     # Sort: error first, then warning, then info
-    severity_order = {'error': 0, 'warning': 1, 'info': 2}
-    alerts.sort(key=lambda a: severity_order.get(a['severity'], 99))
+    alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 99))
 
     return alerts
 
@@ -1898,8 +1914,7 @@ def dashboard():
     alerts.extend(check_ddos_indicators())
     alerts.extend(check_backup_alerts())
     # Re-sort
-    severity_order = {'error': 0, 'warning': 1, 'info': 2}
-    alerts.sort(key=lambda a: severity_order.get(a['severity'], 99))
+    alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 99))
     return render_template('dashboard.html', data=data, services=services, pm2=pm2, ssl=ssl, alerts=alerts)
 
 
@@ -2031,7 +2046,7 @@ def backup_download():
     """Download a backup file (restricted to backup directories)"""
     path = request.args.get('path', '')
     if not path:
-        return jsonify({'error': 'No path specified'}), 400
+        return jsonify({'status': 'error', 'message': 'No path specified'}), 400
 
     real_path = os.path.realpath(path)
     backup_cfg = CONFIG.get('backup', {})
@@ -2046,7 +2061,7 @@ def backup_download():
             break
 
     if not allowed:
-        return jsonify({'error': 'Access denied'}), 403
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     if os.path.isfile(real_path):
         return send_file(real_path, as_attachment=True)
@@ -2063,7 +2078,7 @@ def backup_download():
                          download_name=f"{dirname}.tar.gz",
                          mimetype='application/gzip')
 
-    return jsonify({'error': 'Not found'}), 404
+    return jsonify({'status': 'error', 'message': 'Not found'}), 404
 
 
 @app.route('/firewall')
@@ -2674,14 +2689,14 @@ def api_nginx_log():
     lines = min(lines, 200)
     # Only allow files in /var/log/nginx/ - resolve symlinks and validate
     if not log_file or '..' in log_file:
-        return jsonify({'error': 'Invalid log file'}), 400
+        return jsonify({'status': 'error', 'message': 'Invalid log file'}), 400
     real_log = os.path.realpath(log_file)
     if not real_log.startswith('/var/log/nginx/'):
-        return jsonify({'error': 'Invalid log file'}), 400
+        return jsonify({'status': 'error', 'message': 'Invalid log file'}), 400
     result = run_cmd_safe(["sudo", "tail", f"-{lines}", real_log])
     if result.returncode == 0:
         return jsonify({'content': result.stdout, 'file': os.path.basename(real_log)})
-    return jsonify({'error': 'Could not read log file'}), 500
+    return jsonify({'status': 'error', 'message': 'Could not read log file'}), 500
 
 
 @app.route('/databases')
@@ -2804,10 +2819,10 @@ def files_list():
     real_path = os.path.realpath(path)
 
     if not os.path.isdir(real_path):
-        return jsonify({'error': 'Directory not found'}), 404
+        return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
 
     if not is_path_allowed(real_path):
-        return jsonify({'error': 'Access denied'}), 403
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     # Get owner/permissions of current directory
     import pwd
@@ -2859,7 +2874,7 @@ def files_list():
                     'mode': '?',
                 })
     except PermissionError:
-        return jsonify({'error': 'No read permissions on this directory'}), 403
+        return jsonify({'status': 'error', 'message': 'No read permissions on this directory'}), 403
 
     # Sort: dirs first, then files
     items.sort(key=lambda x: (0 if x['type'] == 'dir' else 1, x['name'].lower()))
@@ -2906,7 +2921,7 @@ def files_download():
     real_path = os.path.realpath(path)
 
     if not is_path_allowed(real_path):
-        return jsonify({'error': 'Access denied'}), 403
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     if os.path.isfile(real_path):
         return send_file(real_path, as_attachment=True)
@@ -2922,7 +2937,7 @@ def files_download():
                          download_name=f"{dirname}.tar.gz",
                          mimetype='application/gzip')
 
-    return jsonify({'error': 'Not found'}), 404
+    return jsonify({'status': 'error', 'message': 'Not found'}), 404
 
 
 @app.route('/files/upload', methods=['POST'])
@@ -3360,7 +3375,7 @@ def validate_config(data):
 @app.route('/api/config', methods=['POST'])
 @login_required
 def update_config():
-    global CONFIG, NOTIFICATION_COOLDOWN, MONITOR_INTERVAL
+    global CONFIG, MONITOR_INTERVAL
     data = request.get_json() or {}
     if not data:
         return jsonify({'status': 'error', 'message': 'No data received'}), 400
@@ -3382,7 +3397,6 @@ def update_config():
     save_config(CONFIG)
 
     # Update runtime values
-    NOTIFICATION_COOLDOWN = CONFIG.get('notification_cooldown', 3600)
     MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
 
     log_audit('config_update', {'keys': list(data.keys())})
@@ -3492,7 +3506,7 @@ def backup_webhook():
     if not webhook_secret:
         return jsonify({'status': 'error', 'message': 'Webhook secret not configured'}), 403
     provided = request.headers.get('X-Webhook-Secret', '')
-    if not provided or provided != webhook_secret:
+    if not provided or not hmac.compare_digest(provided, webhook_secret):
         return jsonify({'status': 'error', 'message': 'Unauthorized'}), 401
 
     data = request.get_json() or {}
@@ -3566,7 +3580,7 @@ def api_refresh(section):
     handler = handlers.get(section)
     if handler:
         return jsonify(handler())
-    return jsonify({'error': 'Unknown section'}), 404
+    return jsonify({'status': 'error', 'message': 'Unknown section'}), 404
 
 
 # ---------------------------------------------------------------------------
@@ -3823,9 +3837,9 @@ def cronjobs_add():
     current += new_line + '\n'
 
     if cron_type == 'root':
-        write_result = run_cmd(f"echo {shlex.quote(current)} | sudo crontab -", timeout=10)
+        write_result = run_cmd(f"printf %s {shlex.quote(current)} | sudo crontab -", timeout=10)
     else:
-        write_result = run_cmd(f"echo {shlex.quote(current)} | crontab -", timeout=10)
+        write_result = run_cmd(f"printf %s {shlex.quote(current)} | crontab -", timeout=10)
 
     if write_result.returncode == 0:
         log_audit('cronjob_add', {'type': cron_type, 'schedule': schedule, 'command': command})
@@ -3875,9 +3889,9 @@ def cronjobs_edit():
         new_content += '\n'
 
     if cron_type == 'root':
-        write_result = run_cmd(f"echo {shlex.quote(new_content)} | sudo crontab -", timeout=10)
+        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | sudo crontab -", timeout=10)
     else:
-        write_result = run_cmd(f"echo {shlex.quote(new_content)} | crontab -", timeout=10)
+        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | crontab -", timeout=10)
 
     if write_result.returncode == 0:
         log_audit('cronjob_edit', {'type': cron_type, 'index': index, 'schedule': schedule, 'command': command})
@@ -3922,9 +3936,9 @@ def cronjobs_delete():
         new_content += '\n'
 
     if cron_type == 'root':
-        write_result = run_cmd(f"echo {shlex.quote(new_content)} | sudo crontab -", timeout=10)
+        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | sudo crontab -", timeout=10)
     else:
-        write_result = run_cmd(f"echo {shlex.quote(new_content)} | crontab -", timeout=10)
+        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | crontab -", timeout=10)
 
     if write_result.returncode == 0:
         log_audit('cronjob_delete', {'type': cron_type, 'index': index, 'entry': deleted_cmd.strip()})

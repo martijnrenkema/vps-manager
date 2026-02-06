@@ -575,6 +575,8 @@ code {
 
 .toast.success { border-left: 3px solid var(--green); }
 .toast.error { border-left: 3px solid var(--red); }
+.toast.info { border-left: 3px solid var(--blue); }
+.toast.warning { border-left: 3px solid var(--yellow); }
 
 @keyframes slideIn {
     from { transform: translateX(100%); opacity: 0; }

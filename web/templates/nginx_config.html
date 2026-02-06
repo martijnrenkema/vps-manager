@@ -81,9 +81,10 @@ let currentConfigType = '';
 let configChanged = false;
 
 function loadConfig(name, type) {
+    if (configChanged && !confirm('You have unsaved changes. Discard them?')) return;
     // Update active state in sidebar
     document.querySelectorAll('.nginx-config-item').forEach(el => el.classList.remove('active'));
-    const item = document.querySelector(`.nginx-config-item[data-name="${name}"][data-type="${type}"]`);
+    const item = document.querySelector(`.nginx-config-item[data-name="${CSS.escape(name)}"][data-type="${CSS.escape(type)}"]`);
     if (item) item.classList.add('active');
 
     currentConfigName = name;

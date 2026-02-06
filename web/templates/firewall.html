@@ -562,11 +562,6 @@
         btn.disabled = false;
     }
 
-    function escHtml(str) {
-        const d = document.createElement('div');
-        d.textContent = str;
-        return d.innerHTML;
-    }
 
     function countryFlag(countryCode) {
         if (!countryCode || countryCode.length !== 2) return '';

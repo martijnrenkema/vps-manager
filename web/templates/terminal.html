@@ -74,13 +74,13 @@
     var outputEl = document.getElementById('termOutput');
     var inputEl = document.getElementById('termInput');
     var promptEl = document.getElementById('termPrompt');
-    var cwd = '{{ cwd }}';
+    var cwd = {{ cwd | tojson }};
     var hist = [];
     var histIdx = -1;
     var busy = false;
 
-    var sysUser = '{{ sys_user }}';
-    var sysHost = '{{ sys_host }}';
+    var sysUser = {{ sys_user | tojson }};
+    var sysHost = {{ sys_host | tojson }};
     var homeDir = '/home/' + sysUser;
 
     function getPrompt() {

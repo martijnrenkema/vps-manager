@@ -179,8 +179,8 @@ function loadDir(path) {
     fetch(`/files/list?path=${encodeURIComponent(path)}`)
         .then(r => r.json())
         .then(data => {
-            if (data.error) {
-                showToast(data.error, 'error');
+            if (data.status === 'error' || data.error) {
+                showToast(data.message || data.error, 'error');
                 return;
             }
             currentPath = data.path;
@@ -204,8 +204,8 @@ function renderBreadcrumb(path) {
     bc.innerHTML = '';
     const root = document.createElement('span');
     root.className = 'bc-item';
-    root.textContent = '/';
-    root.onclick = () => loadDir('/');
+    root.textContent = '/var/www';
+    root.onclick = () => loadDir('/var/www');
     bc.appendChild(root);
 
     const parts = path.split('/').filter(Boolean);
@@ -318,7 +318,7 @@ function renderFiles(data) {
             dl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
             actTd.appendChild(dl);
             actTd.appendChild(document.createTextNode(' '));
-        } else if (item.type === 'directory') {
+        } else if (item.type === 'dir') {
             const dl = document.createElement('a');
             dl.href = '/files/download?path=' + encodeURIComponent(fullPath);
             dl.className = 'btn btn-sm';
@@ -344,11 +344,6 @@ function renderFiles(data) {
     }
 }
 
-function escHtml(str) {
-    const d = document.createElement('div');
-    d.textContent = str;
-    return d.innerHTML;
-}
 
 function deleteItem(path, type) {
     const label = type === 'dir' ? 'folder' : 'file';
@@ -735,7 +730,14 @@ const EDITABLE_EXT = new Set([
     '.htaccess', '.tsx', '.ts', '.jsx', '.sql', '.toml', '.svg',
 ]);
 
+const EDITABLE_NAMES = new Set([
+    'Makefile', 'Dockerfile', 'Vagrantfile', 'Procfile', 'Gemfile',
+    'Rakefile', 'Caddyfile', '.gitignore', '.dockerignore', '.editorconfig',
+    '.env.example', 'robots.txt', 'LICENSE', 'README',
+]);
+
 function isEditable(name) {
+    if (EDITABLE_NAMES.has(name)) return true;
     const dot = name.lastIndexOf('.');
     if (dot < 0) return false;
     return EDITABLE_EXT.has(name.substring(dot).toLowerCase());
