@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Updates - VPS Manager{% endblock %}
+{% block page_title %}System Updates{% endblock %}
+
+{% block content %}
+<!-- VPS Manager Updates -->
+<div class="card" style="margin-bottom:20px">
+    <div class="card-header" style="border-left:3px solid var(--purple)">
+        {{ icon('download-cloud') }} VPS Manager Updates
+        <span class="badge" id="appVersionBadge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">...</span>
+    </div>
+    <div class="card-body">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
+            <span style="color:var(--text-secondary);font-size:13px">Current version: <strong id="appCurrentVersion">...</strong></span>
+            <button class="btn btn-sm" id="appCheckBtn" onclick="checkAppUpdate()">{{ icon('refresh') }} Check for updates</button>
+        </div>
+
+        <div id="appUpdateAvailable" style="display:none">
+            <div style="padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;margin-bottom:12px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+                    <span class="badge badge-green">New version available</span>
+                    <strong id="appNewVersion" style="color:var(--text-primary)"></strong>
+                    <span id="appPublishedAt" style="color:var(--text-muted);font-size:12px;margin-left:auto"></span>
+                </div>
+                <div id="appReleaseNotes" style="color:var(--text-secondary);font-size:13px;white-space:pre-wrap;max-height:200px;overflow-y:auto;margin-top:8px"></div>
+            </div>
+            <button class="btn btn-sm btn-green" id="appInstallBtn" onclick="showConfirm('Install update', 'Pull the latest version from GitHub and restart the application?', installAppUpdate)">{{ icon('download') }} Install update</button>
+        </div>
+
+        <div id="appUpToDate" style="display:none">
+            <span class="badge badge-green">Up to date</span>
+        </div>
+
+        <div id="appUpdateProgress" style="display:none;margin-top:12px">
+            <div style="margin-bottom:8px">
+                <span class="badge badge-yellow" id="appUpdateBadge">Installing...</span>
+            </div>
+            <pre id="appUpdateLog" style="font-size:12px;max-height:150px;overflow-y:auto">Pulling latest changes...</pre>
+        </div>
+
+        <div id="appUpdateError" style="display:none;padding:8px 12px;background:var(--red-bg);border:1px solid rgba(220,53,69,0.3);border-radius:6px;font-size:13px;color:var(--red)"></div>
+    </div>
+</div>
+
+{% set security_updates = updates|selectattr('category', 'equalto', 'security')|list %}
+{% set regular_updates = updates|selectattr('category', 'equalto', 'regular')|list %}
+{% set esm_updates = updates|selectattr('category', 'equalto', 'esm')|list %}
+{% set phased_updates = updates|selectattr('category', 'equalto', 'phased')|list %}
+{% set installable = security_updates|length + regular_updates|length %}
+
+<div class="section-header" style="margin-bottom:16px">
+    <div>
+        <button class="btn btn-sm" onclick="refreshUpdates()">{{ icon('refresh') }} Check</button>
+        {% if installable > 0 %}
+            <button class="btn btn-sm btn-green" id="installBtn" onclick="showConfirm('Install updates', 'Install {{ installable }} update(s)? (ESM updates excluded)', installUpdates)">{{ icon('download') }} Install ({{ installable }})</button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Security Updates -->
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--red)">
+        {{ icon('shield') }} Security Updates
+        <span class="badge badge-red" style="margin-left:auto">{{ security_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if security_updates %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in security_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted)">No security updates</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Regular Updates -->
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--green)">
+        {{ icon('package') }} Regular Updates
+        <span class="badge badge-green" style="margin-left:auto">{{ regular_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if regular_updates %}
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in regular_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted)">No regular updates</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ESM Updates -->
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--yellow)">
+        {{ icon('lock') }} Ubuntu Pro / ESM
+        <span class="badge badge-yellow" style="margin-left:auto">{{ esm_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        {% if esm_updates %}
+        <div style="padding:8px 12px;background:var(--yellow-bg);border:1px solid rgba(210,153,34,0.3);border-radius:6px;margin-bottom:12px;font-size:13px;color:var(--yellow)">
+            These updates require an Ubuntu Pro subscription. They cannot be installed without enabling ESM via <code>pro attach</code>.
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in esm_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <span style="color:var(--text-muted)">No ESM updates</span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Phased Updates -->
+{% if phased_updates %}
+<div class="card">
+    <div class="card-header" style="border-left:3px solid var(--text-muted)">
+        {{ icon('clock') }} Phased Updates
+        <span class="badge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">{{ phased_updates|length }}</span>
+    </div>
+    <div class="card-body">
+        <div style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:13px;color:var(--text-secondary)">
+            These updates are being gradually rolled out by Ubuntu (phased rollout). They will become available automatically once your system is included in the rollout.
+        </div>
+        <div class="table-wrap">
+            <table>
+                <thead><tr><th>Package</th><th>Version</th></tr></thead>
+                <tbody>
+                    {% for u in phased_updates %}
+                    <tr>
+                        <td><strong>{{ u.package }}</strong></td>
+                        <td><code>{{ u.version }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if not updates %}
+<div style="text-align:center;padding:24px">
+    <span class="badge badge-green" style="font-size:14px;padding:8px 16px">System is up to date</span>
+</div>
+{% endif %}
+
+<!-- Update History -->
+<div class="card" style="margin-top:16px">
+    <div class="card-header">{{ icon('clock') }} Update History</div>
+    <div class="card-body">
+        <div id="historyTimeline" style="display:flex;gap:3px;margin-bottom:16px;flex-wrap:wrap"></div>
+        <div id="historyTable"></div>
+        <div id="historyEmpty" style="display:none;color:var(--text-muted);font-size:13px">No update history found</div>
+        <div id="historyLoading" style="color:var(--text-muted);font-size:13px">Loading history...</div>
+    </div>
+</div>
+
+<div id="updateProgress" style="display:none;margin-top:16px">
+    <div class="card">
+        <div class="card-header">{{ icon('terminal') }} Installation progress</div>
+        <div class="card-body">
+            <div id="updateStatus" style="margin-bottom:12px">
+                <span class="badge badge-yellow" id="updateBadge">Installing...</span>
+            </div>
+            <pre id="updateLog">Waiting for output...</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function refreshUpdates() {
+    location.reload();
+}
+
+async function installUpdates() {
+    var progressEl = document.getElementById('updateProgress');
+    var logEl = document.getElementById('updateLog');
+    var badgeEl = document.getElementById('updateBadge');
+    var installBtn = document.getElementById('installBtn');
+
+    progressEl.style.display = 'block';
+    logEl.textContent = 'Installing updates...\nThis may take a while.\n';
+    badgeEl.textContent = 'Installing...';
+    badgeEl.className = 'badge badge-yellow';
+    if (installBtn) installBtn.disabled = true;
+
+    progressEl.scrollIntoView({ behavior: 'smooth' });
+
+    try {
+        var res = await fetch('/updates/install', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
+        var data = await res.json();
+
+        if (res.ok) {
+            badgeEl.textContent = 'Updates installed';
+            badgeEl.className = 'badge badge-green';
+            logEl.textContent = data.output || 'Done.';
+            showToast('Updates installed successfully', 'success');
+        } else {
+            badgeEl.textContent = 'Installation failed';
+            badgeEl.className = 'badge badge-red';
+            logEl.textContent = data.output || data.message || 'Unknown error';
+            showToast('Failed to install updates', 'error');
+        }
+    } catch (e) {
+        badgeEl.textContent = 'Connection error';
+        badgeEl.className = 'badge badge-red';
+        logEl.textContent = 'Connection lost during installation.';
+        showToast('Connection error', 'error');
+    }
+
+    if (installBtn) installBtn.disabled = false;
+}
+
+// VPS Manager self-update functions
+async function checkAppUpdate() {
+    var checkBtn = document.getElementById('appCheckBtn');
+    var versionBadge = document.getElementById('appVersionBadge');
+    var currentEl = document.getElementById('appCurrentVersion');
+    var availableEl = document.getElementById('appUpdateAvailable');
+    var upToDateEl = document.getElementById('appUpToDate');
+    var errorEl = document.getElementById('appUpdateError');
+
+    checkBtn.disabled = true;
+    versionBadge.textContent = 'Checking...';
+    versionBadge.style.background = 'var(--bg-tertiary)';
+    versionBadge.style.color = 'var(--text-secondary)';
+    availableEl.style.display = 'none';
+    upToDateEl.style.display = 'none';
+    errorEl.style.display = 'none';
+
+    try {
+        var res = await fetch('/api/update/check');
+        var data = await res.json();
+
+        if (!res.ok) {
+            errorEl.textContent = data.message || 'Failed to check for updates';
+            errorEl.style.display = 'block';
+            versionBadge.textContent = 'Error';
+            checkBtn.disabled = false;
+            return;
+        }
+
+        currentEl.textContent = 'v' + data.current_version;
+        versionBadge.textContent = 'v' + data.current_version;
+
+        if (data.update_available) {
+            document.getElementById('appNewVersion').textContent = 'v' + data.latest_version;
+            document.getElementById('appReleaseNotes').textContent = data.release_notes || 'No release notes.';
+            if (data.published_at) {
+                var d = new Date(data.published_at);
+                document.getElementById('appPublishedAt').textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+            }
+            availableEl.style.display = 'block';
+            versionBadge.textContent = 'Update available';
+            versionBadge.style.background = 'var(--green-bg)';
+            versionBadge.style.color = 'var(--green)';
+        } else {
+            upToDateEl.style.display = 'block';
+        }
+    } catch (e) {
+        errorEl.textContent = 'Could not connect to check for updates.';
+        errorEl.style.display = 'block';
+        versionBadge.textContent = 'Error';
+    }
+
+    checkBtn.disabled = false;
+}
+
+async function installAppUpdate() {
+    var installBtn = document.getElementById('appInstallBtn');
+    var progressEl = document.getElementById('appUpdateProgress');
+    var logEl = document.getElementById('appUpdateLog');
+    var badgeEl = document.getElementById('appUpdateBadge');
+    var errorEl = document.getElementById('appUpdateError');
+
+    installBtn.disabled = true;
+    errorEl.style.display = 'none';
+    progressEl.style.display = 'block';
+    logEl.textContent = 'Pulling latest changes from GitHub...\n';
+    badgeEl.textContent = 'Installing...';
+    badgeEl.className = 'badge badge-yellow';
+
+    try {
+        var res = await fetch('/api/update/install', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
+        var data = await res.json();
+
+        if (res.ok) {
+            logEl.textContent = (data.output || 'Done.') + '\n\nUpdated: v' + data.previous_version + ' -> v' + data.new_version;
+
+            if (data.restart === 'ok') {
+                badgeEl.textContent = 'Restart required';
+                badgeEl.className = 'badge badge-yellow';
+                logEl.textContent += '\n\nThe application is restarting. This page will reload automatically.';
+                showToast('Update installed, restarting...', 'success');
+                // Wait for PM2 to restart the process, then reload
+                setTimeout(function() { location.reload(); }, 4000);
+            } else {
+                badgeEl.textContent = 'Updated (restart manually)';
+                badgeEl.className = 'badge badge-yellow';
+                logEl.textContent += '\n\nPM2 restart failed. Please restart manually: pm2 restart vps-manager';
+                showToast('Update installed, manual restart needed', 'success');
+            }
+        } else {
+            badgeEl.textContent = 'Update failed';
+            badgeEl.className = 'badge badge-red';
+            logEl.textContent = data.output || data.message || 'Unknown error';
+            showToast('Failed to install update', 'error');
+            installBtn.disabled = false;
+        }
+    } catch (e) {
+        badgeEl.textContent = 'Connection lost';
+        badgeEl.className = 'badge badge-red';
+        logEl.textContent = 'Connection lost. If the update was in progress, the application may be restarting.';
+        showToast('Connection lost during update', 'error');
+        // Try reloading after a delay in case the app restarted
+        setTimeout(function() { location.reload(); }, 5000);
+    }
+}
+
+// Load update history
+async function loadHistory() {
+    try {
+        const res = await fetch('/api/updates/history');
+        const data = await res.json();
+
+        document.getElementById('historyLoading').style.display = 'none';
+
+        if (!data.length) {
+            document.getElementById('historyEmpty').style.display = 'block';
+            return;
+        }
+
+        // Timeline dots (last 30)
+        const timeline = document.getElementById('historyTimeline');
+        const dots = data.slice(0, 30).reverse();
+        dots.forEach(entry => {
+            const dot = document.createElement('div');
+            dot.style.cssText = 'width:10px;height:10px;border-radius:50%;cursor:default;';
+            if (entry.status === 'success') {
+                dot.style.background = 'var(--green)';
+            } else {
+                dot.style.background = 'var(--red)';
+            }
+            dot.title = (entry.timestamp || '').substring(0, 16).replace('T', ' ') + ' - ' + entry.source + ' (' + entry.status + ')';
+            timeline.appendChild(dot);
+        });
+
+        // Table
+        let html = '<div class="table-wrap"><table class="table" style="margin:0;font-size:13px"><thead><tr>';
+        html += '<th style="padding:10px 16px">Time</th>';
+        html += '<th style="padding:10px 16px">Source</th>';
+        html += '<th style="padding:10px 16px">Status</th>';
+        html += '<th style="padding:10px 16px">Details</th>';
+        html += '</tr></thead><tbody>';
+
+        data.forEach(entry => {
+            const time = (entry.timestamp || '').substring(0, 16).replace('T', ' ');
+            const sourceBadge = entry.source === 'unattended'
+                ? '<span class="badge" style="background:var(--purple-bg,rgba(139,92,246,0.15));color:var(--purple,#a78bfa);font-size:11px">auto</span>'
+                : '<span class="badge" style="background:var(--bg-tertiary);color:var(--text-secondary);font-size:11px">manual</span>';
+            const statusColor = entry.status === 'success' ? 'var(--green)' : 'var(--red)';
+            const statusText = entry.status === 'success' ? 'OK' : 'FAIL';
+            html += '<tr>';
+            html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + time + '</td>';
+            html += '<td style="padding:8px 16px">' + sourceBadge + '</td>';
+            html += '<td style="padding:8px 16px"><span style="color:' + statusColor + ';font-weight:500">' + statusText + '</span></td>';
+            html += '<td style="padding:8px 16px;color:var(--text-secondary)">' + escHtml((entry.details || '-').substring(0, 120)) + '</td>';
+            html += '</tr>';
+        });
+
+        html += '</tbody></table></div>';
+        document.getElementById('historyTable').innerHTML = html;
+    } catch (e) {
+        document.getElementById('historyLoading').textContent = 'Failed to load history';
+    }
+}
+loadHistory();
+
+// Load current version on page load
+(function() {
+    fetch('/api/update/check').then(function(res) {
+        return res.json();
+    }).then(function(data) {
+        if (data.current_version) {
+            document.getElementById('appCurrentVersion').textContent = 'v' + data.current_version;
+            document.getElementById('appVersionBadge').textContent = 'v' + data.current_version;
+            if (data.update_available) {
+                document.getElementById('appNewVersion').textContent = 'v' + data.latest_version;
+                document.getElementById('appReleaseNotes').textContent = data.release_notes || 'No release notes.';
+                if (data.published_at) {
+                    var d = new Date(data.published_at);
+                    document.getElementById('appPublishedAt').textContent = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
+                }
+                document.getElementById('appUpdateAvailable').style.display = 'block';
+                var badge = document.getElementById('appVersionBadge');
+                badge.textContent = 'Update available';
+                badge.style.background = 'var(--green-bg)';
+                badge.style.color = 'var(--green)';
+            } else {
+                document.getElementById('appUpToDate').style.display = 'block';
+            }
+        }
+    }).catch(function() {
+        document.getElementById('appCurrentVersion').textContent = 'unknown';
+        document.getElementById('appVersionBadge').textContent = 'unknown';
+    });
+})();
+</script>
+{% endblock %}

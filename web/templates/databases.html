@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Databases - VPS Manager{% endblock %}
+{% block page_title %}MariaDB Databases{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <div></div>
+    <a href="{{ phpmyadmin_path }}" target="_blank" class="btn btn-green">{{ icon('database') }} phpMyAdmin</a>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ icon('database') }} Databases</div>
+    <div class="card-body">
+        {% if databases %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Database</th>
+                        <th>Size</th>
+                        <th>Tables</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for db in databases %}
+                    <tr>
+                        <td><strong>{{ db.name }}</strong></td>
+                        <td>{{ db.size_mb }} MB</td>
+                        <td>{{ db.tables }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve databases.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

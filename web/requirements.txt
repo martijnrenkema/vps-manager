@@ -1,0 +1,6 @@
+flask
+flask-wtf
+pywebpush
+cryptography
+pyotp
+qrcode[pil]

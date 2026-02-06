@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# Data (secrets, keys, runtime data)
+web/data/
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# CLI tool (local only, not part of web dashboard)
+vps-manager.py
+
+# AI tooling
+.claude/
+CLAUDE.md
+claude.md

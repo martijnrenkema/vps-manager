@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Websites - VPS Manager{% endblock %}
+{% block page_title %}Websites{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">{{ icon('globe') }} Nginx Sites</div>
+    <div class="card-body">
+        {% if sites %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Domain</th>
+                        <th>HTTP</th>
+                        <th>Type</th>
+                        <th>Location</th>
+                        <th>Config</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for site in sites %}
+                    <tr>
+                        <td>
+                            {% for d in site.domains %}
+                                <a href="https://{{ d }}" target="_blank" style="color:var(--accent);text-decoration:none">{{ d }}</a>
+                                {% if not loop.last %}<br>{% endif %}
+                            {% endfor %}
+                        </td>
+                        <td>
+                            {% set code = site.http_status %}
+                            {% if code in ['200', '301', '302', '307'] %}
+                                <span class="badge badge-green">{{ code }}</span>
+                            {% elif code in ['403', '404'] %}
+                                <span class="badge badge-yellow">{{ code }}</span>
+                            {% else %}
+                                <span class="badge badge-red">{{ code }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if site.type == 'proxy' %}
+                                <span class="badge badge-yellow">proxy</span>
+                            {% else %}
+                                <span class="badge badge-green">static</span>
+                            {% endif %}
+                        </td>
+                        <td><code>{{ site.location }}</code></td>
+                        <td><code style="color:var(--text-muted)">{{ site.config }}</code></td>
+                        <td style="white-space:nowrap">
+                            <a href="/nginx-config?select={{ site.config|urlencode }}" class="btn btn-sm" title="Edit config">{{ icon('edit') }} Config</a>
+                            <a href="/nginx-logs" class="btn btn-sm" title="View logs">{{ icon('file-text') }} Logs</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve nginx sites.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

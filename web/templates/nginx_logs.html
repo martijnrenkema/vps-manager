@@ -1,0 +1,180 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Nginx Logs - VPS Manager{% endblock %}
+{% block page_title %}Nginx Logs{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">{{ icon('file-text') }} Nginx Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">global (last 20 entries)</span></div>
+    <div class="card-body" style="padding:0">
+        {% if data.errors %}
+            <div class="log-entries">
+                {% for entry in data.errors %}
+                <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                    <div class="log-entry-summary">
+                        <span class="log-timestamp">{{ entry.timestamp }}</span>
+                        <span class="log-level log-level-{{ entry.level }}">{{ entry.level }}</span>
+                        <span class="log-message">{{ entry.message }}</span>
+                    </div>
+                    <div class="log-detail">
+                        <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div style="padding:16px">
+                <span class="badge badge-green">No errors in nginx error.log</span>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if data.php_errors %}
+<div class="card">
+    <div class="card-header">{{ icon('file-text') }} PHP-FPM Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">php-fpm (last 20 entries)</span></div>
+    <div class="card-body" style="padding:0">
+        <div class="log-entries">
+            {% for entry in data.php_errors %}
+            <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                <div class="log-entry-summary">
+                    <span class="log-level log-level-error">php</span>
+                    <span class="log-message">{{ entry.message }}</span>
+                </div>
+                <div class="log-detail">
+                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if data.per_site %}
+<div class="card">
+    <div class="card-header">{{ icon('folder') }} Error Logs per Site <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">nginx</span></div>
+    <div class="card-body">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Site</th>
+                        <th>Log File</th>
+                        <th>Lines</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for log in data.per_site %}
+                    <tr>
+                        <td><strong>{{ log.site }}</strong></td>
+                        <td><code style="font-size:12px">{{ log.name }}</code></td>
+                        <td>
+                            {% if log.lines == '0' %}
+                                <span class="badge badge-green">0</span>
+                            {% else %}
+                                <span class="badge badge-yellow">{{ log.lines }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if log.lines != '0' %}
+                            <button class="btn btn-sm" onclick="viewLog({{ log.path | tojson }}, {{ log.site | tojson }})">{{ icon('file-text') }} View</button>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if data.access_summary %}
+<div class="card">
+    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">nginx</span></div>
+    <div class="card-body">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>HTTP Status</th>
+                        <th>Count</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in data.access_summary %}
+                    <tr>
+                        <td>
+                            {% if item.code.startswith('2') %}
+                                <span class="badge badge-green">{{ item.code }}</span>
+                            {% elif item.code.startswith('3') %}
+                                <span class="badge" style="background:rgba(57,210,192,0.15);color:var(--cyan)">{{ item.code }}</span>
+                            {% elif item.code.startswith('4') %}
+                                <span class="badge badge-yellow">{{ item.code }}</span>
+                            {% elif item.code.startswith('5') %}
+                                <span class="badge badge-red">{{ item.code }}</span>
+                            {% else %}
+                                <span class="badge">{{ item.code }}</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ item.count }}x</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Log viewer modal -->
+<div id="nginxLogModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;padding:24px;overflow:auto" onclick="if(event.target===this)closeLogModal()">
+    <div style="max-width:900px;margin:40px auto;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border)">
+            <div>
+                <strong id="nginxLogModalTitle">Log</strong>
+                <span id="nginxLogModalSub" style="color:var(--text-muted);font-size:13px;margin-left:8px"></span>
+            </div>
+            <button onclick="closeLogModal()" style="background:none;border:none;color:var(--text-muted);font-size:24px;cursor:pointer;line-height:1">&times;</button>
+        </div>
+        <div style="padding:16px 20px;max-height:70vh;overflow:auto">
+            <pre id="nginxLogModalContent" style="font-size:12px;margin:0;white-space:pre-wrap;word-break:break-all">Loading...</pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function viewLog(path, site) {
+    document.getElementById('nginxLogModal').style.display = 'block';
+    document.getElementById('nginxLogModalTitle').textContent = site;
+    document.getElementById('nginxLogModalSub').textContent = 'nginx error log (last 50 lines)';
+    document.getElementById('nginxLogModalContent').textContent = 'Loading...';
+    document.body.style.overflow = 'hidden';
+
+    try {
+        var res = await fetch('/api/nginx-log?file=' + encodeURIComponent(path) + '&lines=50');
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('nginxLogModalContent').textContent = data.content || '(empty)';
+        } else {
+            document.getElementById('nginxLogModalContent').textContent = 'Error: ' + (data.message || data.error || 'Unknown error');
+        }
+    } catch (e) {
+        document.getElementById('nginxLogModalContent').textContent = 'Error: ' + e.message;
+    }
+}
+
+function closeLogModal() {
+    document.getElementById('nginxLogModal').style.display = 'none';
+    document.body.style.overflow = '';
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && document.getElementById('nginxLogModal').style.display !== 'none') closeLogModal();
+});
+</script>
+{% endblock %}

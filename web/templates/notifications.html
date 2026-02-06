@@ -1,0 +1,315 @@
+{% extends "base.html" %}
+
+{% block title %}Notifications - VPS Manager{% endblock %}
+{% block page_title %}Notifications{% endblock %}
+
+{% block content %}
+<div class="stats-grid" style="grid-template-columns: 1fr;">
+
+    <!-- Push Permission -->
+    <div class="card">
+        <div class="card-header">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            Push Notifications
+        </div>
+        <div class="card-body">
+            <div id="push-status" style="margin-bottom:16px;">
+                <p id="push-status-text" style="color:var(--text-secondary);font-size:14px;">Checking notification support...</p>
+            </div>
+
+            <div id="push-unsupported" style="display:none;">
+                <div class="alert alert-danger">Push notifications are not supported in this browser. Use Chrome, Edge, or Firefox for push support.</div>
+            </div>
+
+            <div id="push-controls" style="display:none;">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+                    <button class="btn btn-green" id="btnEnable" onclick="enablePush()">Enable Notifications</button>
+                    <button class="btn btn-red" id="btnDisable" onclick="disablePush()" style="display:none;">Disable Notifications</button>
+                    <button class="btn" id="btnTest" onclick="sendTest()" style="display:none;">Send Test</button>
+                </div>
+                <p id="push-permission-hint" style="color:var(--text-muted);font-size:12px;display:none;">
+                    If the permission prompt doesn't appear, check your browser's notification settings for this site.
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Categories -->
+    <div class="card" id="categories-card" style="display:none;">
+        <div class="card-header">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Notification Categories
+        </div>
+        <div class="card-body">
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">Choose which alerts you want to receive as push notifications.</p>
+
+            <div class="notif-categories">
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">Critical Errors</div>
+                        <div class="notif-category-desc">Services down, PM2 offline, disk >95%, SSL expired</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-critical" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">Warnings</div>
+                        <div class="notif-category-desc">Disk >80%, RAM >85%, swap >50%, high load, SSL &lt;14 days</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-warnings" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">System Updates</div>
+                        <div class="notif-category-desc">Available package updates</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-updates">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">Security</div>
+                        <div class="notif-category-desc">Fail2ban bans, suspicious SSH activity</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-security" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">DDoS Detection</div>
+                        <div class="notif-category-desc">High connection counts, SYN floods, single IP spikes</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-ddos" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">Backup</div>
+                        <div class="notif-category-desc">Backup failures, no successful backup in 48 hours</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-backup" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+
+                <div class="notif-category">
+                    <div class="notif-category-info">
+                        <div class="notif-category-title">App Updates</div>
+                        <div class="notif-category-desc">New VPS Manager release available on GitHub</div>
+                    </div>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="pref-app_update" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+            </div>
+
+            <button class="btn btn-green" onclick="savePreferences()" style="margin-top:16px;">Save Preferences</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    let swRegistration = null;
+    let currentSubscription = null;
+
+    async function init() {
+        if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+            document.getElementById('push-unsupported').style.display = 'block';
+            document.getElementById('push-status-text').textContent = 'Push notifications not supported.';
+            return;
+        }
+
+        document.getElementById('push-controls').style.display = 'block';
+
+        try {
+            swRegistration = await navigator.serviceWorker.ready;
+            currentSubscription = await swRegistration.pushManager.getSubscription();
+            updateUI();
+        } catch (e) {
+            document.getElementById('push-status-text').textContent = 'Error initializing: ' + e.message;
+        }
+    }
+
+    function updateUI() {
+        const statusText = document.getElementById('push-status-text');
+        const btnEnable = document.getElementById('btnEnable');
+        const btnDisable = document.getElementById('btnDisable');
+        const btnTest = document.getElementById('btnTest');
+        const categoriesCard = document.getElementById('categories-card');
+        const hint = document.getElementById('push-permission-hint');
+
+        if (currentSubscription) {
+            statusText.innerHTML = '<span style="color:var(--green);">&#10003;</span> Push notifications are <strong>enabled</strong>.';
+            btnEnable.style.display = 'none';
+            btnDisable.style.display = '';
+            btnTest.style.display = '';
+            categoriesCard.style.display = '';
+            hint.style.display = 'none';
+            loadPreferences();
+        } else {
+            statusText.textContent = 'Push notifications are disabled.';
+            btnEnable.style.display = '';
+            btnDisable.style.display = 'none';
+            btnTest.style.display = 'none';
+            categoriesCard.style.display = 'none';
+
+            if (Notification.permission === 'denied') {
+                statusText.textContent = 'Notifications are blocked by the browser. Please allow notifications in site settings.';
+                btnEnable.style.display = 'none';
+                hint.style.display = 'block';
+            }
+        }
+    }
+
+    async function enablePush() {
+        try {
+            const res = await fetch('/api/push/vapid-key');
+            const data = await res.json();
+            const vapidKey = urlBase64ToUint8Array(data.public_key);
+
+            const subscription = await swRegistration.pushManager.subscribe({
+                userVisibleOnly: true,
+                applicationServerKey: vapidKey,
+            });
+
+            // Send subscription to server
+            const subRes = await fetch('/api/push/subscribe', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify(subscription.toJSON()),
+            });
+
+            if (subRes.ok) {
+                currentSubscription = subscription;
+                updateUI();
+                showToast('Push notifications enabled', 'success');
+            } else {
+                showToast('Failed to register subscription', 'error');
+            }
+        } catch (e) {
+            if (e.name === 'NotAllowedError') {
+                document.getElementById('push-permission-hint').style.display = 'block';
+            }
+            showToast('Could not enable notifications: ' + e.message, 'error');
+        }
+    }
+
+    async function disablePush() {
+        try {
+            if (currentSubscription) {
+                await fetch('/api/push/unsubscribe', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({ endpoint: currentSubscription.endpoint }),
+                });
+                await currentSubscription.unsubscribe();
+            }
+            currentSubscription = null;
+            updateUI();
+            showToast('Push notifications disabled', 'success');
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    }
+
+    async function sendTest() {
+        try {
+            const res = await fetch('/api/push/test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ endpoint: currentSubscription.endpoint }),
+            });
+            if (res.ok) {
+                showToast('Test notification sent', 'success');
+            } else {
+                showToast('Failed to send test', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    }
+
+    async function loadPreferences() {
+        try {
+            const res = await fetch('/api/push/preferences?' + new URLSearchParams({
+                endpoint: currentSubscription.endpoint,
+            }));
+            if (res.ok) {
+                const prefs = await res.json();
+                document.getElementById('pref-critical').checked = prefs.critical !== false;
+                document.getElementById('pref-warnings').checked = prefs.warnings !== false;
+                document.getElementById('pref-updates').checked = prefs.updates === true;
+                document.getElementById('pref-security').checked = prefs.security !== false;
+                document.getElementById('pref-ddos').checked = prefs.ddos !== false;
+                document.getElementById('pref-backup').checked = prefs.backup !== false;
+                document.getElementById('pref-app_update').checked = prefs.app_update !== false;
+            }
+        } catch (e) {
+            // Use defaults
+        }
+    }
+
+    async function savePreferences() {
+        const prefs = {
+            endpoint: currentSubscription.endpoint,
+            critical: document.getElementById('pref-critical').checked,
+            warnings: document.getElementById('pref-warnings').checked,
+            updates: document.getElementById('pref-updates').checked,
+            security: document.getElementById('pref-security').checked,
+            ddos: document.getElementById('pref-ddos').checked,
+            backup: document.getElementById('pref-backup').checked,
+            app_update: document.getElementById('pref-app_update').checked,
+        };
+
+        try {
+            const res = await fetch('/api/push/preferences', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify(prefs),
+            });
+            if (res.ok) {
+                showToast('Preferences saved', 'success');
+            } else {
+                showToast('Failed to save preferences', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    }
+
+    // Convert VAPID key from base64 to Uint8Array
+    function urlBase64ToUint8Array(base64String) {
+        const padding = '='.repeat((4 - base64String.length % 4) % 4);
+        const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const rawData = window.atob(base64);
+        const outputArray = new Uint8Array(rawData.length);
+        for (let i = 0; i < rawData.length; ++i) {
+            outputArray[i] = rawData.charCodeAt(i);
+        }
+        return outputArray;
+    }
+
+    init();
+</script>
+{% endblock %}

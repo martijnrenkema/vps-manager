@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Services - VPS Manager{% endblock %}
+{% block page_title %}Services{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">{{ icon('activity') }} Service Status</div>
+    <div class="card-body">
+        {% if services %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Service</th>
+                        <th>Status</th>
+                        <th>Uptime</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for svc in services %}
+                    <tr>
+                        <td><strong>{{ svc.name }}</strong></td>
+                        <td>
+                            {% if svc.status == 'active' %}
+                                <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
+                            {% elif svc.status == 'inactive' %}
+                                <span class="badge badge-yellow"><span class="badge-dot yellow"></span>inactive</span>
+                            {% else %}
+                                <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td><span style="color:var(--text-secondary)">{{ svc.uptime or '-' }}</span></td>
+                        <td>
+                            <div class="btn-group">
+                                <button class="btn btn-sm btn-yellow" onclick="serviceAction('restart', {{ svc.name | tojson | forceescape }})">Restart</button>
+                                {% if svc.status == 'active' %}
+                                    <button class="btn btn-sm btn-red" onclick="serviceAction('stop', {{ svc.name | tojson | forceescape }})">Stop</button>
+                                {% else %}
+                                    <button class="btn btn-sm btn-green" onclick="serviceAction('start', {{ svc.name | tojson | forceescape }})">Start</button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve services.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function serviceAction(action, name) {
+    await apiCall('/services/' + action + '/' + encodeURIComponent(name), 'POST');
+    setTimeout(function() { location.reload(); }, 2000);
+}
+</script>
+{% endblock %}
