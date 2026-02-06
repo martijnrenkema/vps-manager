@@ -5,6 +5,7 @@ Flask-based web dashboard for managing a VPS.
 Runs locally on the VPS itself (subprocess.run instead of SSH).
 """
 
+import gc
 import os
 import re
 import io
@@ -22,7 +23,7 @@ from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, send_file
+    session, flash, jsonify, send_file, after_this_request
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -430,24 +431,22 @@ def _monitor_loop():
                 time.sleep(MONITOR_INTERVAL)
                 continue
 
-            # Gather current state
+            # Gather current state - free intermediate data after building alerts
             data = get_server_overview()
             services = get_services_status()
             pm2 = get_pm2_processes()
             ssl = get_ssl_certificates()
             alerts = get_dashboard_alerts(data, services, pm2, ssl)
+            del data, services, pm2, ssl
 
             # Add DDoS alerts
-            ddos_alerts = check_ddos_indicators()
-            alerts.extend(ddos_alerts)
+            alerts.extend(check_ddos_indicators())
 
             # Add backup alerts
-            backup_alerts = check_backup_alerts()
-            alerts.extend(backup_alerts)
+            alerts.extend(check_backup_alerts())
 
             # Add app update alert
-            app_update_alerts = check_app_update_alert()
-            alerts.extend(app_update_alerts)
+            alerts.extend(check_app_update_alert())
 
             _, private_key_pem = _get_vapid_keys()
             notif_log = _load_notification_log()
@@ -539,6 +538,7 @@ def _monitor_loop():
         except Exception:
             logger.warning("Monitor error", exc_info=True)
 
+        gc.collect()
         time.sleep(MONITOR_INTERVAL)
 
 # Cached server info (fetched once at startup)
@@ -669,18 +669,40 @@ def is_safe_name(name):
 
 
 # Login rate limiting: max 5 attempts per IP per 5 minutes
-_login_attempts = {}  # {ip: [(timestamp, ...), ...]}
+_login_attempts = {}  # {ip: [timestamp, ...]}
 _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW = 300  # seconds
+_LOGIN_MAX_IPS = 1000  # max tracked IPs to prevent memory growth
+_login_last_cleanup = 0
+
+
+def _cleanup_login_attempts():
+    """Remove all expired entries and enforce max IP limit"""
+    global _login_last_cleanup
+    now = time.time()
+    # Only run full cleanup every 60 seconds
+    if now - _login_last_cleanup < 60:
+        return
+    _login_last_cleanup = now
+    expired = [ip for ip, attempts in _login_attempts.items()
+               if not any(t > now - _LOGIN_WINDOW for t in attempts)]
+    for ip in expired:
+        del _login_attempts[ip]
+    # If still too many IPs, drop the oldest entries
+    if len(_login_attempts) > _LOGIN_MAX_IPS:
+        sorted_ips = sorted(_login_attempts.items(), key=lambda x: max(x[1]) if x[1] else 0)
+        for ip, _ in sorted_ips[:len(_login_attempts) - _LOGIN_MAX_IPS]:
+            del _login_attempts[ip]
 
 
 def _is_rate_limited(ip):
     """Check if an IP has exceeded login attempt limits"""
     now = time.time()
     attempts = _login_attempts.get(ip, [])
-    # Remove expired attempts
+    # Remove expired attempts for this IP
     attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
     _login_attempts[ip] = attempts
+    _cleanup_login_attempts()
     return len(attempts) >= _LOGIN_MAX_ATTEMPTS
 
 
@@ -1159,14 +1181,23 @@ def get_backup_status():
         except OSError:
             pass
 
-    # List site backup directories with total sizes
+    # List site backup directories with total sizes (single pass per dir)
     sites_dir = Path(backup_dir) / 'sites'
     try:
         if sites_dir.is_dir():
             for d in sorted(sites_dir.iterdir(), key=lambda x: x.name):
                 if d.is_dir():
-                    total_size = sum(f.stat().st_size for f in d.rglob('*') if f.is_file())
-                    latest_mtime = max((f.stat().st_mtime for f in d.rglob('*') if f.is_file()), default=0)
+                    total_size = 0
+                    latest_mtime = 0
+                    for root, _dirs, files in os.walk(str(d)):
+                        for fname in files:
+                            try:
+                                st = os.stat(os.path.join(root, fname))
+                                total_size += st.st_size
+                                if st.st_mtime > latest_mtime:
+                                    latest_mtime = st.st_mtime
+                            except OSError:
+                                pass
                     data['site_backups'].append({
                         'name': d.name,
                         'path': str(d),
@@ -2067,16 +2098,27 @@ def backup_download():
         return send_file(real_path, as_attachment=True)
 
     if os.path.isdir(real_path):
-        # Stream directory as tar.gz
+        # Write tar.gz to temp file instead of buffering in RAM
         import tarfile
-        buf = io.BytesIO()
+        import tempfile
         dirname = os.path.basename(real_path)
-        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-            tar.add(real_path, arcname=dirname)
-        buf.seek(0)
-        return send_file(buf, as_attachment=True,
-                         download_name=f"{dirname}.tar.gz",
-                         mimetype='application/gzip')
+        tmp = tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False)
+        try:
+            with tarfile.open(fileobj=tmp, mode='w:gz') as tar:
+                tar.add(real_path, arcname=dirname)
+            tmp.close()
+            return send_file(tmp.name, as_attachment=True,
+                             download_name=f"{dirname}.tar.gz",
+                             mimetype='application/gzip')
+        finally:
+            # Flask sends the file, then we clean up
+            @after_this_request
+            def _cleanup(response):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                return response
 
     return jsonify({'status': 'error', 'message': 'Not found'}), 404
 
@@ -2495,11 +2537,11 @@ def _parse_unattended_upgrades_log():
     """Parse /var/log/unattended-upgrades/unattended-upgrades.log for recent activity"""
     log_path = '/var/log/unattended-upgrades/unattended-upgrades.log'
     entries = []
-    try:
-        with open(log_path, 'r') as f:
-            lines = f.readlines()
-    except (FileNotFoundError, PermissionError):
+    # Only read last 500 lines instead of entire file to limit memory usage
+    result = run_cmd_safe(['tail', '-500', log_path], timeout=5)
+    if result.returncode != 0:
         return entries
+    lines = result.stdout.split('\n')
 
     current_date = None
     current_packages = []
@@ -2968,14 +3010,24 @@ def files_download():
 
     if os.path.isdir(norm_path):
         import tarfile
-        buf = io.BytesIO()
+        import tempfile
         dirname = os.path.basename(norm_path)
-        with tarfile.open(fileobj=buf, mode='w:gz') as tar:
-            tar.add(norm_path, arcname=dirname)
-        buf.seek(0)
-        return send_file(buf, as_attachment=True,
-                         download_name=f"{dirname}.tar.gz",
-                         mimetype='application/gzip')
+        tmp = tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False)
+        try:
+            with tarfile.open(fileobj=tmp, mode='w:gz') as tar:
+                tar.add(norm_path, arcname=dirname)
+            tmp.close()
+            return send_file(tmp.name, as_attachment=True,
+                             download_name=f"{dirname}.tar.gz",
+                             mimetype='application/gzip')
+        finally:
+            @after_this_request
+            def _cleanup(response):
+                try:
+                    os.unlink(tmp.name)
+                except OSError:
+                    pass
+                return response
 
     return jsonify({'status': 'error', 'message': 'Not found'}), 404
 
