@@ -6,13 +6,16 @@ Runs locally on the VPS itself (subprocess.run instead of SSH).
 """
 
 import gc
+import grp
 import os
+import pwd
 import re
 import io
 import json
 import hmac
 import shlex
 import shutil
+import stat as stat_module
 import subprocess
 import threading
 import time
@@ -128,7 +131,42 @@ def log_audit(action, details=None):
         log.append(entry)
         if len(log) > AUDIT_MAX_ENTRIES:
             log = log[-AUDIT_MAX_ENTRIES:]
-        AUDIT_LOG_PATH.write_text(json.dumps(log, indent=2))
+        AUDIT_LOG_PATH.write_text(json.dumps(log))
+
+# ---------------------------------------------------------------------------
+# TTL Cache for expensive system queries
+# ---------------------------------------------------------------------------
+_cache_store = {}
+_cache_lock = threading.Lock()
+
+
+def _ttl_cache(seconds):
+    """Simple TTL cache decorator for expensive functions"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            key = func.__name__
+            now = time.time()
+            with _cache_lock:
+                if key in _cache_store:
+                    result, ts = _cache_store[key]
+                    if now - ts < seconds:
+                        return result
+            result = func(*args, **kwargs)
+            with _cache_lock:
+                _cache_store[key] = (result, now)
+            return result
+        return wrapper
+    return decorator
+
+
+def _invalidate_cache(*func_names):
+    """Invalidate cached results for given function names"""
+    with _cache_lock:
+        for name in func_names:
+            _cache_store.pop(name, None)
+
+
 _metrics_lock = threading.Lock()
 _prev_net = {'rx': None, 'tx': None, 'ts': None}
 
@@ -175,7 +213,7 @@ def _load_subscriptions():
 
 def _save_subscriptions(subs):
     """Save subscriptions to JSON file"""
-    SUBSCRIPTIONS_PATH.write_text(json.dumps(subs, indent=2))
+    SUBSCRIPTIONS_PATH.write_text(json.dumps(subs))
 
 
 def _load_notification_log():
@@ -190,7 +228,7 @@ def _load_notification_log():
 
 def _save_notification_log(log):
     """Save notification cooldown log"""
-    NOTIFICATION_LOG_PATH.write_text(json.dumps(log, indent=2))
+    NOTIFICATION_LOG_PATH.write_text(json.dumps(log))
 
 
 def _load_notification_history():
@@ -205,7 +243,7 @@ def _load_notification_history():
 
 def _save_notification_history(history):
     """Save notification history (max 100 entries)"""
-    NOTIFICATION_HISTORY_PATH.write_text(json.dumps(history[-100:], indent=2))
+    NOTIFICATION_HISTORY_PATH.write_text(json.dumps(history[-100:]))
 
 
 def _add_notification_history(title, body, category):
@@ -591,6 +629,7 @@ def _get_current_version():
         return '0.0.0'
 
 
+@_ttl_cache(3600)
 def check_app_update_alert():
     """Check GitHub for a new VPS Manager release and return an alert if available"""
     import urllib.request
@@ -808,6 +847,7 @@ def format_server_uptime(seconds):
         return "?"
 
 
+@_ttl_cache(30)
 def get_server_overview():
     """Gather server overview data"""
     cmd = (
@@ -916,6 +956,7 @@ def get_server_overview():
     }
 
 
+@_ttl_cache(60)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
     sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
@@ -977,6 +1018,7 @@ def get_nginx_sites():
     return sites
 
 
+@_ttl_cache(30)
 def get_pm2_processes():
     """Get PM2 process list as structured data"""
     result = run_cmd("pm2 jlist")
@@ -1023,6 +1065,7 @@ def _format_uptime(pm_uptime):
         return '?'
 
 
+@_ttl_cache(120)
 def get_ssl_certificates():
     """Get SSL certificate info"""
     result = run_cmd("sudo certbot certificates 2>/dev/null", timeout=15)
@@ -1051,6 +1094,7 @@ def get_ssl_certificates():
     return certs
 
 
+@_ttl_cache(30)
 def get_services_status():
     """Get status of key services"""
     result = run_cmd(
@@ -1136,9 +1180,10 @@ def _load_backup_status():
 
 def _save_backup_status(status):
     """Save backup status history"""
-    BACKUP_STATUS_PATH.write_text(json.dumps(status, indent=2))
+    BACKUP_STATUS_PATH.write_text(json.dumps(status))
 
 
+@_ttl_cache(60)
 def get_backup_status():
     """Get backup status info"""
     backup_cfg = CONFIG.get('backup', {})
@@ -1417,6 +1462,7 @@ def get_firewall_security():
     return data
 
 
+@_ttl_cache(300)
 def get_system_updates():
     """Get list of available updates, categorized"""
     result = run_cmd("apt list --upgradable 2>/dev/null", timeout=60)
@@ -1490,6 +1536,7 @@ def _parse_nginx_error_line(line):
     return {'timestamp': '', 'level': 'unknown', 'message': line[:120], 'raw': line}
 
 
+@_ttl_cache(30)
 def get_nginx_logs():
     """Get nginx log information"""
     nginx_cfg = CONFIG.get('nginx', {})
@@ -1552,6 +1599,7 @@ def get_nginx_logs():
     return data
 
 
+@_ttl_cache(120)
 def get_database_info():
     """Get MariaDB database info"""
     cmd = (
@@ -1659,6 +1707,7 @@ def _parse_systemd_timers(text):
     return timers
 
 
+@_ttl_cache(120)
 def get_cronjobs():
     """Get cron and systemd timer info as structured data"""
     data = {'root': '', 'user': '', 'timers': '', 'root_jobs': [], 'user_jobs': [], 'timer_list': []}
@@ -1805,6 +1854,7 @@ def get_dashboard_alerts(data, services, pm2, ssl):
     return alerts
 
 
+@_ttl_cache(60)
 def check_ddos_indicators():
     """Check for DDoS indicators and return alerts"""
     ddos_cfg = CONFIG.get('ddos_detection', {})
@@ -1971,6 +2021,7 @@ def pm2_restart(name):
     result = run_cmd_safe(["pm2", "restart", name])
     if result.returncode == 0:
         log_audit('pm2_restart', {'process': name})
+        _invalidate_cache('get_pm2_processes')
         return jsonify({'status': 'ok', 'message': f"'{name}' restarted"})
     return jsonify({'status': 'error', 'message': f"Could not restart '{name}': {result.stderr}"}), 500
 
@@ -1983,6 +2034,7 @@ def pm2_stop(name):
     result = run_cmd_safe(["pm2", "stop", name])
     if result.returncode == 0:
         log_audit('pm2_stop', {'process': name})
+        _invalidate_cache('get_pm2_processes')
         return jsonify({'status': 'ok', 'message': f"'{name}' stopped"})
     return jsonify({'status': 'error', 'message': f"Could not stop '{name}': {result.stderr}"}), 500
 
@@ -1995,6 +2047,7 @@ def pm2_start(name):
     result = run_cmd_safe(["pm2", "start", name])
     if result.returncode == 0:
         log_audit('pm2_start', {'process': name})
+        _invalidate_cache('get_pm2_processes')
         return jsonify({'status': 'ok', 'message': f"'{name}' started"})
     return jsonify({'status': 'error', 'message': f"Could not start '{name}': {result.stderr}"}), 500
 
@@ -2039,6 +2092,7 @@ def ssl_renew():
         )
     output = result.stdout if result.stdout else result.stderr
     if result.returncode == 0:
+        _invalidate_cache('get_ssl_certificates')
         return jsonify({'status': 'ok', 'message': 'Renewal successful', 'output': output})
     return jsonify({'status': 'error', 'message': 'Renewal failed', 'output': output}), 500
 
@@ -2060,6 +2114,7 @@ def service_action(action, name):
     result = run_cmd_safe(["sudo", "systemctl", action, name], timeout=30)
     if result.returncode == 0:
         log_audit(f'service_{action}', {'service': name})
+        _invalidate_cache('get_services_status')
         return jsonify({'status': 'ok', 'message': f"'{name}' {action} successful"})
     return jsonify({'status': 'error', 'message': f"Could not {action} '{name}': {result.stderr}"}), 500
 
@@ -2530,7 +2585,7 @@ def _save_update_history(source, status, details=''):
     history.append(entry)
     if len(history) > UPDATES_HISTORY_MAX:
         history = history[-UPDATES_HISTORY_MAX:]
-    UPDATES_HISTORY_PATH.write_text(json.dumps(history, indent=2))
+    UPDATES_HISTORY_PATH.write_text(json.dumps(history))
 
 
 def _parse_unattended_upgrades_log():
@@ -2701,6 +2756,7 @@ def update_install():
         warnings.append('restart pending')
 
     log_audit('self_update', {'from': current_before, 'to': new_version})
+    _invalidate_cache('check_app_update_alert', 'get_pm2_processes')
     return jsonify({
         'status': 'ok' if copy_ok else 'warning',
         'message': 'Update installed' + (f' ({", ".join(warnings)})' if warnings else ''),
@@ -2867,9 +2923,6 @@ def files_list():
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
     # Get owner/permissions of current directory
-    import pwd
-    import grp
-    import stat as stat_module
     dir_info = {}
     try:
         dir_stat = os.stat(norm_path)
@@ -3159,8 +3212,6 @@ def files_chmod():
 @login_required
 def files_users():
     """Get list of system users and groups relevant for web files"""
-    import pwd
-    import grp
     users = []
     for name in ['martijn', 'www-data', 'root', 'nobody']:
         try:
@@ -4202,6 +4253,7 @@ def nginx_config_save():
     run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
 
     log_audit('nginx_config_save', {'name': name, 'type': config_type})
+    _invalidate_cache('get_nginx_sites')
 
     if reload_result.returncode == 0:
         return jsonify({'status': 'ok', 'message': 'Config saved and nginx reloaded'})
@@ -4240,6 +4292,7 @@ def nginx_config_enable():
     if reload_result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Nginx reload failed after enabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_enable', {'name': name})
+    _invalidate_cache('get_nginx_sites')
     return jsonify({'status': 'ok', 'message': f'{name} enabled and nginx reloaded'})
 
 
@@ -4262,6 +4315,7 @@ def nginx_config_disable():
     if reload_result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Nginx reload failed after disabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_disable', {'name': name})
+    _invalidate_cache('get_nginx_sites')
     return jsonify({'status': 'ok', 'message': f'{name} disabled and nginx reloaded'})
 
 
