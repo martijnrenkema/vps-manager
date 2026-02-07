@@ -3255,12 +3255,18 @@ def push_subscribe():
 
     subs = _load_subscriptions()
 
-    # Replace if same endpoint already exists
+    # Preserve existing preferences/label when re-subscribing same endpoint
+    existing = next((s for s in subs if s.get('endpoint') == data['endpoint']), None)
+    old_prefs = existing.get('preferences') if existing else None
+    old_label = existing.get('label', '') if existing else ''
+
     subs = [s for s in subs if s.get('endpoint') != data['endpoint']]
     subs.append({
         'endpoint': data['endpoint'],
         'keys': data['keys'],
-        'preferences': {
+        'label': data.get('label') or old_label or '',
+        'user_agent': request.headers.get('User-Agent', ''),
+        'preferences': old_prefs or {
             'critical': True,
             'warnings': True,
             'updates': False,
@@ -3354,8 +3360,107 @@ def push_preferences():
                 'security': bool(data.get('security', True)),
                 'ddos': bool(data.get('ddos', True)),
                 'backup': bool(data.get('backup', True)),
+                'app_update': bool(data.get('app_update', True)),
             }
             break
+    _save_subscriptions(subs)
+    return jsonify({'status': 'ok', 'message': 'Preferences saved'})
+
+
+@app.route('/api/push/subscriptions')
+@login_required
+def push_subscriptions_list():
+    """Return all active subscriptions with metadata (endpoint masked)."""
+    subs = _load_subscriptions()
+    result = []
+    for s in subs:
+        ep = s.get('endpoint', '')
+        # Mask endpoint for display: show provider + last 8 chars
+        if 'mozilla.com' in ep or 'push.services.mozilla' in ep:
+            provider = 'Firefox'
+        elif 'fcm.googleapis.com' in ep:
+            provider = 'Chrome/Edge'
+        elif 'windows.com' in ep or 'wns' in ep:
+            provider = 'Edge'
+        else:
+            provider = 'Unknown'
+        masked = '...' + ep[-8:] if len(ep) > 8 else ep
+        ua = s.get('user_agent', '')
+        is_pwa = 'standalone' in ua or ('Mobile' not in ua and 'Android' not in ua and provider != 'Unknown')
+        result.append({
+            'endpoint': ep,
+            'endpoint_short': masked,
+            'provider': provider,
+            'label': s.get('label', ''),
+            'preferences': s.get('preferences', {}),
+            'created': s.get('created', ''),
+            'user_agent': ua[:120],
+        })
+    return jsonify(result)
+
+
+@app.route('/api/push/subscriptions/label', methods=['POST'])
+@login_required
+def push_subscription_label():
+    """Update the label for a subscription."""
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
+    label = data.get('label', '')
+    if not endpoint:
+        return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
+
+    subs = _load_subscriptions()
+    for sub in subs:
+        if sub.get('endpoint') == endpoint:
+            sub['label'] = label[:50]
+            break
+    else:
+        return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
+    _save_subscriptions(subs)
+    return jsonify({'status': 'ok', 'message': 'Label updated'})
+
+
+@app.route('/api/push/subscriptions/delete', methods=['POST'])
+@login_required
+def push_subscription_delete():
+    """Delete any subscription by endpoint."""
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
+    if not endpoint:
+        return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
+
+    subs = _load_subscriptions()
+    new_subs = [s for s in subs if s.get('endpoint') != endpoint]
+    if len(new_subs) == len(subs):
+        return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
+    _save_subscriptions(new_subs)
+    return jsonify({'status': 'ok', 'message': 'Subscription deleted'})
+
+
+@app.route('/api/push/subscriptions/preferences', methods=['POST'])
+@login_required
+def push_subscription_preferences():
+    """Update preferences for any subscription by endpoint."""
+    data = request.get_json() or {}
+    endpoint = data.get('endpoint')
+    if not endpoint:
+        return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
+
+    subs = _load_subscriptions()
+    for sub in subs:
+        if sub.get('endpoint') == endpoint:
+            sub['preferences'] = {
+                'critical': bool(data.get('critical', True)),
+                'warnings': bool(data.get('warnings', True)),
+                'updates': bool(data.get('updates', False)),
+                'security': bool(data.get('security', True)),
+                'ddos': bool(data.get('ddos', True)),
+                'backup': bool(data.get('backup', True)),
+                'app_update': bool(data.get('app_update', True)),
+            }
+            break
+    else:
+        return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
     _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Preferences saved'})
 

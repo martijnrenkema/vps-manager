@@ -34,14 +34,14 @@
         </div>
     </div>
 
-    <!-- Categories -->
+    <!-- Categories (this device) -->
     <div class="card" id="categories-card" style="display:none;">
         <div class="card-header">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             Notification Categories
         </div>
         <div class="card-body">
-            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">Choose which alerts you want to receive as push notifications.</p>
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">Choose which alerts you want to receive on <strong>this device</strong>.</p>
 
             <div class="notif-categories">
                 <div class="notif-category">
@@ -125,6 +125,31 @@
             <button class="btn btn-green" onclick="savePreferences()" style="margin-top:16px;">Save Preferences</button>
         </div>
     </div>
+
+    <!-- All Active Subscriptions -->
+    <div class="card">
+        <div class="card-header">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 3h-8l-2 4h12z"/></svg>
+            Active Subscriptions
+        </div>
+        <div class="card-body">
+            <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">Manage all registered notification endpoints. You can edit labels and preferences for any device, including ones you can't access directly.</p>
+            <div id="subs-list">
+                <p style="color:var(--text-muted);font-size:13px;">Loading subscriptions...</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal for editing subscription preferences -->
+<div id="sub-prefs-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
+    <div style="background:var(--card-bg);border:1px solid var(--border-color);border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+            <h3 style="margin:0;font-size:16px;" id="modal-title">Edit Preferences</h3>
+            <button onclick="closeSubModal()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:20px;">&times;</button>
+        </div>
+        <div id="modal-body"></div>
+    </div>
 </div>
 {% endblock %}
 
@@ -132,6 +157,19 @@
 <script>
     let swRegistration = null;
     let currentSubscription = null;
+
+    function detectLabel() {
+        const ua = navigator.userAgent;
+        const isPWA = window.matchMedia('(display-mode: standalone)').matches
+                    || window.navigator.standalone === true;
+        let browser = 'Browser';
+        if (ua.includes('Firefox')) browser = 'Firefox';
+        else if (ua.includes('Edg/')) browser = 'Edge';
+        else if (ua.includes('Chrome')) browser = 'Chrome';
+        else if (ua.includes('Safari')) browser = 'Safari';
+        const mode = isPWA ? 'PWA' : 'Browser';
+        return browser + ' ' + mode;
+    }
 
     async function init() {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -149,6 +187,8 @@
         } catch (e) {
             document.getElementById('push-status-text').textContent = 'Error initializing: ' + e.message;
         }
+
+        loadAllSubscriptions();
     }
 
     function updateUI() {
@@ -160,7 +200,7 @@
         const hint = document.getElementById('push-permission-hint');
 
         if (currentSubscription) {
-            statusText.innerHTML = '<span style="color:var(--green);">&#10003;</span> Push notifications are <strong>enabled</strong>.';
+            statusText.innerHTML = '<span style="color:var(--green);">&#10003;</span> Push notifications are <strong>enabled</strong> (' + detectLabel() + ').';
             btnEnable.style.display = 'none';
             btnDisable.style.display = '';
             btnTest.style.display = '';
@@ -193,16 +233,19 @@
                 applicationServerKey: vapidKey,
             });
 
-            // Send subscription to server
+            const subData = subscription.toJSON();
+            subData.label = detectLabel();
+
             const subRes = await fetch('/api/push/subscribe', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-                body: JSON.stringify(subscription.toJSON()),
+                body: JSON.stringify(subData),
             });
 
             if (subRes.ok) {
                 currentSubscription = subscription;
                 updateUI();
+                loadAllSubscriptions();
                 showToast('Push notifications enabled', 'success');
             } else {
                 showToast('Failed to register subscription', 'error');
@@ -227,6 +270,7 @@
             }
             currentSubscription = null;
             updateUI();
+            loadAllSubscriptions();
             showToast('Push notifications disabled', 'success');
         } catch (e) {
             showToast('Error: ' + e.message, 'error');
@@ -290,8 +334,182 @@
             });
             if (res.ok) {
                 showToast('Preferences saved', 'success');
+                loadAllSubscriptions();
             } else {
                 showToast('Failed to save preferences', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    }
+
+    // ---- All Subscriptions Management ----
+
+    let allSubscriptions = [];
+
+    async function loadAllSubscriptions() {
+        try {
+            const res = await fetch('/api/push/subscriptions');
+            if (!res.ok) return;
+            allSubscriptions = await res.json();
+            renderSubscriptions();
+        } catch (e) {
+            document.getElementById('subs-list').innerHTML = '<p style="color:var(--red);font-size:13px;">Failed to load subscriptions.</p>';
+        }
+    }
+
+    function renderSubscriptions() {
+        const container = document.getElementById('subs-list');
+        if (!allSubscriptions.length) {
+            container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No active subscriptions.</p>';
+            return;
+        }
+
+        const currentEp = currentSubscription ? currentSubscription.endpoint : null;
+        let html = '';
+        allSubscriptions.forEach((sub, idx) => {
+            const isCurrent = sub.endpoint === currentEp;
+            const label = sub.label || sub.provider || 'Unknown';
+            const prefs = sub.preferences || {};
+            const enabledPrefs = Object.entries(prefs).filter(([k, v]) => v).map(([k]) => {
+                const names = {critical:'Critical',warnings:'Warnings',updates:'Updates',security:'Security',ddos:'DDoS',backup:'Backup',app_update:'App Updates'};
+                return names[k] || k;
+            });
+            const created = sub.created ? new Date(sub.created).toLocaleDateString('nl-NL', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
+
+            html += '<div style="border:1px solid var(--border-color);border-radius:8px;padding:14px;margin-bottom:10px;' + (isCurrent ? 'border-color:var(--green);' : '') + '">';
+            html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">';
+            html += '<div style="flex:1;min-width:200px;">';
+            html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
+            html += '<strong style="font-size:14px;">' + escapeHtml(label) + '</strong>';
+            if (isCurrent) html += '<span style="font-size:11px;background:var(--green);color:#000;padding:1px 8px;border-radius:10px;">This device</span>';
+            html += '</div>';
+            html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">' + sub.provider + ' &middot; ' + escapeHtml(sub.endpoint_short) + (created ? ' &middot; ' + created : '') + '</div>';
+            html += '<div style="font-size:12px;color:var(--text-secondary);">' + (enabledPrefs.length ? enabledPrefs.join(', ') : '<span style="color:var(--text-muted);">No categories enabled</span>') + '</div>';
+            html += '</div>';
+            html += '<div style="display:flex;gap:6px;align-items:center;">';
+            html += '<button class="btn" style="font-size:12px;padding:4px 12px;" onclick="editSubPrefs(' + idx + ')">Edit</button>';
+            html += '<button class="btn btn-red" style="font-size:12px;padding:4px 12px;" onclick="deleteSub(' + idx + ')">Delete</button>';
+            html += '</div>';
+            html += '</div>';
+            html += '</div>';
+        });
+        container.innerHTML = html;
+    }
+
+    function escapeHtml(str) {
+        const d = document.createElement('div');
+        d.textContent = str;
+        return d.innerHTML;
+    }
+
+    function editSubPrefs(idx) {
+        const sub = allSubscriptions[idx];
+        if (!sub) return;
+        const prefs = sub.preferences || {};
+        const label = sub.label || '';
+        const cats = [
+            {key:'critical',name:'Critical Errors'},
+            {key:'warnings',name:'Warnings'},
+            {key:'updates',name:'System Updates'},
+            {key:'security',name:'Security'},
+            {key:'ddos',name:'DDoS Detection'},
+            {key:'backup',name:'Backup'},
+            {key:'app_update',name:'App Updates'},
+        ];
+
+        let html = '<div style="margin-bottom:14px;">';
+        html += '<label style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:4px;">Label</label>';
+        html += '<input type="text" id="modal-label" value="' + escapeHtml(label) + '" maxlength="50" style="width:100%;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);padding:8px 12px;border-radius:6px;font-size:14px;">';
+        html += '</div>';
+        html += '<div style="margin-bottom:14px;">';
+        html += '<label style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:8px;">Categories</label>';
+        cats.forEach(c => {
+            const checked = prefs[c.key] !== false && (c.key !== 'updates' || prefs[c.key] === true);
+            html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;">';
+            html += '<span style="font-size:13px;">' + c.name + '</span>';
+            html += '<label class="toggle-switch"><input type="checkbox" id="modal-pref-' + c.key + '"' + (checked ? ' checked' : '') + '><span class="toggle-slider"></span></label>';
+            html += '</div>';
+        });
+        html += '</div>';
+        html += '<div style="display:flex;gap:8px;">';
+        html += '<button class="btn btn-green" onclick="saveSubPrefs(' + idx + ')">Save</button>';
+        html += '<button class="btn" onclick="closeSubModal()">Cancel</button>';
+        html += '</div>';
+
+        document.getElementById('modal-title').textContent = 'Edit: ' + (label || sub.provider);
+        document.getElementById('modal-body').innerHTML = html;
+        document.getElementById('sub-prefs-modal').style.display = 'flex';
+        document.getElementById('sub-prefs-modal').dataset.endpoint = sub.endpoint;
+    }
+
+    function closeSubModal() {
+        document.getElementById('sub-prefs-modal').style.display = 'none';
+    }
+
+    async function saveSubPrefs(idx) {
+        const sub = allSubscriptions[idx];
+        if (!sub) return;
+        const endpoint = sub.endpoint;
+        const newLabel = document.getElementById('modal-label').value.trim();
+        const cats = ['critical','warnings','updates','security','ddos','backup','app_update'];
+        const prefs = { endpoint };
+        cats.forEach(c => { prefs[c] = document.getElementById('modal-pref-' + c).checked; });
+
+        try {
+            // Save label
+            if (newLabel !== (sub.label || '')) {
+                await fetch('/api/push/subscriptions/label', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    body: JSON.stringify({ endpoint, label: newLabel }),
+                });
+            }
+            // Save preferences
+            const res = await fetch('/api/push/subscriptions/preferences', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify(prefs),
+            });
+            if (res.ok) {
+                showToast('Subscription updated', 'success');
+                closeSubModal();
+                loadAllSubscriptions();
+                // Reload current device prefs if editing our own
+                if (currentSubscription && endpoint === currentSubscription.endpoint) {
+                    loadPreferences();
+                }
+            } else {
+                showToast('Failed to save', 'error');
+            }
+        } catch (e) {
+            showToast('Error: ' + e.message, 'error');
+        }
+    }
+
+    async function deleteSub(idx) {
+        const sub = allSubscriptions[idx];
+        if (!sub) return;
+        const label = sub.label || sub.provider;
+        if (!confirm('Delete subscription "' + label + '"? This device will no longer receive push notifications.')) return;
+
+        try {
+            const res = await fetch('/api/push/subscriptions/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                body: JSON.stringify({ endpoint: sub.endpoint }),
+            });
+            if (res.ok) {
+                // If deleting current device subscription, also unsubscribe locally
+                if (currentSubscription && sub.endpoint === currentSubscription.endpoint) {
+                    try { await currentSubscription.unsubscribe(); } catch(e) {}
+                    currentSubscription = null;
+                    updateUI();
+                }
+                showToast('Subscription deleted', 'success');
+                loadAllSubscriptions();
+            } else {
+                showToast('Failed to delete', 'error');
             }
         } catch (e) {
             showToast('Error: ' + e.message, 'error');
