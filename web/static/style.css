@@ -2077,6 +2077,14 @@ code {
     flex: 1;
 }
 
+.cmd-result-item .cmd-type {
+    font-size: 10px;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
 .cmd-result-item .cmd-shortcut {
     font-size: 11px;
     color: var(--text-muted);

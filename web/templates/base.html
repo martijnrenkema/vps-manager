@@ -509,6 +509,64 @@
             {label: 'Notifications', url: '/notifications', keywords: 'push alerts subscribe'},
             {label: 'Audit Log', url: '/audit', keywords: 'history actions log'},
             {label: 'Settings', url: '/settings', keywords: 'config password 2fa thresholds'},
+            // Actions
+            {label: 'Reboot Server', keywords: 'restart shutdown power', type: 'action', action: function() {
+                closeCmdPalette();
+                showConfirm('Server Reboot', 'Are you sure you want to reboot the VPS? All services will be temporarily unavailable.', function() { apiCall('/reboot', 'POST'); });
+            }},
+            {label: 'Renew All SSL', keywords: 'certificate https lets encrypt', type: 'action', action: function() {
+                closeCmdPalette();
+                showConfirm('SSL Renewal', 'Force renew all certificates?', async function() {
+                    var data = await apiCall('/ssl/renew', 'POST', {});
+                    if (data) showToast('SSL renewal started', 'success');
+                });
+            }},
+            {label: 'Validate Nginx Config', keywords: 'test nginx configuration check', type: 'action', action: async function() {
+                closeCmdPalette();
+                var res = await fetch('/api/nginx/validate', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
+                var data = await res.json();
+                showToast(data.valid ? 'Nginx config OK' : 'Nginx config invalid', data.valid ? 'success' : 'error');
+            }},
+            {label: 'Check for Updates', keywords: 'upgrade version new release', type: 'action', action: async function() {
+                closeCmdPalette();
+                showToast('Checking for updates...', 'success');
+                var res = await fetch('/api/update/check');
+                var data = await res.json();
+                if (data.available) {
+                    showToast('Update available: ' + data.latest, 'success');
+                    window.location.href = '/updates';
+                } else {
+                    showToast('Already up to date', 'success');
+                }
+            }},
+            {label: 'Restart Nginx', keywords: 'reload web server', type: 'action', action: function() {
+                closeCmdPalette();
+                showConfirm('Restart Nginx', 'Restart the Nginx web server?', function() { apiCall('/services/restart/nginx', 'POST'); });
+            }},
+            {label: 'Restart PHP-FPM', keywords: 'php fpm reload', type: 'action', action: function() {
+                closeCmdPalette();
+                showConfirm('Restart PHP-FPM', 'Restart PHP-FPM? This may briefly interrupt PHP sites.', function() { apiCall('/services/restart/php8.3-fpm', 'POST'); });
+            }},
+            {label: 'Restart MariaDB', keywords: 'mysql database reload', type: 'action', action: function() {
+                closeCmdPalette();
+                showConfirm('Restart MariaDB', 'Restart the MariaDB database server?', function() { apiCall('/services/restart/mariadb', 'POST'); });
+            }},
+            {label: 'Clear Audit Log', keywords: 'delete history wipe', type: 'action', action: function() {
+                closeCmdPalette();
+                showConfirm('Clear Audit Log', 'Delete all audit log entries?', function() { apiCall('/api/audit/clear', 'POST'); });
+            }},
+            {label: 'Test Push Notification', keywords: 'notify alert test', type: 'action', action: async function() {
+                closeCmdPalette();
+                await fetch('/api/push/test', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
+                showToast('Test notification sent', 'success');
+            }},
+            {label: 'Detect Services', keywords: 'discover scan systemd', type: 'action', action: function() {
+                closeCmdPalette();
+                window.location.href = '/settings';
+            }},
+            {label: 'Logout', keywords: 'sign out exit session', type: 'action', action: function() {
+                window.location.href = '/logout';
+            }},
         ];
         let cmdSelectedIdx = 0;
         let cmdFiltered = [];
@@ -541,13 +599,18 @@
             container.innerHTML = cmdFiltered.map((p, i) =>
                 `<div class="cmd-result-item${i === cmdSelectedIdx ? ' selected' : ''}" onmouseenter="cmdSelectedIdx=${i};renderCmdResults()" onclick="navigateCmd(${i})">
                     <span class="cmd-label">${p.label}</span>
+                    ${p.type === 'action' ? '<span class="cmd-type">Action</span>' : '<span class="cmd-type" style="opacity:0.4">Page</span>'}
                 </div>`
             ).join('');
         }
 
         function navigateCmd(idx) {
-            if (cmdFiltered[idx]) {
-                window.location.href = cmdFiltered[idx].url;
+            var item = cmdFiltered[idx];
+            if (!item) return;
+            if (item.action) {
+                item.action();
+            } else if (item.url) {
+                window.location.href = item.url;
             }
         }
 
