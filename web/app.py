@@ -34,6 +34,7 @@ from flask_wtf.csrf import CSRFProtect
 from pywebpush import webpush, WebPushException
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
+import urllib.request
 import base64
 
 try:
@@ -463,6 +464,12 @@ def _monitor_loop():
                 collect_metrics()
             except Exception as e:
                 logger.warning(f"Metrics collection error: {e}")
+
+            # Check uptime for all sites and save history
+            try:
+                check_uptime_all()
+            except Exception as e:
+                logger.warning(f"Uptime check error: {e}")
 
             subs = _load_subscriptions()
             if not subs:
@@ -1838,6 +1845,17 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         elif days < ssl_warning:
             alerts.append({'severity': 'warning', 'message': f"SSL certificate '{domain}' expires in {days} days", 'link': '/ssl', 'key': f"ssl_warning_{domain}"})
 
+    # Uptime: check for sites that are down
+    try:
+        uptime_history = json.loads(UPTIME_HISTORY_PATH.read_text()) if UPTIME_HISTORY_PATH.exists() else {}
+        for domain, entries in uptime_history.items():
+            if entries:
+                last = entries[-1]
+                if last.get('status', 0) == 0 or last.get('status', 200) >= 500:
+                    alerts.append({'severity': 'error', 'message': f"Site '{domain}' is down", 'link': '/uptime', 'key': f"site_down_{domain}"})
+    except (json.JSONDecodeError, OSError):
+        pass
+
     # Quick updates check (fast, cached by apt)
     updates = get_system_updates()
     installable = [u for u in updates if u['category'] in ('security', 'regular')]
@@ -1957,6 +1975,234 @@ def get_ddos_stats():
     return stats
 
 
+UPTIME_HISTORY_PATH = DATA_DIR / 'uptime_history.json'
+_uptime_lock = threading.Lock()
+
+
+@_ttl_cache(10)
+def get_system_processes():
+    """Get top 25 system processes sorted by memory usage"""
+    result = run_cmd("ps aux --sort=-%mem | head -26", timeout=10)
+    processes = []
+    total = 0
+    if result.returncode == 0:
+        lines = result.stdout.strip().split('\n')
+        for line in lines[1:]:  # skip header
+            parts = line.split(None, 10)
+            if len(parts) >= 11:
+                processes.append({
+                    'user': parts[0],
+                    'pid': parts[1],
+                    'cpu': float(parts[2]),
+                    'mem': float(parts[3]),
+                    'rss': int(parts[5]),
+                    'stat': parts[7],
+                    'start': parts[8],
+                    'time': parts[9],
+                    'command': parts[10],
+                })
+    count_result = run_cmd("ps aux | wc -l", timeout=5)
+    if count_result.returncode == 0:
+        try:
+            total = int(count_result.stdout.strip()) - 1
+        except ValueError:
+            pass
+    return {'processes': processes, 'total': total}
+
+
+@_ttl_cache(30)
+def get_network_info():
+    """Get network interfaces, listening ports, and connection count"""
+    interfaces = []
+    result = run_cmd("ip -j addr show", timeout=10)
+    if result.returncode == 0:
+        try:
+            ifaces = json.loads(result.stdout)
+            for iface in ifaces:
+                name = iface.get('ifname', '')
+                state = iface.get('operstate', 'UNKNOWN').lower()
+                mac = iface.get('address', '')
+                addrs = []
+                for addr_info in iface.get('addr_info', []):
+                    addrs.append(addr_info.get('local', ''))
+                interfaces.append({
+                    'name': name,
+                    'state': state,
+                    'mac': mac,
+                    'addresses': addrs,
+                    'ip': ', '.join(addrs) if addrs else '-',
+                })
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    ports = []
+    result = run_cmd("ss -tlnp", timeout=10)
+    if result.returncode == 0:
+        lines = result.stdout.strip().split('\n')
+        for line in lines[1:]:  # skip header
+            parts = line.split()
+            if len(parts) >= 5:
+                local = parts[3]
+                process = ''
+                if len(parts) >= 6:
+                    m = re.search(r'users:\(\("([^"]+)"', parts[5] if len(parts) > 5 else '')
+                    if m:
+                        process = m.group(1)
+                port = local.rsplit(':', 1)[-1] if ':' in local else local
+                ports.append({
+                    'local': local,
+                    'port': port,
+                    'state': parts[0],
+                    'process': process,
+                })
+
+    conn_count = 0
+    result = run_cmd("ss -t state established | wc -l", timeout=5)
+    if result.returncode == 0:
+        try:
+            conn_count = max(0, int(result.stdout.strip()) - 1)
+        except ValueError:
+            pass
+
+    return {'interfaces': interfaces, 'ports': ports, 'connections': conn_count}
+
+
+@_ttl_cache(30)
+def get_uptime_status():
+    """Check HTTP status for all nginx sites"""
+    sites = get_nginx_sites()
+    results = []
+    for site in sites:
+        domain = site['domains'][0] if site.get('domains') else None
+        if not domain:
+            continue
+        try:
+            req = urllib.request.Request(f"https://{domain}", method='HEAD')
+            start = time.time()
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                elapsed = (time.time() - start) * 1000
+                results.append({
+                    'domain': domain,
+                    'status_code': resp.status,
+                    'response_ms': round(elapsed),
+                    'is_up': True,
+                })
+        except Exception as e:
+            status = getattr(getattr(e, 'response', None), 'status', 0) or 0
+            results.append({
+                'domain': domain,
+                'status_code': status,
+                'response_ms': 0,
+                'is_up': False,
+            })
+    return results
+
+
+def check_uptime_all():
+    """Check uptime for all sites and save to history file"""
+    _invalidate_cache('get_uptime_status')
+    results = get_uptime_status()
+    now = datetime.now().isoformat()
+
+    with _uptime_lock:
+        try:
+            history = json.loads(UPTIME_HISTORY_PATH.read_text()) if UPTIME_HISTORY_PATH.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            history = {}
+
+        for r in results:
+            domain = r['domain']
+            entry = {'timestamp': now, 'status': r['status_code'], 'response_ms': r['response_ms']}
+            if domain not in history:
+                history[domain] = []
+            history[domain].append(entry)
+            # Keep max 288 entries (24h at 5-min interval)
+            history[domain] = history[domain][-288:]
+
+        UPTIME_HISTORY_PATH.write_text(json.dumps(history))
+
+    return results
+
+
+@_ttl_cache(120)
+def get_php_info():
+    """Get PHP versions, FPM pool status, and per-site PHP mapping"""
+    versions = []
+    result = run_cmd_safe(["ls", "/etc/php/"], timeout=5)
+    if result.returncode == 0:
+        ver_dirs = [v.strip() for v in result.stdout.strip().split('\n') if v.strip()]
+        for ver in sorted(ver_dirs, reverse=True):
+            if not re.match(r'^\d+\.\d+$', ver):
+                continue
+            fpm_result = run_cmd_safe(["systemctl", "is-active", f"php{ver}-fpm"], timeout=5)
+            fpm_status = fpm_result.stdout.strip() if fpm_result.returncode == 0 else 'not installed'
+
+            pool_config = {}
+            pool_path = f"/etc/php/{ver}/fpm/pool.d/www.conf"
+            pool_result = run_cmd_safe(["grep", "-E", "^(pm |pm\\.|memory_limit)", pool_path], timeout=5)
+            if pool_result.returncode == 0:
+                for line in pool_result.stdout.strip().split('\n'):
+                    if '=' in line:
+                        k, v = line.split('=', 1)
+                        pool_config[k.strip()] = v.strip()
+
+            versions.append({
+                'version': ver,
+                'fpm_status': fpm_status,
+                'pm': pool_config.get('pm', '-'),
+                'max_children': pool_config.get('pm.max_children', '-'),
+                'memory_limit': pool_config.get('memory_limit', '-'),
+            })
+
+    # Per-site PHP mapping from nginx configs
+    site_mapping = []
+    sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
+    result = run_cmd_safe(["grep", "-rl", "fastcgi_pass", sites_dir], timeout=5)
+    if result.returncode == 0:
+        for config_path in result.stdout.strip().split('\n'):
+            if not config_path.strip():
+                continue
+            config_name = os.path.basename(config_path.strip())
+            socket_result = run_cmd_safe(["grep", "-oP", r"fastcgi_pass unix:\K[^;]+", config_path.strip()], timeout=5)
+            socket_path = socket_result.stdout.strip() if socket_result.returncode == 0 else ''
+            # Extract PHP version from socket path (e.g. /run/php/php8.3-fpm.sock)
+            php_ver = '-'
+            m = re.search(r'php(\d+\.\d+)', socket_path)
+            if m:
+                php_ver = m.group(1)
+            site_mapping.append({
+                'config': config_name,
+                'php_version': php_ver,
+                'socket': socket_path,
+            })
+
+    return {'versions': versions, 'site_mapping': site_mapping}
+
+
+def get_dns_records(domain):
+    """Get DNS records for a specific domain"""
+    records = {}
+    for rtype in ('A', 'AAAA', 'MX', 'CNAME', 'TXT', 'NS'):
+        result = run_cmd_safe(["dig", "+short", rtype, domain], timeout=10)
+        if result.returncode == 0 and result.stdout.strip():
+            values = [v.strip() for v in result.stdout.strip().split('\n') if v.strip()]
+            if values:
+                records[rtype] = values
+    return records
+
+
+@_ttl_cache(120)
+def get_all_domains():
+    """Get all known domains from nginx sites"""
+    sites = get_nginx_sites()
+    domains = []
+    for site in sites:
+        for d in site.get('domains', []):
+            if d not in domains:
+                domains.append(d)
+    return domains
+
+
 def is_path_allowed(path):
     """Check if path is within allowed directories (whitelist approach)"""
     allowed = CONFIG.get('file_browser', {}).get('allowed_paths', ['/var/www'])
@@ -2004,6 +2250,27 @@ def dashboard():
 def websites():
     sites = get_nginx_sites()
     return render_template('websites.html', sites=sites)
+
+
+@app.route('/uptime')
+@login_required
+def uptime():
+    status = get_uptime_status()
+    total = len(status)
+    up_count = sum(1 for s in status if s['is_up'])
+    avg_response = round(sum(s['response_ms'] for s in status if s['is_up']) / up_count) if up_count else 0
+    return render_template('uptime.html', status=status, total=total, up_count=up_count, avg_response=avg_response)
+
+
+@app.route('/api/uptime/history')
+@login_required
+def uptime_history_api():
+    with _uptime_lock:
+        try:
+            history = json.loads(UPTIME_HISTORY_PATH.read_text()) if UPTIME_HISTORY_PATH.exists() else {}
+        except (json.JSONDecodeError, OSError):
+            history = {}
+    return jsonify(history)
 
 
 @app.route('/pm2')
@@ -2097,6 +2364,26 @@ def ssl_renew():
     return jsonify({'status': 'error', 'message': 'Renewal failed', 'output': output}), 500
 
 
+@app.route('/dns')
+@login_required
+def dns():
+    domains = get_all_domains()
+    return render_template('dns.html', domains=domains)
+
+
+@app.route('/api/dns/lookup')
+@login_required
+def dns_lookup():
+    domain = request.args.get('domain', '').strip()
+    if not domain or not is_safe_name(domain):
+        return jsonify({'status': 'error', 'message': 'Invalid domain'}), 400
+    known = get_all_domains()
+    if domain not in known:
+        return jsonify({'status': 'error', 'message': 'Domain not found'}), 404
+    records = get_dns_records(domain)
+    return jsonify({'status': 'ok', 'records': records})
+
+
 @app.route('/services')
 @login_required
 def services():
@@ -2117,6 +2404,42 @@ def service_action(action, name):
         _invalidate_cache('get_services_status')
         return jsonify({'status': 'ok', 'message': f"'{name}' {action} successful"})
     return jsonify({'status': 'error', 'message': f"Could not {action} '{name}': {result.stderr}"}), 500
+
+
+@app.route('/processes')
+@login_required
+def processes():
+    sort = request.args.get('sort', 'mem')
+    if sort not in ('mem', 'cpu'):
+        sort = 'mem'
+    data = get_system_processes()
+    proc_list = data['processes']
+    if sort == 'cpu':
+        proc_list = sorted(proc_list, key=lambda p: p['cpu'], reverse=True)
+    return render_template('processes.html', processes=proc_list, total=data['total'], sort=sort)
+
+
+@app.route('/processes/kill/<pid>', methods=['POST'])
+@login_required
+def process_kill(pid):
+    if not pid.isdigit():
+        return jsonify({'status': 'error', 'message': 'Invalid PID'}), 400
+    pid_int = int(pid)
+    if pid_int <= 1 or pid_int == os.getpid():
+        return jsonify({'status': 'error', 'message': 'Cannot kill this process'}), 403
+    result = run_cmd_safe(["kill", "-15", pid])
+    if result.returncode == 0:
+        log_audit('process_kill', {'pid': pid})
+        _invalidate_cache('get_system_processes')
+        return jsonify({'status': 'ok', 'message': f"Signal sent to PID {pid}"})
+    return jsonify({'status': 'error', 'message': f"Could not kill PID {pid}: {result.stderr}"}), 500
+
+
+@app.route('/network')
+@login_required
+def network():
+    data = get_network_info()
+    return render_template('network.html', interfaces=data['interfaces'], ports=data['ports'], connections=data['connections'])
 
 
 @app.route('/backup')
@@ -2802,6 +3125,26 @@ def api_nginx_log():
 def databases():
     db_list = get_database_info()
     return render_template('databases.html', databases=db_list, phpmyadmin_path=CONFIG.get('phpmyadmin_path', '/phpmyadmin/'))
+
+
+@app.route('/php')
+@login_required
+def php():
+    data = get_php_info()
+    return render_template('php.html', versions=data['versions'], site_mapping=data['site_mapping'])
+
+
+@app.route('/php/restart/<version>', methods=['POST'])
+@login_required
+def php_restart(version):
+    if not re.match(r'^\d+\.\d+$', version):
+        return jsonify({'status': 'error', 'message': 'Invalid PHP version'}), 400
+    result = run_cmd_safe(["sudo", "systemctl", "restart", f"php{version}-fpm"], timeout=30)
+    if result.returncode == 0:
+        log_audit('php_fpm_restart', {'version': version})
+        _invalidate_cache('get_php_info')
+        return jsonify({'status': 'ok', 'message': f"PHP {version}-FPM restarted"})
+    return jsonify({'status': 'error', 'message': f"Could not restart PHP {version}-FPM: {result.stderr}"}), 500
 
 
 @app.route('/cronjobs')

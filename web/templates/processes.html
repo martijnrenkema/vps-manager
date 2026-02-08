@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Processes - VPS Manager{% endblock %}
+{% block page_title %}Processes{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <div></div>
+    <div class="btn-group">
+        <a href="/processes?sort=mem" class="btn btn-sm {% if sort == 'mem' %}btn-green{% endif %}">Sort by Memory</a>
+        <a href="/processes?sort=cpu" class="btn btn-sm {% if sort == 'cpu' %}btn-green{% endif %}">Sort by CPU</a>
+        <a href="/processes?sort={{ sort }}" class="btn btn-sm">{{ icon('refresh') }} Refresh</a>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ icon('activity') }} System Processes <span class="badge" style="margin-left:auto">{{ total }} total</span></div>
+    <div class="card-body">
+        {% if processes %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>User</th>
+                        <th>PID</th>
+                        <th>CPU%</th>
+                        <th>MEM%</th>
+                        <th>RSS</th>
+                        <th>Command</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in processes %}
+                    <tr>
+                        <td><strong>{{ p.user }}</strong></td>
+                        <td><code>{{ p.pid }}</code></td>
+                        <td>
+                            {% if p.cpu > 50 %}
+                                <span class="badge badge-red">{{ p.cpu }}%</span>
+                            {% elif p.cpu > 25 %}
+                                <span class="badge badge-yellow">{{ p.cpu }}%</span>
+                            {% else %}
+                                <span style="color:var(--text-secondary)">{{ p.cpu }}%</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if p.mem > 50 %}
+                                <span class="badge badge-red">{{ p.mem }}%</span>
+                            {% elif p.mem > 25 %}
+                                <span class="badge badge-yellow">{{ p.mem }}%</span>
+                            {% else %}
+                                <span style="color:var(--text-secondary)">{{ p.mem }}%</span>
+                            {% endif %}
+                        </td>
+                        <td><span style="color:var(--text-secondary)">{{ (p.rss / 1024)|round(1) }} MB</span></td>
+                        <td><code style="color:var(--text-muted);max-width:400px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.command }}</code></td>
+                        <td>
+                            <button class="btn btn-sm btn-red" onclick="killProcess({{ p.pid|tojson }})">Kill</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve processes.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function killProcess(pid) {
+    showConfirm('Kill Process', 'Are you sure you want to kill PID ' + pid + '?', async function() {
+        await apiCall('/processes/kill/' + pid, 'POST');
+        setTimeout(function() { location.reload(); }, 1500);
+    });
+}
+</script>
+{% endblock %}

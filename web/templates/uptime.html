@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Uptime - VPS Manager{% endblock %}
+{% block page_title %}Uptime Monitoring{% endblock %}
+
+{% block head_extra %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="section-header">
+    <div></div>
+    <a href="/uptime" class="btn btn-sm btn-green">{{ icon('refresh') }} Refresh</a>
+</div>
+
+<div class="stats-grid">
+    <div class="stat-card" style="border-top-color:var(--green)">
+        <div class="label">Sites Up</div>
+        <div class="value">{{ up_count }} / {{ total }}</div>
+        <div class="sub">Currently responding</div>
+    </div>
+    <div class="stat-card" style="border-top-color:var(--accent)">
+        <div class="label">Avg Response</div>
+        <div class="value">{{ avg_response }} ms</div>
+        <div class="sub">Across all sites</div>
+    </div>
+    <div class="stat-card" style="border-top-color:{% if up_count == total %}var(--green){% else %}var(--red){% endif %}">
+        <div class="label">Status</div>
+        <div class="value">{% if up_count == total %}All Up{% else %}{{ total - up_count }} Down{% endif %}</div>
+        <div class="sub">{% if up_count == total %}All sites operational{% else %}Issues detected{% endif %}</div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:24px">
+    <div class="card-header">{{ icon('activity') }} Site Status</div>
+    <div class="card-body">
+        {% if status %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Domain</th>
+                        <th>Status</th>
+                        <th>HTTP Code</th>
+                        <th>Response Time</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in status %}
+                    <tr>
+                        <td><a href="https://{{ s.domain }}" target="_blank" style="color:var(--accent);text-decoration:none"><strong>{{ s.domain }}</strong></a></td>
+                        <td>
+                            {% if s.is_up %}
+                                <span class="badge badge-green"><span class="badge-dot green"></span>Up</span>
+                            {% else %}
+                                <span class="badge badge-red"><span class="badge-dot red"></span>Down</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if s.status_code >= 200 and s.status_code < 400 %}
+                                <span class="badge badge-green">{{ s.status_code }}</span>
+                            {% elif s.status_code >= 400 %}
+                                <span class="badge badge-yellow">{{ s.status_code }}</span>
+                            {% elif s.status_code == 0 %}
+                                <span style="color:var(--text-muted)">-</span>
+                            {% else %}
+                                <span class="badge badge-red">{{ s.status_code }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if s.is_up %}
+                                {% if s.response_ms > 1000 %}
+                                    <span class="badge badge-red">{{ s.response_ms }} ms</span>
+                                {% elif s.response_ms > 500 %}
+                                    <span class="badge badge-yellow">{{ s.response_ms }} ms</span>
+                                {% else %}
+                                    <span style="color:var(--green)">{{ s.response_ms }} ms</span>
+                                {% endif %}
+                            {% else %}
+                                <span style="color:var(--text-muted)">-</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">No sites to monitor.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ icon('bar-chart') }} Response Time History (24h)</div>
+    <div class="card-body">
+        <canvas id="responseChart" height="100"></canvas>
+        <div class="empty-state" id="noHistoryMsg" style="display:none">No history data yet. Data is collected every 5 minutes.</div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(async function() {
+    try {
+        const res = await fetch('/api/uptime/history');
+        const history = await res.json();
+        const domains = Object.keys(history);
+        if (!domains.length) {
+            document.getElementById('noHistoryMsg').style.display = 'block';
+            return;
+        }
+
+        const colors = ['#4f8ff7', '#34d399', '#f59e0b', '#ef4444', '#a78bfa', '#ec4899', '#06b6d4', '#f97316'];
+        const datasets = domains.map((domain, i) => {
+            const points = history[domain].map(p => ({
+                x: new Date(p.timestamp),
+                y: p.response_ms
+            }));
+            return {
+                label: domain,
+                data: points,
+                borderColor: colors[i % colors.length],
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                pointRadius: 0,
+                tension: 0.3,
+            };
+        });
+
+        new Chart(document.getElementById('responseChart'), {
+            type: 'line',
+            data: { datasets },
+            options: {
+                responsive: true,
+                interaction: { mode: 'index', intersect: false },
+                scales: {
+                    x: {
+                        type: 'time',
+                        time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
+                        grid: { color: 'rgba(255,255,255,0.06)' },
+                        ticks: { color: 'rgba(255,255,255,0.5)' },
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'ms', color: 'rgba(255,255,255,0.5)' },
+                        grid: { color: 'rgba(255,255,255,0.06)' },
+                        ticks: { color: 'rgba(255,255,255,0.5)' },
+                    }
+                },
+                plugins: {
+                    legend: { labels: { color: 'rgba(255,255,255,0.7)' } },
+                }
+            }
+        });
+    } catch (e) {
+        document.getElementById('noHistoryMsg').style.display = 'block';
+    }
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}PHP - VPS Manager{% endblock %}
+{% block page_title %}PHP Management{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom:24px">
+    <div class="card-header">{{ icon('package') }} PHP Versions</div>
+    <div class="card-body">
+        {% if versions %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>FPM Status</th>
+                        <th>Process Manager</th>
+                        <th>Max Children</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for v in versions %}
+                    <tr>
+                        <td><strong>PHP {{ v.version }}</strong></td>
+                        <td>
+                            {% if v.fpm_status == 'active' %}
+                                <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
+                            {% elif v.fpm_status == 'inactive' %}
+                                <span class="badge badge-yellow"><span class="badge-dot yellow"></span>inactive</span>
+                            {% else %}
+                                <span class="badge badge-red"><span class="badge-dot red"></span>{{ v.fpm_status }}</span>
+                            {% endif %}
+                        </td>
+                        <td><code>{{ v.pm }}</code></td>
+                        <td>{{ v.max_children }}</td>
+                        <td>
+                            <button class="btn btn-sm btn-yellow" onclick="restartPhp({{ v.version|tojson }})">Restart FPM</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">No PHP versions found.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ icon('link') }} Site PHP Mapping</div>
+    <div class="card-body">
+        {% if site_mapping %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Site Config</th>
+                        <th>PHP Version</th>
+                        <th>Socket Path</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for s in site_mapping %}
+                    <tr>
+                        <td><strong>{{ s.config }}</strong></td>
+                        <td><span class="badge badge-green">PHP {{ s.php_version }}</span></td>
+                        <td><code style="color:var(--text-muted)">{{ s.socket }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">No PHP-FPM sites found.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function restartPhp(version) {
+    showConfirm('Restart PHP-FPM', 'Restart PHP ' + version + '-FPM? This may briefly interrupt PHP sites.', async function() {
+        await apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
+        setTimeout(function() { location.reload(); }, 2000);
+    });
+}
+</script>
+{% endblock %}

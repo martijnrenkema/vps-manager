@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}DNS - VPS Manager{% endblock %}
+{% block page_title %}DNS Records{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">
+        {{ icon('globe') }} DNS Lookup
+        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+            <select id="domainSelect" class="form-control" style="width:auto;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border-color);padding:4px 8px;border-radius:6px;font-size:13px">
+                {% for d in domains %}
+                <option value="{{ d }}">{{ d }}</option>
+                {% endfor %}
+            </select>
+            <button class="btn btn-sm btn-green" onclick="lookupDns()">{{ icon('refresh') }} Lookup</button>
+        </div>
+    </div>
+    <div class="card-body">
+        <div id="dnsResults">
+            <div class="empty-state">Select a domain and click Lookup to view DNS records.</div>
+        </div>
+        <div id="dnsLoading" style="display:none">
+            <div class="empty-state">Loading DNS records...</div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function lookupDns() {
+    const domain = document.getElementById('domainSelect').value;
+    const results = document.getElementById('dnsResults');
+    const loading = document.getElementById('dnsLoading');
+
+    results.style.display = 'none';
+    loading.style.display = 'block';
+
+    try {
+        const res = await fetch('/api/dns/lookup?domain=' + encodeURIComponent(domain));
+        const data = await res.json();
+        loading.style.display = 'none';
+        results.style.display = 'block';
+
+        if (data.status !== 'ok' || !data.records || !Object.keys(data.records).length) {
+            results.innerHTML = '<div class="empty-state">No DNS records found for ' + escHtml(domain) + '</div>';
+            return;
+        }
+
+        let html = '<div class="table-wrap"><table><thead><tr><th>Type</th><th>Value</th></tr></thead><tbody>';
+        const typeOrder = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'];
+        const typeColors = { A: 'badge-green', AAAA: 'badge-green', CNAME: 'badge-yellow', MX: 'badge-yellow', TXT: '', NS: '' };
+
+        for (const rtype of typeOrder) {
+            if (!data.records[rtype]) continue;
+            for (const val of data.records[rtype]) {
+                const badgeClass = typeColors[rtype] || '';
+                html += '<tr><td><span class="badge ' + badgeClass + '">' + escHtml(rtype) + '</span></td>';
+                html += '<td><code style="color:var(--text-secondary);word-break:break-all">' + escHtml(val) + '</code></td></tr>';
+            }
+        }
+        html += '</tbody></table></div>';
+        results.innerHTML = html;
+    } catch (e) {
+        loading.style.display = 'none';
+        results.style.display = 'block';
+        results.innerHTML = '<div class="empty-state">Failed to load DNS records.</div>';
+    }
+}
+
+// Auto-lookup first domain on page load
+if (document.getElementById('domainSelect').options.length > 0) {
+    lookupDns();
+}
+</script>
+{% endblock %}

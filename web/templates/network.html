@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Network - VPS Manager{% endblock %}
+{% block page_title %}Network{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card" style="border-top-color:var(--accent)">
+        <div class="label">Active Connections</div>
+        <div class="value">{{ connections }}</div>
+        <div class="sub">Established TCP</div>
+    </div>
+    <div class="stat-card" style="border-top-color:var(--green)">
+        <div class="label">Interfaces</div>
+        <div class="value">{{ interfaces|length }}</div>
+        <div class="sub">Network interfaces</div>
+    </div>
+    <div class="stat-card" style="border-top-color:var(--purple)">
+        <div class="label">Listening Ports</div>
+        <div class="value">{{ ports|length }}</div>
+        <div class="sub">Open ports</div>
+    </div>
+</div>
+
+<div class="card" style="margin-bottom:24px">
+    <div class="card-header">{{ icon('globe') }} Network Interfaces</div>
+    <div class="card-body">
+        {% if interfaces %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Interface</th>
+                        <th>IP Address</th>
+                        <th>Status</th>
+                        <th>MAC</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for iface in interfaces %}
+                    <tr>
+                        <td><strong>{{ iface.name }}</strong></td>
+                        <td><code>{{ iface.ip }}</code></td>
+                        <td>
+                            {% if iface.state == 'up' %}
+                                <span class="badge badge-green"><span class="badge-dot green"></span>up</span>
+                            {% else %}
+                                <span class="badge badge-red"><span class="badge-dot red"></span>{{ iface.state }}</span>
+                            {% endif %}
+                        </td>
+                        <td><code style="color:var(--text-muted)">{{ iface.mac }}</code></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve network interfaces.</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">{{ icon('server') }} Listening Ports</div>
+    <div class="card-body">
+        {% if ports %}
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Port</th>
+                        <th>Address</th>
+                        <th>Process</th>
+                        <th>State</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in ports %}
+                    <tr>
+                        <td><strong>{{ p.port }}</strong></td>
+                        <td><code style="color:var(--text-muted)">{{ p.local }}</code></td>
+                        <td>{{ p.process or '-' }}</td>
+                        <td><span class="badge badge-green">LISTEN</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">Unable to retrieve listening ports.</div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
