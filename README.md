@@ -12,21 +12,27 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 ## Features
 
 - **Server Overview** - CPU, RAM, disk, swap, load average, uptime with metrics charts
-- **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with auto-restart
 - **Website Management** - All hosted sites with HTTP status checks
-- **SSL Certificates** - Expiry dates, warnings, and auto-renewal status
+- **Uptime Monitoring** - HTTP health checks for all sites, response time history chart (24h), dashboard alerts on downtime
 - **PM2 Processes** - Node.js process management (restart, stop, logs)
-- **Auto-Update** - Check GitHub releases, one-click self-update with git pull + PM2 restart
-- **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
+- **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
+- **Nginx Config Editor** - Edit, enable/disable site configs with built-in `nginx -t` validation
+- **SSL Certificates** - Expiry dates, warnings, and auto-renewal status
+- **DNS Record Viewer** - Per-domain DNS lookup (A, AAAA, MX, CNAME, TXT, NS records)
+- **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with restart/stop/start
+- **Process Manager** - Top 25 processes sorted by memory or CPU, kill functionality
+- **Network Overview** - Network interfaces, listening ports, active connection count
+- **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
+- **PHP Management** - Installed PHP versions, FPM pool status, per-site PHP mapping, FPM restart
+- **Cronjob Editor** - Full CRUD for user and root crontabs with schedule validation, human-readable descriptions
+- **Disk Usage** - Per-site disk usage breakdown
+- **File Browser & Editor** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown), in-browser file editing
 - **Firewall & Security** - UFW rules, Fail2ban config, IP banning/unbanning, ban duration tracking, whitelist management
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
-- **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
-- **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
-- **File Browser & Editor** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown), in-browser file editing
-- **Web Terminal** - Browser-based command execution
-- **Cronjob Editor** - Full CRUD for user and root crontabs with schedule validation, human-readable descriptions
-- **Nginx Config Editor** - Edit, enable/disable site configs with built-in `nginx -t` validation
 - **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
+- **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
+- **Auto-Update** - Check GitHub releases, one-click self-update with git pull + PM2 restart
+- **Web Terminal** - Browser-based command execution
 - **Push Notifications** - Web Push alerts for critical events, configurable categories, deduplication
 - **Audit Log** - Full audit trail for all actions with user, IP, and timestamp
 - **2FA Authentication** - TOTP two-factor auth with QR code setup
@@ -90,20 +96,25 @@ web/
     ├── base.html        # Layout with sidebar navigation
     ├── login.html       # Login + 2FA
     ├── dashboard.html   # Server overview with metrics charts
-    ├── services.html    # Service monitoring
     ├── websites.html    # Hosted sites
-    ├── ssl.html         # SSL certificates
+    ├── uptime.html      # Uptime monitoring with response chart
     ├── pm2.html         # PM2 processes
-    ├── updates.html     # System + app updates
-    ├── firewall.html    # Firewall, banning & whitelist
     ├── nginx_logs.html  # Log viewer
     ├── nginx_config.html # Nginx site config editor
+    ├── ssl.html         # SSL certificates
+    ├── dns.html         # DNS record viewer
+    ├── services.html    # Service monitoring
+    ├── processes.html   # System process manager
+    ├── network.html     # Network interfaces & ports
     ├── databases.html   # MariaDB databases
-    ├── files.html       # File browser, editor & permissions
-    ├── terminal.html    # Web terminal
+    ├── php.html         # PHP version & FPM management
     ├── cronjobs.html    # Cronjob CRUD editor & timers
     ├── disk.html        # Disk usage
+    ├── files.html       # File browser, editor & permissions
+    ├── firewall.html    # Firewall, banning & whitelist
     ├── backup.html      # Backup status & downloads
+    ├── updates.html     # System + app updates
+    ├── terminal.html    # Web terminal
     ├── notifications.html # Push notification settings
     ├── audit.html       # Audit log viewer
     ├── settings.html    # Configuration panel
@@ -142,7 +153,7 @@ Web Push notifications with configurable categories:
 
 | Category | Default | Triggers |
 |----------|---------|----------|
-| Critical Errors | On | Services down, disk >95%, SSL expired |
+| Critical Errors | On | Site down, services down, disk >95%, SSL expired |
 | Warnings | On | Disk >80%, RAM >85%, high load |
 | Security | On | Fail2ban bans, suspicious SSH activity |
 | DDoS Detection | On | High connections, SYN floods |
