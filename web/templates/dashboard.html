@@ -54,7 +54,7 @@
             <div class="sub">{{ data.cpu_model }} ({{ data.cpu_cores }} cores)</div>
         </div>
         <div class="stat-card" style="border-top-color:var(--purple)">
-            <div class="label">Load Average</div>
+            <div class="label">Load Average <span class="tooltip-icon" data-bs-toggle="tooltip" title="The average number of processes waiting to run. Values below your CPU core count (e.g. 4) are normal." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
             <div class="value" style="font-size:18px">{{ data.load }}</div>
             <div class="sub">1 / 5 / 15 min</div>
         </div>
@@ -82,7 +82,7 @@
             </div>
         </div>
         <div class="stat-card">
-            <div class="label">Swap</div>
+            <div class="label">Swap <span class="tooltip-icon" data-bs-toggle="tooltip" title="Virtual memory on disk, used when RAM is full. High swap usage may indicate insufficient RAM." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
             <div class="value">{{ data.swap_pct }}%</div>
             <div class="sub">{{ data.swap }}</div>
             <div class="progress-wrap">
@@ -119,7 +119,7 @@
             </div>
         </div>
         <div class="chart-card">
-            <div class="chart-title">Network I/O</div>
+            <div class="chart-title">Network I/O <span class="tooltip-icon" data-bs-toggle="tooltip" title="Incoming (RX) and outgoing (TX) network traffic in bytes per second." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
             <div class="chart-value" id="chartNetValue">--</div>
             <div class="chart-wrap">
                 <canvas id="chartNet"></canvas>
@@ -129,17 +129,17 @@
     </div>
 
     <div class="quick-status">
-        <div class="quick-item">
+        <a href="{{ url_for('services') }}" class="quick-item" style="text-decoration:none;color:inherit">
             {% set active_count = services|selectattr('status', 'equalto', 'active')|list|length %}
             <div class="qi-value" style="color:{% if active_count == services|length %}var(--green){% else %}var(--yellow){% endif %}">{{ active_count }}/{{ services|length }}</div>
             <div class="qi-label">Services active</div>
-        </div>
-        <div class="quick-item">
+        </a>
+        <a href="{{ url_for('pm2') }}" class="quick-item" style="text-decoration:none;color:inherit">
             {% set online_count = pm2|selectattr('status', 'equalto', 'online')|list|length %}
             <div class="qi-value" style="color:{% if online_count == pm2|length %}var(--green){% else %}var(--yellow){% endif %}">{{ online_count }}/{{ pm2|length }}</div>
             <div class="qi-label">PM2 online</div>
-        </div>
-        <div class="quick-item">
+        </a>
+        <a href="{{ url_for('ssl') }}" class="quick-item" style="text-decoration:none;color:inherit">
             {% if ssl %}
                 {% set min_days = ssl|map(attribute='days_left')|min %}
                 <div class="qi-value" style="color:{% if min_days > 30 %}var(--green){% elif min_days > 7 %}var(--yellow){% else %}var(--red){% endif %}">{{ min_days }}d</div>
@@ -148,16 +148,16 @@
                 <div class="qi-value" style="color:var(--text-muted)">?</div>
                 <div class="qi-label">SSL status</div>
             {% endif %}
-        </div>
+        </a>
     </div>
 
     <div class="grid-2col">
-        <a href="{{ url_for('services') }}" class="card card-link">
-            <div class="card-header">{{ icon('activity') }} Services</div>
+        <div class="card">
+            <div class="card-header"><a href="{{ url_for('services') }}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px">{{ icon('activity') }} Services</a></div>
             <div class="card-body">
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Service</th><th>Status</th></tr></thead>
+                        <thead><tr><th>Service</th><th>Status</th><th style="width:70px"></th></tr></thead>
                         <tbody>
                             {% for svc in services %}
                             <tr>
@@ -169,19 +169,20 @@
                                         <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
                                     {% endif %}
                                 </td>
+                                <td><button class="btn btn-sm" onclick="dashServiceRestart({{ svc.name|tojson }}, this)">Restart</button></td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
             </div>
-        </a>
-        <a href="{{ url_for('pm2') }}" class="card card-link">
-            <div class="card-header">{{ icon('settings') }} PM2 Processes</div>
+        </div>
+        <div class="card">
+            <div class="card-header"><a href="{{ url_for('pm2') }}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px">{{ icon('settings') }} PM2 Processes</a></div>
             <div class="card-body">
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Process</th><th>Status</th><th>Memory</th></tr></thead>
+                        <thead><tr><th>Process</th><th>Status</th><th>Memory</th><th style="width:70px"></th></tr></thead>
                         <tbody>
                             {% for p in pm2 %}
                             <tr>
@@ -196,13 +197,14 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ p.memory }} MB</td>
+                                <td><button class="btn btn-sm" onclick="pm2Action('restart', {{ p.name|tojson }}, this)">Restart</button></td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
             </div>
-        </a>
+        </div>
     </div>
 
     <div style="margin-top:32px;text-align:right">
@@ -381,38 +383,34 @@ if (typeof Chart !== 'undefined') {
 }
 
 // Alert dismiss logic
-function getDismissedAlerts() {
-    try {
-        return JSON.parse(sessionStorage.getItem('dismissedAlerts') || '[]');
-    } catch { return []; }
-}
-
 function dismissAlert(btn) {
     const item = btn.closest('.alert-item');
     const key = item.dataset.alertKey;
-    // Save to sessionStorage
-    const dismissed = getDismissedAlerts();
-    if (!dismissed.includes(key)) dismissed.push(key);
-    sessionStorage.setItem('dismissedAlerts', JSON.stringify(dismissed));
+    // Persist dismiss via API
+    fetch('/api/alerts/dismiss', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        body: JSON.stringify({key: key}),
+    }).catch(function() {});
     // Animate out
     item.style.transition = 'opacity 0.2s, max-height 0.3s';
     item.style.opacity = '0';
     item.style.maxHeight = item.offsetHeight + 'px';
-    setTimeout(() => {
+    setTimeout(function() {
         item.style.maxHeight = '0';
         item.style.padding = '0 16px';
         item.style.borderBottom = 'none';
     }, 150);
-    setTimeout(() => {
+    setTimeout(function() {
         item.remove();
         updateAlertsBadge();
     }, 400);
 }
 
 function updateAlertsBadge() {
-    const remaining = document.querySelectorAll('#alertsList .alert-item');
-    const badge = document.getElementById('alertsBadge');
-    const card = document.getElementById('alertsCard');
+    var remaining = document.querySelectorAll('#alertsList .alert-item');
+    var badge = document.getElementById('alertsBadge');
+    var card = document.getElementById('alertsCard');
     if (remaining.length === 0) {
         card.style.display = 'none';
     } else {
@@ -420,16 +418,15 @@ function updateAlertsBadge() {
     }
 }
 
-// Hide previously dismissed alerts on load
-(function() {
-    const dismissed = getDismissedAlerts();
-    if (!dismissed.length) return;
-    document.querySelectorAll('#alertsList .alert-item').forEach(item => {
-        if (dismissed.includes(item.dataset.alertKey)) {
-            item.remove();
-        }
-    });
-    updateAlertsBadge();
-})();
+// Dashboard service restart
+async function dashServiceRestart(name, btn) {
+    var data = await apiCall('/service/' + encodeURIComponent(name) + '/restart', 'POST');
+    if (!data) return;
+    var row = btn.closest('tr');
+    if (row) {
+        var statusCell = row.querySelector('td:nth-child(2)');
+        if (statusCell) statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
+    }
+}
 </script>
 {% endblock %}

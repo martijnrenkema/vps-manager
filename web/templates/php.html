@@ -5,7 +5,7 @@
 
 {% block content %}
 <div class="card" style="margin-bottom:24px">
-    <div class="card-header">{{ icon('package') }} PHP Versions</div>
+    <div class="card-header">{{ icon('package') }} PHP Versions <span class="tooltip-icon" data-bs-toggle="tooltip" title="Installed PHP-FPM versions and their status. FPM (FastCGI Process Manager) handles PHP requests for your websites.">?</span></div>
     <div class="card-body">
         {% if versions %}
         <div class="table-wrap">
@@ -35,7 +35,7 @@
                         <td><code>{{ v.pm }}</code></td>
                         <td>{{ v.max_children }}</td>
                         <td>
-                            <button class="btn btn-sm btn-yellow" onclick="restartPhp({{ v.version|tojson }})">Restart FPM</button>
+                            <button class="btn btn-sm btn-yellow" onclick="restartPhp({{ v.version|tojson }}, this)">Restart FPM</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -49,7 +49,7 @@
 </div>
 
 <div class="card">
-    <div class="card-header">{{ icon('link') }} Site PHP Mapping</div>
+    <div class="card-header">{{ icon('link') }} Site PHP Mapping <span class="tooltip-icon" data-bs-toggle="tooltip" title="Which PHP version each website uses, configured via the Nginx socket path.">?</span></div>
     <div class="card-body">
         {% if site_mapping %}
         <div class="table-wrap">
@@ -81,10 +81,15 @@
 
 {% block scripts %}
 <script>
-async function restartPhp(version) {
+async function restartPhp(version, btn) {
     showConfirm('Restart PHP-FPM', 'Restart PHP ' + version + '-FPM? This may briefly interrupt PHP sites.', async function() {
-        await apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
-        setTimeout(function() { location.reload(); }, 2000);
+        var data = await apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
+        if (!data) return;
+        var row = btn ? btn.closest('tr') : null;
+        if (row) {
+            var statusCell = row.querySelector('td:nth-child(2)');
+            if (statusCell) statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
+        }
     });
 }
 </script>

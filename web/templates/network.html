@@ -23,15 +23,15 @@
 </div>
 
 <div class="card" style="margin-bottom:24px">
-    <div class="card-header">{{ icon('globe') }} Network Interfaces</div>
+    <div class="card-header">{{ icon('globe') }} Network Interfaces <span class="tooltip-icon" data-bs-toggle="tooltip" title="Physical and virtual network adapters on the server with their IP addresses and traffic statistics.">?</span></div>
     <div class="card-body">
         {% if interfaces %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Interface</th>
-                        <th>IP Address</th>
+                        <th>IP</th>
                         <th>Status</th>
                         <th>MAC</th>
                     </tr>
@@ -39,16 +39,16 @@
                 <tbody>
                     {% for iface in interfaces %}
                     <tr>
-                        <td><strong>{{ iface.name }}</strong></td>
-                        <td><code>{{ iface.ip }}</code></td>
-                        <td>
+                        <td data-label="Interface"><strong>{{ iface.name }}</strong></td>
+                        <td data-label="IP Address"><code>{{ iface.ip }}</code></td>
+                        <td data-label="Status">
                             {% if iface.state == 'up' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>up</span>
                             {% else %}
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ iface.state }}</span>
                             {% endif %}
                         </td>
-                        <td><code style="color:var(--text-muted)">{{ iface.mac }}</code></td>
+                        <td data-label="MAC"><code style="color:var(--text-muted)">{{ iface.mac }}</code></td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -61,11 +61,11 @@
 </div>
 
 <div class="card">
-    <div class="card-header">{{ icon('server') }} Listening Ports</div>
+    <div class="card-header">{{ icon('server') }} Listening Ports <span class="tooltip-icon" data-bs-toggle="tooltip" title="Services currently accepting network connections. Shows which process owns each port.">?</span></div>
     <div class="card-body">
         {% if ports %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Port</th>
@@ -77,10 +77,10 @@
                 <tbody>
                     {% for p in ports %}
                     <tr>
-                        <td><strong>{{ p.port }}</strong></td>
-                        <td><code style="color:var(--text-muted)">{{ p.local }}</code></td>
-                        <td>{{ p.process or '-' }}</td>
-                        <td><span class="badge badge-green">LISTEN</span></td>
+                        <td data-label="Port"><strong>{{ p.port }}</strong></td>
+                        <td data-label="Address"><code style="color:var(--text-muted)">{{ p.local }}</code></td>
+                        <td data-label="Process">{{ p.process or '-' }}</td>
+                        <td data-label="State"><span class="badge badge-green">LISTEN</span></td>
                     </tr>
                     {% endfor %}
                 </tbody>

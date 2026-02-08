@@ -93,7 +93,7 @@
 
 {% if data.access_summary %}
 <div class="card">
-    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">nginx</span></div>
+    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span class="tooltip-icon" data-bs-toggle="tooltip" title="HTTP status codes: 2xx = success, 3xx = redirect, 4xx = client error (e.g. 404 not found), 5xx = server error." style="margin-left:0">?</span> <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">nginx</span></div>
     <div class="card-body">
         <div class="table-wrap">
             <table>

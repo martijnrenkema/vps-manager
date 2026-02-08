@@ -5,13 +5,14 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('activity') }} Service Status</div>
+    <div class="card-header">{{ icon('activity') }} Service Status <span class="tooltip-icon" data-bs-toggle="tooltip" title="System services managed by systemd. Services marked 'active' are currently running.">?</span></div>
     <div class="card-body">
         {% if services %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
+                        <th style="width:32px"><input type="checkbox" class="bulk-check" onchange="toggleSelectAll(this, 'svc')"></th>
                         <th>Service</th>
                         <th>Status</th>
                         <th>Uptime</th>
@@ -21,8 +22,9 @@
                 <tbody>
                     {% for svc in services %}
                     <tr>
-                        <td><strong>{{ svc.name }}</strong></td>
-                        <td>
+                        <td><input type="checkbox" class="bulk-check" data-name="{{ svc.name }}" data-group="svc" onchange="updateBulkBar('svc')"></td>
+                        <td data-label="Service"><strong>{{ svc.name }}</strong></td>
+                        <td data-label="Status">
                             {% if svc.status == 'active' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                             {% elif svc.status == 'inactive' %}
@@ -31,14 +33,14 @@
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
                             {% endif %}
                         </td>
-                        <td><span style="color:var(--text-secondary)">{{ svc.uptime or '-' }}</span></td>
-                        <td>
+                        <td data-label="Uptime"><span style="color:var(--text-secondary)">{{ svc.uptime or '-' }}</span></td>
+                        <td data-label="Actions">
                             <div class="btn-group">
-                                <button class="btn btn-sm btn-yellow" onclick="serviceAction('restart', {{ svc.name | tojson | forceescape }})">Restart</button>
+                                <button class="btn btn-sm btn-yellow" onclick="serviceAction('restart', {{ svc.name | tojson | forceescape }}, this)">Restart</button>
                                 {% if svc.status == 'active' %}
-                                    <button class="btn btn-sm btn-red" onclick="serviceAction('stop', {{ svc.name | tojson | forceescape }})">Stop</button>
+                                    <button class="btn btn-sm btn-red" onclick="serviceAction('stop', {{ svc.name | tojson | forceescape }}, this)">Stop</button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-green" onclick="serviceAction('start', {{ svc.name | tojson | forceescape }})">Start</button>
+                                    <button class="btn btn-sm btn-green" onclick="serviceAction('start', {{ svc.name | tojson | forceescape }}, this)">Start</button>
                                 {% endif %}
                             </div>
                         </td>
@@ -46,6 +48,12 @@
                     {% endfor %}
                 </tbody>
             </table>
+        </div>
+        <div class="bulk-bar" id="svcBulkBar" style="display:none">
+            <span id="svcBulkCount">0 selected</span>
+            <div class="btn-group">
+                <button class="btn btn-sm btn-yellow" onclick="bulkServiceAction('restart')">Restart All</button>
+            </div>
         </div>
         {% else %}
         <div class="empty-state">Unable to retrieve services.</div>
@@ -56,9 +64,52 @@
 
 {% block scripts %}
 <script>
-async function serviceAction(action, name) {
-    await apiCall('/services/' + action + '/' + encodeURIComponent(name), 'POST');
-    setTimeout(function() { location.reload(); }, 2000);
+async function serviceAction(action, name, btn) {
+    const data = await apiCall('/services/' + action + '/' + encodeURIComponent(name), 'POST');
+    if (!data) return;
+    const row = btn ? btn.closest('tr') : null;
+    if (row) {
+        const statusCell = row.querySelector('td[data-label="Status"]');
+        if (statusCell) {
+            const newStatus = (action === 'stop') ? 'inactive' : 'active';
+            if (newStatus === 'active') {
+                statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
+            } else {
+                statusCell.innerHTML = '<span class="badge badge-yellow"><span class="badge-dot yellow"></span>inactive</span>';
+            }
+        }
+    }
+}
+
+function toggleSelectAll(masterCb, group) {
+    var cbs = document.querySelectorAll('input.bulk-check[data-group="' + group + '"]');
+    cbs.forEach(function(cb) { cb.checked = masterCb.checked; });
+    updateBulkBar(group);
+}
+
+function updateBulkBar(group) {
+    var cbs = document.querySelectorAll('input.bulk-check[data-group="' + group + '"]:checked');
+    var bar = document.getElementById(group + 'BulkBar');
+    var count = document.getElementById(group + 'BulkCount');
+    if (cbs.length > 0) {
+        bar.style.display = 'flex';
+        count.textContent = cbs.length + ' selected';
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function bulkServiceAction(action) {
+    var cbs = document.querySelectorAll('input.bulk-check[data-group="svc"]:checked');
+    if (!cbs.length) return;
+    var names = Array.from(cbs).map(function(cb) { return cb.dataset.name; });
+    showConfirm('Bulk ' + action, action.charAt(0).toUpperCase() + action.slice(1) + ' ' + names.length + ' services?', async function() {
+        for (var i = 0; i < names.length; i++) {
+            await apiCall('/services/' + action + '/' + encodeURIComponent(names[i]), 'POST');
+        }
+        showToast(names.length + ' services ' + action + 'ed', 'success');
+        setTimeout(function() { location.reload(); }, 1000);
+    });
 }
 </script>
 {% endblock %}

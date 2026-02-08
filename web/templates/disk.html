@@ -5,7 +5,7 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('hard-drive') }} Disk usage /var/www</div>
+    <div class="card-header">{{ icon('hard-drive') }} Disk usage /var/www <span class="tooltip-icon" data-bs-toggle="tooltip" title="Disk space used by each site directory under /var/www. Color indicates relative size.">?</span></div>
     <div class="card-body">
         {% if sites %}
         <div class="table-wrap">

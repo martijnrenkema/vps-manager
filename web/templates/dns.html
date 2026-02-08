@@ -7,6 +7,7 @@
 <div class="card">
     <div class="card-header">
         {{ icon('globe') }} DNS Lookup
+        <span class="tooltip-icon" data-bs-toggle="tooltip" title="Query DNS records for any domain. A/AAAA = IP address, MX = mail server, CNAME = alias, TXT = verification records." style="margin-left:0">?</span>
         <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
             <select id="domainSelect" class="form-control" style="width:auto;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border-color);padding:4px 8px;border-radius:6px;font-size:13px">
                 {% for d in domains %}

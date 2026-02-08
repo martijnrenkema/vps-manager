@@ -5,13 +5,14 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('settings') }} PM2 Process Management</div>
+    <div class="card-header">{{ icon('settings') }} PM2 Process Management <span class="tooltip-icon" data-bs-toggle="tooltip" title="PM2 is a process manager for Node.js applications. It keeps your apps running and restarts them if they crash.">?</span></div>
     <div class="card-body">
         {% if processes %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
+                        <th style="width:32px"><input type="checkbox" class="bulk-check" onchange="toggleSelectAll(this, 'pm2')"></th>
                         <th>ID</th>
                         <th>Process</th>
                         <th>Status</th>
@@ -25,9 +26,10 @@
                 <tbody>
                     {% for p in processes %}
                     <tr>
-                        <td>{{ p.pm_id }}</td>
-                        <td><strong>{{ p.name }}</strong></td>
-                        <td>
+                        <td><input type="checkbox" class="bulk-check" data-name="{{ p.name }}" data-group="pm2" onchange="updateBulkBar('pm2')"></td>
+                        <td data-label="ID">{{ p.pm_id }}</td>
+                        <td data-label="Process"><strong>{{ p.name }}</strong></td>
+                        <td data-label="Status">
                             {% if p.status == 'online' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>online</span>
                             {% elif p.status == 'stopped' %}
@@ -36,17 +38,17 @@
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ p.status }}</span>
                             {% endif %}
                         </td>
-                        <td>{{ p.cpu }}%</td>
-                        <td>{{ p.memory }} MB</td>
-                        <td>{{ p.uptime }}</td>
-                        <td>{{ p.restarts }}</td>
-                        <td>
+                        <td data-label="CPU">{{ p.cpu }}%</td>
+                        <td data-label="Memory">{{ p.memory }} MB</td>
+                        <td data-label="Uptime">{{ p.uptime }}</td>
+                        <td data-label="Restarts">{{ p.restarts }}</td>
+                        <td data-label="Actions">
                             <div class="btn-group">
-                                <button class="btn btn-sm btn-green" onclick="pm2Action('restart', {{ p.name | tojson | forceescape }})">Restart</button>
+                                <button class="btn btn-sm btn-green" onclick="pm2Action('restart', {{ p.name | tojson | forceescape }}, this)">Restart</button>
                                 {% if p.status == 'online' %}
-                                    <button class="btn btn-sm btn-yellow" onclick="pm2Action('stop', {{ p.name | tojson | forceescape }})">Stop</button>
+                                    <button class="btn btn-sm btn-yellow" onclick="pm2Action('stop', {{ p.name | tojson | forceescape }}, this)">Stop</button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-green" onclick="pm2Action('start', {{ p.name | tojson | forceescape }})">Start</button>
+                                    <button class="btn btn-sm btn-green" onclick="pm2Action('start', {{ p.name | tojson | forceescape }}, this)">Start</button>
                                 {% endif %}
                                 <button class="btn btn-sm" onclick="showLogs({{ p.name | tojson | forceescape }})">Logs</button>
                             </div>
@@ -56,9 +58,51 @@
                 </tbody>
             </table>
         </div>
+        <div class="bulk-bar" id="pm2BulkBar" style="display:none">
+            <span id="pm2BulkCount">0 selected</span>
+            <div class="btn-group">
+                <button class="btn btn-sm btn-green" onclick="bulkPm2Action('restart')">Restart All</button>
+                <button class="btn btn-sm btn-yellow" onclick="bulkPm2Action('stop')">Stop All</button>
+            </div>
+        </div>
         {% else %}
         <div class="empty-state">No PM2 processes found.</div>
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function toggleSelectAll(masterCb, group) {
+    var cbs = document.querySelectorAll('input.bulk-check[data-group="' + group + '"]');
+    cbs.forEach(function(cb) { cb.checked = masterCb.checked; });
+    updateBulkBar(group);
+}
+
+function updateBulkBar(group) {
+    var cbs = document.querySelectorAll('input.bulk-check[data-group="' + group + '"]:checked');
+    var bar = document.getElementById(group + 'BulkBar');
+    var count = document.getElementById(group + 'BulkCount');
+    if (cbs.length > 0) {
+        bar.style.display = 'flex';
+        count.textContent = cbs.length + ' selected';
+    } else {
+        bar.style.display = 'none';
+    }
+}
+
+async function bulkPm2Action(action) {
+    var cbs = document.querySelectorAll('input.bulk-check[data-group="pm2"]:checked');
+    if (!cbs.length) return;
+    var names = Array.from(cbs).map(function(cb) { return cb.dataset.name; });
+    showConfirm('Bulk ' + action, action.charAt(0).toUpperCase() + action.slice(1) + ' ' + names.length + ' processes?', async function() {
+        for (var i = 0; i < names.length; i++) {
+            await apiCall('/pm2/' + action + '/' + encodeURIComponent(names[i]), 'POST');
+        }
+        showToast(names.length + ' processes ' + action + 'ed', 'success');
+        setTimeout(function() { location.reload(); }, 1000);
+    });
+}
+</script>
 {% endblock %}

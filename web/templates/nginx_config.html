@@ -8,7 +8,7 @@
     <!-- Sidebar: config list -->
     <div class="nginx-config-sidebar">
         <div class="card" style="margin-bottom:0;height:100%">
-            <div class="card-header">{{ icon('file-text') }} Site Configs</div>
+            <div class="card-header">{{ icon('file-text') }} Site Configs <span class="tooltip-icon" data-bs-toggle="tooltip" title="Nginx configuration files. 'Enabled' configs are active (symlinked to sites-enabled). 'Available' configs exist but are not active.">?</span></div>
             <div class="card-body" style="padding:8px">
                 <div style="font-size:10px;text-transform:uppercase;color:var(--green);font-weight:600;letter-spacing:0.8px;padding:8px 8px 4px">Enabled</div>
                 <div id="enabledConfigs">
@@ -49,7 +49,10 @@
             <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
                 <div class="editor-container" id="editorContainer" style="flex:1">
                     <div class="editor-line-numbers" id="lineNumbers"></div>
-                    <textarea class="editor-textarea" id="editorTextarea" placeholder="Select a config file from the sidebar..." spellcheck="false"></textarea>
+                    <div class="nginx-editor-wrap">
+                        <pre class="highlight-overlay" id="highlightOverlay"><code id="highlightCode"></code></pre>
+                        <textarea class="editor-textarea" id="editorTextarea" placeholder="Select a config file from the sidebar..." spellcheck="false"></textarea>
+                    </div>
                 </div>
                 <div class="editor-statusbar" id="editorStatusbar">
                     <span id="editorStatus">No file loaded</span>
@@ -119,6 +122,23 @@ function updateLineNumbers() {
     const lines = textarea.value.split('\n').length;
     const nums = document.getElementById('lineNumbers');
     nums.innerHTML = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+    highlightNginx(textarea.value);
+}
+
+function highlightNginx(code) {
+    const hl = document.getElementById('highlightCode');
+    if (!hl) return;
+    // Escape HTML first
+    let html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    // Syntax highlighting via regex
+    html = html
+        .replace(/(#[^\n]*)/g, '<span class="hl-comment">$1</span>')
+        .replace(/\b(server|location|listen|server_name|root|index|proxy_pass|proxy_set_header|ssl_certificate|ssl_certificate_key|include|return|rewrite|if|set|error_page|try_files|fastcgi_pass|access_log|error_log|add_header|expires|gzip|client_max_body_size|upstream|keepalive|worker_connections|events|http|map)\b/g, '<span class="hl-directive">$1</span>')
+        .replace(/(\$[a-zA-Z_][a-zA-Z0-9_]*)/g, '<span class="hl-variable">$1</span>')
+        .replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, '<span class="hl-string">$1</span>')
+        .replace(/\b(\d+)\b/g, '<span class="hl-number">$1</span>')
+        .replace(/([{}])/g, '<span class="hl-brace">$1</span>');
+    hl.innerHTML = html + '\n';
 }
 
 document.getElementById('editorTextarea').addEventListener('input', function() {
@@ -130,6 +150,8 @@ document.getElementById('editorTextarea').addEventListener('input', function() {
 
 document.getElementById('editorTextarea').addEventListener('scroll', function() {
     document.getElementById('lineNumbers').scrollTop = this.scrollTop;
+    document.getElementById('highlightOverlay').scrollTop = this.scrollTop;
+    document.getElementById('highlightOverlay').scrollLeft = this.scrollLeft;
 });
 
 // Tab support
@@ -220,7 +242,10 @@ async function enableConfig() {
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, 'success');
-            setTimeout(() => location.reload(), 1000);
+            moveConfigItem(currentConfigName, 'available', 'enabled');
+            currentConfigType = 'enabled';
+            document.getElementById('btnEnable').style.display = 'none';
+            document.getElementById('btnDisable').style.display = '';
         } else {
             showToast(data.message || 'Error', 'error');
             if (data.output) {
@@ -247,7 +272,10 @@ async function disableConfig() {
             const data = await res.json();
             if (res.ok) {
                 showToast(data.message, 'success');
-                setTimeout(() => location.reload(), 1000);
+                moveConfigItem(currentConfigName, 'enabled', 'available');
+                currentConfigType = 'available';
+                document.getElementById('btnEnable').style.display = '';
+                document.getElementById('btnDisable').style.display = 'none';
             } else {
                 showToast(data.message || 'Error', 'error');
             }
@@ -255,6 +283,22 @@ async function disableConfig() {
             showToast('Connection error', 'error');
         }
     });
+}
+
+function moveConfigItem(name, fromType, toType) {
+    const item = document.querySelector(`.nginx-config-item[data-name="${CSS.escape(name)}"][data-type="${CSS.escape(fromType)}"]`);
+    if (!item) return;
+    item.dataset.type = toType;
+    item.setAttribute('onclick', `loadConfig('${name}', '${toType}')`);
+    const dot = item.querySelector('.badge-dot');
+    if (toType === 'enabled') {
+        if (dot) { dot.className = 'badge-dot green'; dot.style.background = ''; }
+        document.getElementById('enabledConfigs').appendChild(item);
+    } else {
+        if (dot) { dot.className = 'badge-dot'; dot.style.background = 'var(--text-muted)'; }
+        var avail = document.getElementById('availableConfigs');
+        if (avail) avail.appendChild(item);
+    }
 }
 
 // Close validate modal

@@ -6,7 +6,7 @@
 {% block content %}
 <!-- Status Overview -->
 <div class="card" style="margin-bottom:16px">
-    <div class="card-header">{{ icon('activity') }} Backup Health</div>
+    <div class="card-header">{{ icon('activity') }} Backup Health <span class="tooltip-icon" data-bs-toggle="tooltip" title="Overview of automated backup status. Backups pull data from the VPS to NAS storage.">?</span></div>
     <div class="card-body">
         {% if data.status and data.status.last_success and data.status.last_success is mapping %}
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">

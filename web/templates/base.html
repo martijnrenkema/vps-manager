@@ -17,7 +17,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=11">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=13">
     {% block head_extra %}{% endblock %}
 </head>
 <body>
@@ -37,75 +37,104 @@
             <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
                 <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span> Dashboard
             </a>
-            <a href="{{ url_for('websites') }}" class="{% if request.endpoint == 'websites' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Websites
-            </a>
-            <a href="{{ url_for('uptime') }}" class="{% if request.endpoint == 'uptime' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span> Uptime
-            </a>
-            <a href="{{ url_for('pm2') }}" class="{% if request.endpoint == 'pm2' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span> PM2
-            </a>
-            <a href="{{ url_for('nginx_logs_page') }}" class="{% if request.endpoint == 'nginx_logs_page' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span> Nginx Logs
-            </a>
-            <a href="{{ url_for('nginx_config') }}" class="{% if request.endpoint == 'nginx_config' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span> Nginx Config
-            </a>
-            <a href="{{ url_for('ssl') }}" class="{% if request.endpoint == 'ssl' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> SSL
-            </a>
-            <a href="{{ url_for('dns') }}" class="{% if request.endpoint == 'dns' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span> DNS
-            </a>
-            <div class="divider"></div>
-            <a href="{{ url_for('services') }}" class="{% if request.endpoint == 'services' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span> Services
-            </a>
-            <a href="{{ url_for('processes') }}" class="{% if request.endpoint == 'processes' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span> Processes
-            </a>
-            <a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span> Network
-            </a>
-            <a href="{{ url_for('databases') }}" class="{% if request.endpoint == 'databases' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Databases
-            </a>
-            <a href="{{ url_for('php') }}" class="{% if request.endpoint == 'php' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span> PHP
-            </a>
-            <a href="{{ url_for('cronjobs') }}" class="{% if request.endpoint == 'cronjobs' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Cronjobs
-            </a>
-            <a href="{{ url_for('disk') }}" class="{% if request.endpoint == 'disk' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Disk
-            </a>
-            <a href="{{ url_for('files') }}" class="{% if request.endpoint == 'files' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></span> Files
-            </a>
-            <div class="divider"></div>
-            <a href="{{ url_for('firewall') }}" class="{% if request.endpoint == 'firewall' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Firewall
-            </a>
-            <a href="{{ url_for('backup') }}" class="{% if request.endpoint == 'backup' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Backup
-            </a>
-            <a href="{{ url_for('updates') }}" class="{% if request.endpoint == 'updates' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> Updates
-            </a>
-            <div class="divider"></div>
-            <a href="{{ url_for('terminal') }}" class="{% if request.endpoint == 'terminal' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> Terminal
-            </a>
-            <a href="{{ url_for('notifications') }}" class="{% if request.endpoint == 'notifications' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span> Notifications
-            </a>
-            <a href="{{ url_for('audit') }}" class="{% if request.endpoint == 'audit' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></span> Audit Log
-            </a>
-            <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Settings
-            </a>
+            <div class="sidebar-group" data-group="web">
+                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                    <span>Web</span>
+                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="sidebar-group-items">
+                    <a href="{{ url_for('websites') }}" class="{% if request.endpoint == 'websites' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Websites
+                    </a>
+                    <a href="{{ url_for('uptime') }}" class="{% if request.endpoint == 'uptime' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span> Uptime
+                    </a>
+                    <a href="{{ url_for('pm2') }}" class="{% if request.endpoint == 'pm2' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span> PM2
+                    </a>
+                    <a href="{{ url_for('nginx_logs_page') }}" class="{% if request.endpoint == 'nginx_logs_page' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span> Nginx Logs
+                    </a>
+                    <a href="{{ url_for('nginx_config') }}" class="{% if request.endpoint == 'nginx_config' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span> Nginx Config
+                    </a>
+                    <a href="{{ url_for('ssl') }}" class="{% if request.endpoint == 'ssl' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> SSL
+                    </a>
+                    <a href="{{ url_for('dns') }}" class="{% if request.endpoint == 'dns' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span> DNS
+                    </a>
+                </div>
+            </div>
+            <div class="sidebar-group" data-group="server">
+                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                    <span>Server</span>
+                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="sidebar-group-items">
+                    <a href="{{ url_for('services') }}" class="{% if request.endpoint == 'services' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span> Services
+                    </a>
+                    <a href="{{ url_for('processes') }}" class="{% if request.endpoint == 'processes' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span> Processes
+                    </a>
+                    <a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span> Network
+                    </a>
+                    <a href="{{ url_for('databases') }}" class="{% if request.endpoint == 'databases' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Databases
+                    </a>
+                    <a href="{{ url_for('php') }}" class="{% if request.endpoint == 'php' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span> PHP
+                    </a>
+                    <a href="{{ url_for('cronjobs') }}" class="{% if request.endpoint == 'cronjobs' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Cronjobs
+                    </a>
+                    <a href="{{ url_for('disk') }}" class="{% if request.endpoint == 'disk' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Disk
+                    </a>
+                    <a href="{{ url_for('files') }}" class="{% if request.endpoint == 'files' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></span> Files
+                    </a>
+                </div>
+            </div>
+            <div class="sidebar-group" data-group="security">
+                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                    <span>Security</span>
+                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="sidebar-group-items">
+                    <a href="{{ url_for('firewall') }}" class="{% if request.endpoint == 'firewall' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Firewall
+                    </a>
+                    <a href="{{ url_for('backup') }}" class="{% if request.endpoint == 'backup' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Backup
+                    </a>
+                    <a href="{{ url_for('updates') }}" class="{% if request.endpoint == 'updates' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> Updates
+                    </a>
+                </div>
+            </div>
+            <div class="sidebar-group" data-group="tools">
+                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
+                    <span>Tools</span>
+                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                </div>
+                <div class="sidebar-group-items">
+                    <a href="{{ url_for('terminal') }}" class="{% if request.endpoint == 'terminal' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> Terminal
+                    </a>
+                    <a href="{{ url_for('notifications') }}" class="{% if request.endpoint == 'notifications' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span> Notifications
+                    </a>
+                    <a href="{{ url_for('audit') }}" class="{% if request.endpoint == 'audit' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></span> Audit Log
+                    </a>
+                    <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Settings
+                    </a>
+                </div>
+            </div>
         </div>
         <div class="sidebar-bottom">
             <div class="sidebar-version">v{{ app_version }}</div>
@@ -177,6 +206,14 @@
         </div>
     </div>
 
+    <!-- Command Palette -->
+    <div class="cmd-palette-overlay" id="cmdPalette">
+        <div class="cmd-palette">
+            <input type="text" id="cmdInput" placeholder="Search pages and actions..." autocomplete="off">
+            <div class="cmd-results" id="cmdResults"></div>
+        </div>
+    </div>
+
     <script>
         // CSRF token for AJAX requests
         const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
@@ -220,9 +257,24 @@
         }
 
         // PM2 actions
-        async function pm2Action(action, name) {
-            await apiCall('/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
-            setTimeout(() => location.reload(), 1500);
+        async function pm2Action(action, name, btn) {
+            const data = await apiCall('/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
+            if (!data) return;
+            // In-place update: find the row and update status badge
+            const row = btn ? btn.closest('tr') : null;
+            if (row) {
+                const statusCell = row.querySelector('td:nth-child(3)');
+                if (statusCell) {
+                    const newStatus = (action === 'stop') ? 'stopped' : 'online';
+                    if (newStatus === 'online') {
+                        statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>online</span>';
+                    } else {
+                        statusCell.innerHTML = '<span class="badge badge-yellow"><span class="badge-dot yellow"></span>stopped</span>';
+                    }
+                }
+            } else {
+                setTimeout(() => location.reload(), 1500);
+            }
         }
 
         // PM2 logs modal
@@ -402,12 +454,140 @@
             if (!e.target.closest('.notif-bell')) closeNotifDropdown();
         });
 
-        // Keyboard shortcut: Escape to close modals
+        // Sidebar groups
+        function toggleSidebarGroup(header) {
+            const group = header.closest('.sidebar-group');
+            group.classList.toggle('collapsed');
+            saveSidebarState();
+        }
+
+        function saveSidebarState() {
+            const state = {};
+            document.querySelectorAll('.sidebar-group').forEach(g => {
+                state[g.dataset.group] = g.classList.contains('collapsed');
+            });
+            localStorage.setItem('sidebarGroups', JSON.stringify(state));
+        }
+
+        (function initSidebarGroups() {
+            try {
+                const state = JSON.parse(localStorage.getItem('sidebarGroups') || '{}');
+                document.querySelectorAll('.sidebar-group').forEach(g => {
+                    const key = g.dataset.group;
+                    const hasActive = g.querySelector('.sidebar-nav a.active, .sidebar-group-items a.active');
+                    if (hasActive) {
+                        g.classList.remove('collapsed');
+                    } else if (state[key]) {
+                        g.classList.add('collapsed');
+                    }
+                });
+            } catch (e) {}
+        })();
+
+        // Command Palette
+        const cmdPages = [
+            {label: 'Dashboard', url: '/', keywords: 'home overview stats'},
+            {label: 'Websites', url: '/websites', keywords: 'sites domains nginx'},
+            {label: 'Uptime', url: '/uptime', keywords: 'monitor status check'},
+            {label: 'PM2 Processes', url: '/pm2', keywords: 'node process manager'},
+            {label: 'Nginx Logs', url: '/nginx-logs', keywords: 'error access log'},
+            {label: 'Nginx Config', url: '/nginx-config', keywords: 'configuration edit site'},
+            {label: 'SSL Certificates', url: '/ssl', keywords: 'https lets encrypt renew'},
+            {label: 'DNS Records', url: '/dns', keywords: 'domain lookup'},
+            {label: 'Services', url: '/services', keywords: 'systemd systemctl restart'},
+            {label: 'Processes', url: '/processes', keywords: 'top kill pid cpu memory'},
+            {label: 'Network', url: '/network', keywords: 'interfaces ports connections'},
+            {label: 'Databases', url: '/databases', keywords: 'mariadb mysql phpmyadmin'},
+            {label: 'PHP', url: '/php', keywords: 'fpm version restart'},
+            {label: 'Cronjobs', url: '/cronjobs', keywords: 'cron schedule timer'},
+            {label: 'Disk Usage', url: '/disk', keywords: 'space storage'},
+            {label: 'Files', url: '/files', keywords: 'browser upload download'},
+            {label: 'Firewall', url: '/firewall', keywords: 'ufw fail2ban security ban'},
+            {label: 'Backup', url: '/backup', keywords: 'restore nas'},
+            {label: 'Updates', url: '/updates', keywords: 'packages security upgrade'},
+            {label: 'Terminal', url: '/terminal', keywords: 'ssh command shell'},
+            {label: 'Notifications', url: '/notifications', keywords: 'push alerts subscribe'},
+            {label: 'Audit Log', url: '/audit', keywords: 'history actions log'},
+            {label: 'Settings', url: '/settings', keywords: 'config password 2fa thresholds'},
+        ];
+        let cmdSelectedIdx = 0;
+        let cmdFiltered = [];
+
+        function openCmdPalette() {
+            const overlay = document.getElementById('cmdPalette');
+            overlay.classList.add('active');
+            const input = document.getElementById('cmdInput');
+            input.value = '';
+            input.focus();
+            cmdSelectedIdx = 0;
+            filterCmd('');
+        }
+
+        function closeCmdPalette() {
+            document.getElementById('cmdPalette').classList.remove('active');
+        }
+
+        function filterCmd(query) {
+            const q = query.toLowerCase();
+            cmdFiltered = q ? cmdPages.filter(p =>
+                p.label.toLowerCase().includes(q) || p.keywords.toLowerCase().includes(q)
+            ) : cmdPages;
+            cmdSelectedIdx = 0;
+            renderCmdResults();
+        }
+
+        function renderCmdResults() {
+            const container = document.getElementById('cmdResults');
+            container.innerHTML = cmdFiltered.map((p, i) =>
+                `<div class="cmd-result-item${i === cmdSelectedIdx ? ' selected' : ''}" onmouseenter="cmdSelectedIdx=${i};renderCmdResults()" onclick="navigateCmd(${i})">
+                    <span class="cmd-label">${p.label}</span>
+                </div>`
+            ).join('');
+        }
+
+        function navigateCmd(idx) {
+            if (cmdFiltered[idx]) {
+                window.location.href = cmdFiltered[idx].url;
+            }
+        }
+
+        document.getElementById('cmdInput').addEventListener('input', function() {
+            filterCmd(this.value);
+        });
+
+        document.getElementById('cmdInput').addEventListener('keydown', function(e) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                cmdSelectedIdx = Math.min(cmdSelectedIdx + 1, cmdFiltered.length - 1);
+                renderCmdResults();
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                cmdSelectedIdx = Math.max(cmdSelectedIdx - 1, 0);
+                renderCmdResults();
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                navigateCmd(cmdSelectedIdx);
+            }
+        });
+
+        document.getElementById('cmdPalette').addEventListener('click', function(e) {
+            if (e.target === this) closeCmdPalette();
+        });
+
+        // Keyboard shortcuts
         document.addEventListener('keydown', function(e) {
             if (e.key === 'Escape') {
+                if (document.getElementById('cmdPalette').classList.contains('active')) {
+                    closeCmdPalette();
+                    return;
+                }
                 closeLogModal();
                 closeConfirm();
                 closeNotifDropdown();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+                e.preventDefault();
+                openCmdPalette();
             }
         });
     </script>

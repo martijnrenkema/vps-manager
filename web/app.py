@@ -2245,7 +2245,24 @@ def dashboard():
     alerts.extend(check_backup_alerts())
     # Re-sort
     alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 99))
+    dismissed = CONFIG.get('dismissed_alerts', [])
+    alerts = [a for a in alerts if a.get('key') not in dismissed]
     return render_template('dashboard.html', data=data, services=services, pm2=pm2, ssl=ssl, alerts=alerts)
+
+
+@app.route('/api/alerts/dismiss', methods=['POST'])
+@login_required
+def dismiss_alert():
+    data = request.get_json() or {}
+    key = data.get('key', '')
+    if not key:
+        return jsonify({'status': 'error', 'message': 'No alert key'}), 400
+    dismissed = CONFIG.get('dismissed_alerts', [])
+    if key not in dismissed:
+        dismissed.append(key)
+    CONFIG['dismissed_alerts'] = dismissed
+    save_config(CONFIG)
+    return jsonify({'status': 'ok'})
 
 
 @app.route('/websites')
@@ -2341,6 +2358,13 @@ def pm2_logs(name):
 def ssl():
     certs = get_ssl_certificates()
     return render_template('ssl.html', certs=certs)
+
+
+@app.route('/api/ssl')
+@login_required
+def api_ssl():
+    certs = get_ssl_certificates()
+    return jsonify(certs)
 
 
 @app.route('/ssl/renew', methods=['POST'])
@@ -2689,6 +2713,15 @@ def firewall_whitelist_set():
     if reload_result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f'Whitelist updated ({len(validated)} entries), fail2ban reloaded'})
     return jsonify({'status': 'ok', 'message': f'Whitelist updated but fail2ban reload failed: {reload_result.stderr.strip()}'})
+
+
+@app.route('/api/firewall/ufw-rules')
+@login_required
+def api_ufw_rules():
+    result = run_cmd("sudo ufw status numbered 2>/dev/null")
+    if result.returncode == 0:
+        return jsonify(parse_ufw_rules(result.stdout))
+    return jsonify([])
 
 
 @app.route('/firewall/ufw/add', methods=['POST'])

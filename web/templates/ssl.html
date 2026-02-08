@@ -6,13 +6,13 @@
 {% block content %}
 <div class="card">
     <div class="card-header" style="justify-content:space-between">
-        <span>{{ icon('lock') }} Let's Encrypt Certificates</span>
+        <span>{{ icon('lock') }} Let's Encrypt Certificates <span class="tooltip-icon" data-bs-toggle="tooltip" title="Free SSL/TLS certificates from Let's Encrypt. Certificates expire after 90 days and should be renewed before 30 days remaining.">?</span></span>
         <button class="btn btn-sm btn-green" onclick="showConfirm('SSL Renewal', 'Force renew all certificates?', renewAll)">{{ icon('refresh') }} Renew All</button>
     </div>
     <div class="card-body">
         {% if certs %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Domain(s)</th>
@@ -25,10 +25,10 @@
                 <tbody>
                     {% for cert in certs %}
                     <tr>
-                        <td>{{ cert.domain }}</td>
-                        <td>{{ cert.expiry }}</td>
-                        <td>{{ cert.days_left }}</td>
-                        <td>
+                        <td data-label="Domain">{{ cert.domain }}</td>
+                        <td data-label="Expires">{{ cert.expiry }}</td>
+                        <td data-label="Days Left">{{ cert.days_left }}</td>
+                        <td data-label="Status">
                             {% if cert.days_left > 30 %}
                                 <span class="badge badge-green">OK</span>
                             {% elif cert.days_left > 7 %}
@@ -37,7 +37,7 @@
                                 <span class="badge badge-red">Critical!</span>
                             {% endif %}
                         </td>
-                        <td>
+                        <td data-label="Action">
                             <button class="btn btn-sm" onclick="renewCert({{ cert.domain.split(' ')[0] | tojson }})">Renew</button>
                         </td>
                     </tr>
@@ -77,7 +77,7 @@ async function renewCert(domain) {
         document.getElementById('renewLog').textContent = 'Connection error';
         showToast('Connection error', 'error');
     }
-    setTimeout(function() { location.reload(); }, 3000);
+    if (res.ok) refreshSslTable();
 }
 
 async function renewAll() {
@@ -96,7 +96,25 @@ async function renewAll() {
         document.getElementById('renewLog').textContent = 'Connection error';
         showToast('Connection error', 'error');
     }
-    setTimeout(function() { location.reload(); }, 3000);
+    if (res.ok) refreshSslTable();
+}
+
+async function refreshSslTable() {
+    try {
+        var res = await fetch('/api/ssl');
+        if (!res.ok) return;
+        var certs = await res.json();
+        var tbody = document.querySelector('table tbody');
+        if (!tbody || !certs.length) return;
+        tbody.innerHTML = certs.map(function(cert) {
+            var badge = cert.days_left > 30 ? '<span class="badge badge-green">OK</span>'
+                : cert.days_left > 7 ? '<span class="badge badge-yellow">Expiring soon</span>'
+                : '<span class="badge badge-red">Critical!</span>';
+            var domain = cert.domain || '';
+            var firstDomain = domain.split(' ')[0];
+            return '<tr><td>' + escHtml(domain) + '</td><td>' + escHtml(cert.expiry || '') + '</td><td>' + cert.days_left + '</td><td>' + badge + '</td><td><button class="btn btn-sm" onclick="renewCert(\'' + firstDomain.replace(/'/g, "\\'") + '\')">Renew</button></td></tr>';
+        }).join('');
+    } catch(e) {}
 }
 </script>
 {% endblock %}

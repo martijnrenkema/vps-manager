@@ -35,6 +35,7 @@
             <code>pyotp</code> and <code>qrcode</code> are not installed. Install them with: <code>pip install pyotp qrcode[pil]</code>
         </div>
         {% else %}
+        <div id="tfaContent">
         <div style="margin-bottom:16px">
             <span class="badge {% if config.auth.totp_secret %}badge-green{% else %}badge-yellow{% endif %}" style="font-size:13px;padding:6px 12px">
                 2FA is {% if config.auth.totp_secret %}enabled{% else %}disabled{% endif %}
@@ -75,13 +76,14 @@
                 <strong>Recovery:</strong> If you lose access to your authenticator app, remove <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.
             </p>
         </div>
+        </div>
         {% endif %}
     </div>
 </div>
 
 <!-- Configuration -->
 <div class="card">
-    <div class="card-header">{{ icon('settings') }} Server Configuration</div>
+    <div class="card-header">{{ icon('settings') }} Server Configuration <span class="tooltip-icon" data-bs-toggle="tooltip" title="Monitoring thresholds that trigger alerts and notifications when exceeded.">?</span></div>
     <div class="card-body">
         <form id="configForm" onsubmit="saveConfig(event)">
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Thresholds</h4>
@@ -224,7 +226,14 @@ async function verify2FA() {
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, 'success');
-            setTimeout(() => location.reload(), 1500);
+            // Update UI in-place: show enabled state
+            var tfaContent = document.getElementById('tfaContent');
+            if (tfaContent) {
+                tfaContent.innerHTML = '<div style="margin-bottom:16px"><span class="badge badge-green" style="font-size:13px;padding:6px 12px">2FA is enabled</span></div>'
+                    + '<button class="btn btn-red" onclick="showDisable2FA()">Disable 2FA</button>'
+                    + '<div id="disable2fa" style="display:none;margin-top:16px"><div class="form-group" style="max-width:300px"><label for="disable_password">Enter your password to confirm</label><input type="password" id="disable_password" class="form-control" required></div><button class="btn btn-red" onclick="disable2FA()">Confirm Disable</button></div>'
+                    + '<div style="margin-top:20px;padding:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px"><p style="font-size:12px;color:var(--text-muted)"><strong>Recovery:</strong> If you lose access to your authenticator app, remove <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.</p></div>';
+            }
         } else {
             showToast(data.message, 'error');
         }
@@ -248,7 +257,14 @@ async function disable2FA() {
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, 'success');
-            setTimeout(() => location.reload(), 1500);
+            // Update UI in-place: show disabled state
+            var tfaContent = document.getElementById('tfaContent');
+            if (tfaContent) {
+                tfaContent.innerHTML = '<div style="margin-bottom:16px"><span class="badge badge-yellow" style="font-size:13px;padding:6px 12px">2FA is disabled</span></div>'
+                    + '<button class="btn btn-green" onclick="enable2FA()">Enable 2FA</button>'
+                    + '<div id="setup2fa" style="display:none;margin-top:20px"><p style="color:var(--text-secondary);font-size:14px;margin-bottom:12px">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p><div id="qrCodeContainer" style="margin-bottom:16px"></div><div style="margin-bottom:16px"><label style="font-size:12px;color:var(--text-muted)">Manual key:</label><code id="totpSecret" style="display:block;margin-top:4px;font-size:14px;word-break:break-all"></code></div><div class="form-group" style="max-width:200px"><label for="verify_code">Enter 6-digit code to verify</label><input type="text" id="verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></div><button class="btn btn-green" onclick="verify2FA()">Verify &amp; Enable</button></div>'
+                    + '<div style="margin-top:20px;padding:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px"><p style="font-size:12px;color:var(--text-muted)"><strong>Recovery:</strong> If you lose access to your authenticator app, remove <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.</p></div>';
+            }
         } else {
             showToast(data.message, 'error');
         }

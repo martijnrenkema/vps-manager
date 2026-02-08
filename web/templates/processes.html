@@ -14,11 +14,11 @@
 </div>
 
 <div class="card">
-    <div class="card-header">{{ icon('activity') }} System Processes <span class="badge" style="margin-left:auto">{{ total }} total</span></div>
+    <div class="card-header">{{ icon('activity') }} System Processes <span class="tooltip-icon" data-bs-toggle="tooltip" title="Running processes sorted by resource usage. RSS (Resident Set Size) shows actual memory used." style="margin-left:0">?</span> <span class="badge" style="margin-left:auto">{{ total }} total</span></div>
     <div class="card-body">
         {% if processes %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>User</th>
@@ -33,9 +33,9 @@
                 <tbody>
                     {% for p in processes %}
                     <tr>
-                        <td><strong>{{ p.user }}</strong></td>
-                        <td><code>{{ p.pid }}</code></td>
-                        <td>
+                        <td data-label="User"><strong>{{ p.user }}</strong></td>
+                        <td data-label="PID"><code>{{ p.pid }}</code></td>
+                        <td data-label="CPU%">
                             {% if p.cpu > 50 %}
                                 <span class="badge badge-red">{{ p.cpu }}%</span>
                             {% elif p.cpu > 25 %}
@@ -44,7 +44,7 @@
                                 <span style="color:var(--text-secondary)">{{ p.cpu }}%</span>
                             {% endif %}
                         </td>
-                        <td>
+                        <td data-label="MEM%">
                             {% if p.mem > 50 %}
                                 <span class="badge badge-red">{{ p.mem }}%</span>
                             {% elif p.mem > 25 %}
@@ -53,10 +53,10 @@
                                 <span style="color:var(--text-secondary)">{{ p.mem }}%</span>
                             {% endif %}
                         </td>
-                        <td><span style="color:var(--text-secondary)">{{ (p.rss / 1024)|round(1) }} MB</span></td>
-                        <td><code style="color:var(--text-muted);max-width:400px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.command }}</code></td>
-                        <td>
-                            <button class="btn btn-sm btn-red" onclick="killProcess({{ p.pid|tojson }})">Kill</button>
+                        <td data-label="RSS"><span style="color:var(--text-secondary)">{{ (p.rss / 1024)|round(1) }} MB</span></td>
+                        <td data-label="Command"><code style="color:var(--text-muted);max-width:400px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.command }}</code></td>
+                        <td data-label="Actions">
+                            <button class="btn btn-sm btn-red" onclick="killProcess({{ p.pid|tojson }}, this)">Kill</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -72,10 +72,16 @@
 
 {% block scripts %}
 <script>
-function killProcess(pid) {
+function killProcess(pid, btn) {
     showConfirm('Kill Process', 'Are you sure you want to kill PID ' + pid + '?', async function() {
-        await apiCall('/processes/kill/' + pid, 'POST');
-        setTimeout(function() { location.reload(); }, 1500);
+        var data = await apiCall('/processes/kill/' + pid, 'POST');
+        if (!data) return;
+        var row = btn ? btn.closest('tr') : null;
+        if (row) {
+            row.style.transition = 'opacity 0.3s';
+            row.style.opacity = '0';
+            setTimeout(function() { row.remove(); }, 300);
+        }
     });
 }
 </script>

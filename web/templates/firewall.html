@@ -13,14 +13,14 @@
         <div class="card-body">
             {% if data.ufw_rules %}
             <div class="table-wrap">
-                <table>
+                <table class="table-responsive-cards">
                     <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th style="width:60px"></th></tr></thead>
                     <tbody>
                         {% for rule in data.ufw_rules %}
                         <tr>
-                            <td>{{ rule.number }}</td>
-                            <td><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</td>
-                            <td>
+                            <td data-label="#">{{ rule.number }}</td>
+                            <td data-label="To"><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</td>
+                            <td data-label="Action">
                                 {% if rule.action == 'ALLOW' %}
                                     <span class="badge badge-green">{{ rule.action }}</span>
                                 {% elif rule.action == 'DENY' or rule.action == 'REJECT' %}
@@ -31,7 +31,7 @@
                                     <span class="badge">{{ rule.action }}</span>
                                 {% endif %}
                             </td>
-                            <td>{{ rule.from_addr }}</td>
+                            <td data-label="From">{{ rule.from_addr }}</td>
                             <td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('{{ rule.number }}')">{{ icon('trash') }}</button></td>
                         </tr>
                         {% endfor %}
@@ -337,7 +337,9 @@
             const data = await res.json();
             if (res.ok) {
                 showToast(data.message, 'success');
-                setTimeout(() => location.reload(), 800);
+                document.getElementById('ufwPort').value = '';
+                document.getElementById('ufwFrom').value = '';
+                refreshUfwTable();
             } else {
                 showToast(data.message || 'Failed to add rule', 'error');
             }
@@ -357,7 +359,7 @@
                 const data = await res.json();
                 if (res.ok) {
                     showToast(data.message, 'success');
-                    setTimeout(() => location.reload(), 800);
+                    refreshUfwTable();
                 } else {
                     showToast(data.message || 'Failed to delete rule', 'error');
                 }
@@ -365,6 +367,23 @@
                 showToast('Connection error', 'error');
             }
         });
+    }
+
+    async function refreshUfwTable() {
+        try {
+            const res = await fetch('/api/firewall/ufw-rules');
+            const rules = await res.json();
+            const tbody = document.querySelector('.card:first-child table tbody');
+            if (!tbody) return;
+            tbody.innerHTML = rules.map(r => {
+                let badge = 'badge';
+                if (r.action === 'ALLOW') badge = 'badge badge-green';
+                else if (r.action === 'DENY' || r.action === 'REJECT') badge = 'badge badge-red';
+                else if (r.action === 'LIMIT') badge = 'badge badge-yellow';
+                const v6 = r.v6 ? ' <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>' : '';
+                return `<tr><td>${r.number}</td><td><code>${r.to}</code>${v6}</td><td><span class="${badge}">${r.action}</span></td><td>${r.from_addr}</td><td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('${r.number}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>`;
+            }).join('');
+        } catch (e) {}
     }
 
     // --- Ban IP ---
