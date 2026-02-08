@@ -14,7 +14,7 @@
             {% if data.ufw_rules %}
             <div class="table-wrap">
                 <table class="table-responsive-cards">
-                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th style="width:60px"></th></tr></thead>
+                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:60px"></th></tr></thead>
                     <tbody>
                         {% for rule in data.ufw_rules %}
                         <tr>
@@ -32,6 +32,7 @@
                                 {% endif %}
                             </td>
                             <td data-label="From">{{ rule.from_addr }}</td>
+                            <td data-label="Comment"><span style="color:var(--text-muted);font-size:12px">{{ rule.comment }}</span></td>
                             <td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('{{ rule.number }}')">{{ icon('trash') }}</button></td>
                         </tr>
                         {% endfor %}
@@ -71,6 +72,10 @@
                             <option value="deny">Deny</option>
                         </select>
                     </div>
+                    <div class="form-group" style="margin-bottom:0;min-width:120px;flex:1">
+                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Comment (optional)</label>
+                        <input type="text" id="ufwComment" class="form-control" placeholder="e.g. Nginx reverse proxy">
+                    </div>
                     <button class="btn btn-green" onclick="addUfwRule()">+ Add</button>
                 </div>
             </div>
@@ -78,66 +83,14 @@
     </div>
     <div class="card">
         <div class="card-header">
-            {{ icon('ban') }} Fail2ban SSHD Status
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Fail2ban monitors log files and blocks IPs that show suspicious behavior such as repeated failed login attempts.">?</span>
-        </div>
-        <div class="card-body">
-            {% if data.fail2ban %}
-                <pre>{{ data.fail2ban }}</pre>
-            {% else %}
-                <div class="empty-state">Unable to retrieve fail2ban status</div>
-            {% endif %}
-        </div>
-    </div>
-</div>
-
-<!-- Fail2ban Config & Jails -->
-<div class="grid-2col" style="margin-top:16px">
-    <div class="card">
-        <div class="card-header">
-            {{ icon('settings') }} Fail2ban Configuration
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="These settings control how fail2ban detects and blocks malicious IPs. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span>
-        </div>
-        <div class="card-body">
-            {% if data.f2b_config %}
-            <div class="table-wrap">
-                <table>
-                    <tbody>
-                        <tr>
-                            <td><strong>Ban Time</strong></td>
-                            <td>
-                                {{ data.f2b_config.bantime or '?' }}
-                                {% if data.f2b_config.permanent_bans %}
-                                    <span class="badge badge-red" style="margin-left:8px">Permanent</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        <tr>
-                            <td><strong>Find Time</strong></td>
-                            <td>{{ data.f2b_config.findtime or '?' }}</td>
-                        </tr>
-                        <tr>
-                            <td><strong>Max Retry</strong></td>
-                            <td>{{ data.f2b_config.maxretry or '?' }}</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-                <div class="empty-state">Unable to retrieve fail2ban config</div>
-            {% endif %}
-        </div>
-    </div>
-    <div class="card">
-        <div class="card-header">
-            {{ icon('list') }} Active Jails
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="A jail is a set of rules that monitors a specific service log file. Each jail can independently ban IPs that violate its rules.">?</span>
+            {{ icon('ban') }} Fail2ban Status
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Fail2ban monitors log files and blocks IPs that show suspicious behavior such as repeated failed login attempts or brute force attacks.">?</span>
         </div>
         <div class="card-body">
             {% if data.jails %}
             <div class="table-wrap">
                 <table>
-                    <thead><tr><th>Jail</th><th>Status</th><th>Banned</th><th>Total</th></tr></thead>
+                    <thead><tr><th>Jail</th><th>Status</th><th>Currently Banned</th><th>Total Banned</th></tr></thead>
                     <tbody>
                         {% for jail in data.jails %}
                         <tr>
@@ -163,7 +116,32 @@
                 </table>
             </div>
             {% else %}
-                <div class="empty-state">No jails found</div>
+                <div class="empty-state">Unable to retrieve fail2ban status</div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Fail2ban Config -->
+<div class="grid-2col" style="margin-top:16px">
+    <div class="card">
+        <div class="card-header">
+            {{ icon('list') }} Jail Configuration
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span>
+        </div>
+        <div class="card-body">
+            {% if data.f2b_config %}
+            <div class="table-wrap">
+                <table>
+                    <tbody>
+                        <tr><td><strong>Ban Time</strong></td><td>{{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} <span class="badge badge-red" style="margin-left:8px">Permanent</span>{% endif %}</td></tr>
+                        <tr><td><strong>Find Time</strong></td><td>{{ data.f2b_config.findtime or '?' }}</td></tr>
+                        <tr><td><strong>Max Retry</strong></td><td>{{ data.f2b_config.maxretry or '?' }}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <div class="empty-state">Unable to retrieve fail2ban config</div>
             {% endif %}
         </div>
     </div>
@@ -323,6 +301,7 @@
         const proto = document.getElementById('ufwProto').value;
         const from_ip = document.getElementById('ufwFrom').value.trim();
         const action = document.getElementById('ufwAction').value;
+        const comment = document.getElementById('ufwComment').value.trim();
         if (!port) { showToast('Enter a port number', 'error'); return; }
         const portNum = parseInt(port);
         if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
@@ -332,13 +311,14 @@
             const res = await fetch('/firewall/ufw/add', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                body: JSON.stringify({port, proto, from_ip, action}),
+                body: JSON.stringify({port, proto, from_ip, action, comment}),
             });
             const data = await res.json();
             if (res.ok) {
                 showToast(data.message, 'success');
                 document.getElementById('ufwPort').value = '';
                 document.getElementById('ufwFrom').value = '';
+                document.getElementById('ufwComment').value = '';
                 refreshUfwTable();
             } else {
                 showToast(data.message || 'Failed to add rule', 'error');
@@ -381,7 +361,8 @@
                 else if (r.action === 'DENY' || r.action === 'REJECT') badge = 'badge badge-red';
                 else if (r.action === 'LIMIT') badge = 'badge badge-yellow';
                 const v6 = r.v6 ? ' <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>' : '';
-                return `<tr><td>${r.number}</td><td><code>${r.to}</code>${v6}</td><td><span class="${badge}">${r.action}</span></td><td>${r.from_addr}</td><td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('${r.number}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>`;
+                const comment = r.comment ? `<span style="color:var(--text-muted);font-size:12px">${escHtml(r.comment)}</span>` : '';
+                return `<tr><td>${r.number}</td><td><code>${r.to}</code>${v6}</td><td><span class="${badge}">${r.action}</span></td><td>${r.from_addr}</td><td>${comment}</td><td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('${r.number}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>`;
             }).join('');
         } catch (e) {}
     }

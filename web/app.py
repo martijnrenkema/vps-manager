@@ -1382,7 +1382,7 @@ def parse_ufw_rules(ufw_output):
     rules = []
     for line in ufw_output.split('\n'):
         line = line.strip()
-        # Match lines like: [ 1] 22/tcp                     ALLOW IN    Anywhere
+        # Match lines like: [ 1] 22/tcp                     ALLOW IN    Anywhere                   # comment
         match = re.match(
             r'\[\s*(\d+)\]\s+(.+?)\s+(ALLOW|DENY|REJECT|LIMIT)\s+(IN|OUT|FWD)?\s*(.*)',
             line
@@ -1392,7 +1392,14 @@ def parse_ufw_rules(ufw_output):
             to = match.group(2).strip()
             action = match.group(3).strip()
             direction = (match.group(4) or '').strip()
-            from_addr = match.group(5).strip() or 'Anywhere'
+            from_and_comment = match.group(5).strip() or 'Anywhere'
+            comment = ''
+            if '#' in from_and_comment:
+                from_addr, comment = from_and_comment.split('#', 1)
+                from_addr = from_addr.strip() or 'Anywhere'
+                comment = comment.strip()
+            else:
+                from_addr = from_and_comment
             v6 = '(v6)' in to or '(v6)' in from_addr
             rules.append({
                 'number': number,
@@ -1401,6 +1408,7 @@ def parse_ufw_rules(ufw_output):
                 'direction': direction,
                 'from_addr': from_addr.replace('(v6)', '').strip(),
                 'v6': v6,
+                'comment': comment,
             })
     return rules
 
@@ -2578,8 +2586,9 @@ def firewall_ban():
     f2b_ok = result.returncode == 0
     f2b_msg = result.stdout.strip() or result.stderr.strip()
 
-    # Add permanent UFW deny rule
-    ufw_result = run_cmd_safe(['sudo', 'ufw', 'deny', 'from', ip], timeout=15)
+    # Add permanent UFW deny rule with timestamp
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    ufw_result = run_cmd_safe(['sudo', 'ufw', 'deny', 'from', ip, 'comment', f'Banned via {jail} {timestamp}'], timeout=15)
     ufw_ok = ufw_result.returncode == 0
     ufw_msg = ufw_result.stdout.strip() or ufw_result.stderr.strip()
 
@@ -2750,20 +2759,22 @@ def firewall_ufw_add():
     except (ValueError, TypeError):
         return jsonify({'status': 'error', 'message': 'Port must be between 1 and 65535'}), 400
 
-    # Build the command
+    # Build the command with comment + timestamp
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+    user_comment = data.get('comment', '').strip()
+    rule_comment = f'{user_comment} ({timestamp})' if user_comment else f'Added {timestamp}'
     if from_ip and from_ip.lower() != 'anywhere':
         if not _is_valid_ip_or_cidr(from_ip):
             return jsonify({'status': 'error', 'message': 'Invalid source IP/CIDR'}), 400
-        # sudo ufw allow from IP to any port PORT proto PROTO
         cmd = ['sudo', 'ufw', action, 'from', from_ip, 'to', 'any', 'port', port]
         if proto != 'any':
             cmd.extend(['proto', proto])
     else:
-        # sudo ufw allow PORT/PROTO or sudo ufw allow PORT
         if proto != 'any':
             cmd = ['sudo', 'ufw', action, f'{port}/{proto}']
         else:
             cmd = ['sudo', 'ufw', action, port]
+    cmd.extend(['comment', rule_comment])
 
     result = run_cmd_safe(cmd, timeout=15)
     if result.returncode == 0:

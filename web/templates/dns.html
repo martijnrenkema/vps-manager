@@ -8,16 +8,19 @@
     <div class="card-header">
         {{ icon('globe') }} DNS Lookup
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Query DNS records for any domain. A/AAAA = IP address, MX = mail server, CNAME = alias, TXT = verification records." style="margin-left:0">?</span>
-        <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
-            <select id="domainSelect" class="form-control" style="width:auto;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border-color);padding:4px 8px;border-radius:6px;font-size:13px">
-                {% for d in domains %}
-                <option value="{{ d }}">{{ d }}</option>
-                {% endfor %}
-            </select>
-            <button class="btn btn-sm btn-green" onclick="lookupDns()">{{ icon('refresh') }} Lookup</button>
-        </div>
     </div>
     <div class="card-body">
+        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+            <div class="form-group" style="margin-bottom:0;flex:1;min-width:200px">
+                <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Domain</label>
+                <select id="domainSelect" class="form-control">
+                    {% for d in domains %}
+                    <option value="{{ d }}">{{ d }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button class="btn btn-green" onclick="lookupDns()">{{ icon('refresh') }} Lookup</button>
+        </div>
         <div id="dnsResults">
             <div class="empty-state">Select a domain and click Lookup to view DNS records.</div>
         </div>
