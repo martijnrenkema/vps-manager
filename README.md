@@ -11,31 +11,49 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 
 ## Features
 
-- **Server Overview** - CPU, RAM, disk, swap, load average, uptime with metrics charts
-- **Website Management** - All hosted sites with HTTP status checks
-- **Uptime Monitoring** - HTTP health checks for all sites, response time history chart (24h), dashboard alerts on downtime
-- **PM2 Processes** - Node.js process management (restart, stop, logs)
-- **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
-- **Nginx Config Editor** - Edit, enable/disable site configs with built-in `nginx -t` validation
-- **SSL Certificates** - Expiry dates, warnings, and auto-renewal status
-- **DNS Record Viewer** - Per-domain DNS lookup (A, AAAA, MX, CNAME, TXT, NS records)
-- **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with restart/stop/start
+### Server Management
+- **Server Overview** - CPU, RAM, disk, swap, load average, uptime with real-time metrics charts
+- **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with restart/stop/start and bulk actions
 - **Process Manager** - Top 25 processes sorted by memory or CPU, kill functionality
 - **Network Overview** - Network interfaces, listening ports, active connection count
-- **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
+- **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
+- **Auto-Update** - Check GitHub releases, one-click self-update with git pull + PM2 restart
+
+### Web & Application
+- **Website Management** - All hosted sites with HTTP status checks
+- **Uptime Monitoring** - HTTP health checks for all sites, response time history chart (24h), dashboard alerts on downtime
+- **PM2 Processes** - Node.js process management (restart, stop, logs) with bulk actions
+- **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
+- **Nginx Config Editor** - Edit, enable/disable site configs with built-in `nginx -t` validation and syntax highlighting
+- **SSL Certificates** - Expiry dates, warnings, and auto-renewal status
+- **DNS Record Viewer** - Per-domain DNS lookup (A, AAAA, MX, CNAME, TXT, NS records)
 - **PHP Management** - Installed PHP versions, FPM pool status, per-site PHP mapping, FPM restart
+- **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
+
+### System Tools
 - **Cronjob Editor** - Full CRUD for user and root crontabs with schedule validation, human-readable descriptions
 - **Disk Usage** - Per-site disk usage breakdown
 - **File Browser & Editor** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown), in-browser file editing
+- **Web Terminal** - Browser-based command execution
+
+### Security
 - **Firewall & Security** - UFW rules, Fail2ban config, IP banning/unbanning, ban duration tracking, whitelist management
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
-- **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
-- **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
-- **Auto-Update** - Check GitHub releases, one-click self-update with git pull + PM2 restart
-- **Web Terminal** - Browser-based command execution
-- **Push Notifications** - Web Push alerts for critical events, configurable categories, deduplication
-- **Audit Log** - Full audit trail for all actions with user, IP, and timestamp
 - **2FA Authentication** - TOTP two-factor auth with QR code setup
+- **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
+- **Audit Log** - Full audit trail for all actions with user, IP, and timestamp
+
+### UX & Interface
+- **Command Palette** - Quick navigation with `Ctrl+K` / `Cmd+K`, fuzzy search across all pages
+- **Collapsible Sidebar** - Grouped navigation (Web, Server, Security, Tools) with persistent state
+- **Info Tooltips** - Contextual help on all card headers explaining technical concepts
+- **In-place Updates** - Actions update the UI instantly without page reloads
+- **Bulk Actions** - Select multiple PM2 processes or services for batch restart/stop
+- **Mobile Responsive** - Card-based table layout on small screens
+- **Dashboard Quick Actions** - Restart services and PM2 processes directly from the dashboard
+- **Persistent Alert Dismiss** - Dismissed alerts stay hidden across sessions
+- **Push Notifications** - Web Push alerts for critical events, configurable categories, deduplication
+- **PWA Support** - Install as a standalone app on desktop and mobile (see below)
 - **Settings Panel** - All configuration via web UI, config validation, password management
 
 ## Quick Start
@@ -159,6 +177,24 @@ Web Push notifications with configurable categories:
 | DDoS Detection | On | High connections, SYN floods |
 | Backup | On | Backup failures, no backup in 48h |
 | System Updates | Off | Available package updates |
+
+## PWA (Progressive Web App)
+
+VPS Manager can be installed as a standalone app on any device. This is especially useful for push notifications — browsers only deliver Web Push notifications to installed PWAs or pages with an active service worker.
+
+**Benefits of installing as PWA:**
+- **Push notifications** work reliably in the background, even when the browser is closed
+- **Standalone window** without browser chrome (address bar, tabs) for a native app feel
+- **Home screen / dock icon** for quick access
+- **Offline fallback** for static assets (icons, styles) via service worker caching
+- **Faster loading** through cached static assets
+
+**How to install:**
+- **Desktop (Chrome/Edge):** Click the install icon in the address bar, or use the install banner that appears at the bottom
+- **iOS Safari:** Tap the share button, then "Add to Home Screen"
+- **Android Chrome:** Tap the three-dot menu, then "Install app" or use the install banner
+
+The PWA uses a network-first strategy for pages and API calls (server data is always live), and cache-first for static assets (icons, fonts).
 
 ## Backup Monitoring
 
