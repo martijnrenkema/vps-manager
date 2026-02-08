@@ -2020,6 +2020,8 @@ def get_network_info():
             ifaces = json.loads(result.stdout)
             for iface in ifaces:
                 name = iface.get('ifname', '')
+                if name == 'lo':
+                    continue
                 state = iface.get('operstate', 'UNKNOWN').lower()
                 mac = iface.get('address', '')
                 addrs = []
@@ -2157,13 +2159,14 @@ def get_php_info():
     # Per-site PHP mapping from nginx configs
     site_mapping = []
     sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
-    result = run_cmd_safe(["grep", "-rl", "fastcgi_pass", sites_dir], timeout=5)
+    result = run_cmd_safe(["grep", "-Rl", "fastcgi_pass", sites_dir], timeout=5)
     if result.returncode == 0:
         for config_path in result.stdout.strip().split('\n'):
             if not config_path.strip():
                 continue
+            real_path = os.path.realpath(config_path.strip())
             config_name = os.path.basename(config_path.strip())
-            socket_result = run_cmd_safe(["grep", "-oP", r"fastcgi_pass unix:\K[^;]+", config_path.strip()], timeout=5)
+            socket_result = run_cmd_safe(["grep", "-oP", r"fastcgi_pass unix:\K[^;]+", real_path], timeout=5)
             socket_path = socket_result.stdout.strip() if socket_result.returncode == 0 else ''
             # Extract PHP version from socket path (e.g. /run/php/php8.3-fpm.sock)
             php_ver = '-'
