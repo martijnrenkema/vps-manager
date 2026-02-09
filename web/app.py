@@ -1567,24 +1567,33 @@ def get_nginx_logs():
             if line.strip():
                 data['errors'].append(_parse_nginx_error_line(line.strip()))
 
-    # Per-site error logs
-    result = run_cmd("ls /var/log/nginx/*error* 2>/dev/null")
+    # Per-site errors: parse last 200 lines of global error log, group by server
+    result = run_cmd_safe(["sudo", "tail", "-200", error_log])
     if result.returncode == 0 and result.stdout.strip():
-        log_files = [f.strip() for f in result.stdout.strip().split('\n') if f.strip()]
-        for log_file in log_files:
-            name = os.path.basename(log_file)
-            size_result = run_cmd(f"wc -l < {shlex.quote(log_file)} 2>/dev/null")
-            line_count = size_result.stdout.strip() if size_result.returncode == 0 else '?'
-            last_result = run_cmd_safe(["tail", "-1", log_file])
-            last_line = last_result.stdout.strip()[:100] if last_result.stdout.strip() else 'empty'
-            # Derive site name from log filename
-            site = name.replace('-error.log', '').replace('.error.log', '').replace('error.log', 'global')
+        site_errors = {}
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # Extract server name from nginx error format: "server: <domain>,"
+            server_match = re.search(r'server:\s+([^,\s]+)', line)
+            site = server_match.group(1) if server_match else 'other'
+            if site not in site_errors:
+                site_errors[site] = {'count': 0, 'last_ts': '', 'last_msg': ''}
+            site_errors[site]['count'] += 1
+            ts_match = re.match(r'(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})', line)
+            if ts_match:
+                site_errors[site]['last_ts'] = ts_match.group(1)
+            # Extract short message (between [level] and , client:)
+            msg_match = re.search(r'\[\w+\]\s+\d+#\d+:\s+\*\d+\s+(.*?)(?:,\s*client:|$)', line)
+            if msg_match:
+                site_errors[site]['last_msg'] = msg_match.group(1).strip()[:100]
+        for site, info in sorted(site_errors.items(), key=lambda x: x[1]['count'], reverse=True):
             data['per_site'].append({
-                'name': name,
                 'site': site,
-                'path': log_file,
-                'lines': line_count,
-                'last': last_line,
+                'count': info['count'],
+                'last_ts': info['last_ts'],
+                'last_msg': info['last_msg'],
             })
 
     # Access log summary
@@ -3148,14 +3157,25 @@ def nginx_logs_page():
 @app.route('/api/nginx-log')
 @login_required
 def api_nginx_log():
-    """Get content of a specific nginx log file"""
-    log_file = request.args.get('file', '')
+    """Get content of a specific nginx log file, optionally filtered by site"""
+    site = request.args.get('site', '')
     try:
-        lines = int(request.args.get('lines', 50))
+        lines = int(request.args.get('lines', 100))
     except (ValueError, TypeError):
-        lines = 50
-    lines = min(lines, 200)
-    # Only allow files in /var/log/nginx/ - resolve symlinks and validate
+        lines = 100
+    lines = min(lines, 500)
+    nginx_cfg = CONFIG.get('nginx', {})
+    error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
+    if site:
+        # Filter global error log by server name
+        result = run_cmd_safe(["sudo", "tail", "-2000", error_log])
+        if result.returncode == 0:
+            filtered = [l for l in result.stdout.split('\n') if f'server: {site}' in l]
+            content = '\n'.join(filtered[-lines:]) if filtered else '(no errors for this site)'
+            return jsonify({'content': content, 'site': site})
+        return jsonify({'status': 'error', 'message': 'Could not read error log'}), 500
+    # Legacy: read specific file by path
+    log_file = request.args.get('file', '')
     if not log_file or '..' in log_file:
         return jsonify({'status': 'error', 'message': 'Invalid log file'}), 400
     real_log = os.path.realpath(log_file)
