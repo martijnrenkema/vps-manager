@@ -32,12 +32,7 @@
             <span class="badge badge-green">Up to date</span>
         </div>
 
-        <div id="appUpdateProgress" style="display:none;margin-top:12px">
-            <div style="margin-bottom:8px">
-                <span class="badge badge-yellow" id="appUpdateBadge">Installing...</span>
-            </div>
-            <pre id="appUpdateLog" style="font-size:12px;max-height:150px;overflow-y:auto">Pulling latest changes...</pre>
-        </div>
+        <div id="appUpdateStepper" style="display:none;margin-top:16px"></div>
 
         <div id="appUpdateError" style="display:none;padding:8px 12px;background:var(--red-bg);border:1px solid rgba(220,53,69,0.3);border-radius:6px;font-size:13px;color:var(--red)"></div>
     </div>
@@ -303,55 +298,81 @@ async function checkAppUpdate() {
     checkBtn.disabled = false;
 }
 
-async function installAppUpdate() {
+function installAppUpdate() {
     var installBtn = document.getElementById('appInstallBtn');
-    var progressEl = document.getElementById('appUpdateProgress');
-    var logEl = document.getElementById('appUpdateLog');
-    var badgeEl = document.getElementById('appUpdateBadge');
+    var stepperEl = document.getElementById('appUpdateStepper');
     var errorEl = document.getElementById('appUpdateError');
 
     installBtn.disabled = true;
     errorEl.style.display = 'none';
-    progressEl.style.display = 'block';
-    logEl.textContent = 'Pulling latest changes from GitHub...\n';
-    badgeEl.textContent = 'Installing...';
-    badgeEl.className = 'badge badge-yellow';
 
-    try {
-        var res = await fetch('/api/update/install', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
-        var data = await res.json();
+    var stepNames = [
+        'Downloading from GitHub',
+        'Installing update files',
+        'Checking dependencies',
+        'Clearing cache',
+        'Restarting application'
+    ];
 
-        if (res.ok) {
-            logEl.textContent = (data.output || 'Done.') + '\n\nUpdated: v' + data.previous_version + ' -> v' + data.new_version;
+    // Build stepper HTML
+    var html = '<div class="update-stepper">';
+    stepNames.forEach(function(name, i) {
+        html += '<div class="stepper-step" id="step-' + (i + 1) + '">';
+        html += '<div class="stepper-indicator"><span class="stepper-num">' + (i + 1) + '</span></div>';
+        html += '<div class="stepper-content">';
+        html += '<div class="stepper-title">' + escHtml(name) + '</div>';
+        html += '<div class="stepper-output" id="step-output-' + (i + 1) + '"></div>';
+        html += '</div></div>';
+    });
+    html += '</div>';
 
-            if (data.restart === 'ok') {
-                badgeEl.textContent = 'Restart required';
-                badgeEl.className = 'badge badge-yellow';
-                logEl.textContent += '\n\nThe application is restarting. This page will reload automatically.';
-                showToast('Update installed, restarting...', 'success');
-                // Wait for PM2 to restart the process, then reload
-                setTimeout(function() { location.reload(); }, 4000);
-            } else {
-                badgeEl.textContent = 'Updated (restart manually)';
-                badgeEl.className = 'badge badge-yellow';
-                logEl.textContent += '\n\nPM2 restart failed. Please restart manually: pm2 restart vps-manager';
-                showToast('Update installed, manual restart needed', 'success');
-            }
-        } else {
-            badgeEl.textContent = 'Update failed';
-            badgeEl.className = 'badge badge-red';
-            logEl.textContent = data.output || data.message || 'Unknown error';
-            showToast('Failed to install update', 'error');
-            installBtn.disabled = false;
+    stepperEl.innerHTML = html;
+    stepperEl.style.display = 'block';
+    stepperEl.scrollIntoView({ behavior: 'smooth' });
+
+    var completed = false;
+    var es = new EventSource('/api/update/install-stream');
+
+    es.onmessage = function(e) {
+        var data = JSON.parse(e.data);
+
+        if (data.type === 'complete') {
+            completed = true;
+            es.close();
+            showToast('Update installed (v' + data.previous_version + ' → v' + data.new_version + '). Restarting...', 'success');
+            setTimeout(function() { location.reload(); }, 4000);
+            return;
         }
-    } catch (e) {
-        badgeEl.textContent = 'Connection lost';
-        badgeEl.className = 'badge badge-red';
-        logEl.textContent = 'Connection lost. If the update was in progress, the application may be restarting.';
-        showToast('Connection lost during update', 'error');
-        // Try reloading after a delay in case the app restarted
+
+        if (data.type === 'error') {
+            completed = true;
+            es.close();
+            showToast(data.message || 'Update failed', 'error');
+            installBtn.disabled = false;
+            return;
+        }
+
+        var stepEl = document.getElementById('step-' + data.step);
+        var outputEl = document.getElementById('step-output-' + data.step);
+        if (!stepEl) return;
+
+        // Remove previous states
+        stepEl.classList.remove('running', 'done', 'error', 'skipped');
+        stepEl.classList.add(data.status);
+
+        if (data.output && data.status !== 'running') {
+            outputEl.textContent = data.output;
+            outputEl.style.display = 'block';
+        }
+    };
+
+    es.onerror = function() {
+        es.close();
+        if (completed) return;
+        // Connection lost unexpectedly - app may be restarting
+        showToast('Connection lost. Reloading...', 'warning');
         setTimeout(function() { location.reload(); }, 5000);
-    }
+    };
 }
 
 // Load update history

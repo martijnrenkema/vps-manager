@@ -26,7 +26,7 @@ from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, send_file, after_this_request
+    session, flash, jsonify, send_file, after_this_request, Response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -3147,6 +3147,112 @@ def update_install():
     })
 
 
+def _delayed_restart(delay=1.5):
+    """Restart PM2 process after a delay (so SSE response can flush)"""
+    time.sleep(delay)
+    run_cmd_safe(["pm2", "restart", "vps-manager"], timeout=15)
+
+
+@app.route('/api/update/install-stream')
+@login_required
+def update_install_stream():
+    """SSE endpoint that streams update progress step by step"""
+    def generate():
+        import json as _json
+
+        def send_event(data):
+            return f"data: {_json.dumps(data)}\n\n"
+
+        steps = [
+            'Downloading from GitHub',
+            'Installing update files',
+            'Checking dependencies',
+            'Clearing cache',
+            'Restarting application',
+        ]
+        current_before = _get_current_version()
+        error_occurred = False
+
+        # Step 1: git fetch
+        yield send_event({'step': 1, 'name': steps[0], 'status': 'running', 'output': ''})
+        result = run_cmd(f"git -C {APP_DIR} fetch origin main", timeout=60)
+        if result.returncode != 0:
+            yield send_event({'step': 1, 'name': steps[0], 'status': 'error', 'output': (result.stderr or result.stdout)[-300:]})
+            for i in range(2, 6):
+                yield send_event({'step': i, 'name': steps[i - 1], 'status': 'skipped', 'output': ''})
+            yield send_event({'type': 'error', 'message': 'Git fetch failed'})
+            return
+        yield send_event({'step': 1, 'name': steps[0], 'status': 'done', 'output': result.stdout[-200:]})
+
+        # Step 2: reset + copy files
+        yield send_event({'step': 2, 'name': steps[1], 'status': 'running', 'output': ''})
+        reset = run_cmd(f"git -C {APP_DIR} reset --hard origin/main", timeout=30)
+        if reset.returncode != 0:
+            yield send_event({'step': 2, 'name': steps[1], 'status': 'error', 'output': (reset.stderr or reset.stdout)[-300:]})
+            error_occurred = True
+        else:
+            copy_output = ''
+            web_src = os.path.join(APP_DIR, 'web')
+            if os.path.isdir(web_src):
+                copy_result = run_cmd(
+                    f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
+                    f"{web_src}/requirements.txt {web_src}/vps-backup.sh {APP_DIR}/ 2>&1 && "
+                    f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 && "
+                    f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
+                    timeout=15
+                )
+                if copy_result.returncode != 0:
+                    error_occurred = True
+                    copy_output = copy_result.stderr or copy_result.stdout
+                    yield send_event({'step': 2, 'name': steps[1], 'status': 'error', 'output': copy_output[-200:]})
+                else:
+                    yield send_event({'step': 2, 'name': steps[1], 'status': 'done', 'output': 'Files copied'})
+            else:
+                yield send_event({'step': 2, 'name': steps[1], 'status': 'done', 'output': 'No web/ subfolder, skipped copy'})
+
+        # Step 3: pip install (check if requirements changed)
+        yield send_event({'step': 3, 'name': steps[2], 'status': 'running', 'output': ''})
+        pip_result = run_cmd(
+            f"cd {APP_DIR} && venv/bin/pip install -r requirements.txt --quiet 2>&1",
+            timeout=120
+        )
+        if pip_result.returncode != 0:
+            yield send_event({'step': 3, 'name': steps[2], 'status': 'error', 'output': (pip_result.stderr or pip_result.stdout)[-200:]})
+        else:
+            output = pip_result.stdout.strip()
+            yield send_event({'step': 3, 'name': steps[2], 'status': 'done', 'output': output[-200:] if output else 'All dependencies satisfied'})
+
+        # Step 4: clear cache + read new version
+        yield send_event({'step': 4, 'name': steps[3], 'status': 'running', 'output': ''})
+        _invalidate_cache('check_app_update_alert', 'get_pm2_processes')
+        new_version = _get_current_version()
+        yield send_event({'step': 4, 'name': steps[3], 'status': 'done', 'output': f'v{current_before} → v{new_version}'})
+
+        # Step 5: audit log + restart
+        yield send_event({'step': 5, 'name': steps[4], 'status': 'running', 'output': ''})
+        log_audit('self_update', {'from': current_before, 'to': new_version})
+        _save_update_history('self-update', 'success' if not error_occurred else 'warning',
+                             f'v{current_before} → v{new_version}')
+        yield send_event({'step': 5, 'name': steps[4], 'status': 'done', 'output': 'Restarting...'})
+
+        # Send complete event before restart
+        yield send_event({'type': 'complete', 'previous_version': current_before, 'new_version': new_version})
+
+        # Schedule delayed restart so the SSE response can flush
+        t = threading.Thread(target=_delayed_restart, daemon=True)
+        t.start()
+
+    return Response(
+        generate(),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        }
+    )
+
+
 @app.route('/nginx-logs')
 @login_required
 def nginx_logs_page():
@@ -4194,6 +4300,39 @@ def backup_webhook():
 
     _save_backup_status(status_data)
     return jsonify({'status': 'ok', 'message': 'Backup status recorded'})
+
+
+@app.route('/swap/clear', methods=['POST'])
+@login_required
+def swap_clear():
+    # Check current swap and available RAM
+    try:
+        meminfo = {}
+        with open('/proc/meminfo') as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 2:
+                    meminfo[parts[0].rstrip(':')] = int(parts[1])
+        swap_used = meminfo.get('SwapTotal', 0) - meminfo.get('SwapFree', 0)
+        mem_available = meminfo.get('MemAvailable', 0)
+        if swap_used <= 0:
+            return jsonify({'status': 'error', 'message': 'Swap is already empty'}), 400
+        if swap_used > mem_available:
+            swap_mb = swap_used // 1024
+            avail_mb = mem_available // 1024
+            return jsonify({'status': 'error', 'message': f'Not enough free RAM ({avail_mb}MB) to clear swap ({swap_mb}MB)'}), 400
+    except (OSError, ValueError):
+        return jsonify({'status': 'error', 'message': 'Could not read memory info'}), 500
+    # Disable and re-enable swap
+    result = run_cmd_safe(["sudo", "swapoff", "-a"], timeout=60)
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': f'swapoff failed: {result.stderr}'}), 500
+    result = run_cmd_safe(["sudo", "swapon", "-a"], timeout=10)
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': f'swapon failed: {result.stderr}'}), 500
+    log_audit('swap_clear', {'freed_mb': swap_used // 1024})
+    _invalidate_cache('get_server_overview')
+    return jsonify({'status': 'ok', 'message': f'Swap cleared ({swap_used // 1024}MB freed)'})
 
 
 @app.route('/reboot', methods=['POST'])

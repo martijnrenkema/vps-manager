@@ -2225,3 +2225,116 @@ code {
     color: var(--text-primary);
     box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.4);
 }
+
+/* Update stepper */
+.update-stepper {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+}
+
+.stepper-step {
+    display: flex;
+    gap: 12px;
+    padding: 10px 0;
+    opacity: 0.4;
+    transition: opacity 0.3s ease;
+}
+
+.stepper-step.running,
+.stepper-step.done,
+.stepper-step.error,
+.stepper-step.skipped {
+    opacity: 1;
+}
+
+.stepper-indicator {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+    width: 28px;
+}
+
+.stepper-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 600;
+    background: var(--bg-tertiary);
+    border: 2px solid var(--border);
+    color: var(--text-muted);
+    transition: all 0.3s ease;
+}
+
+.stepper-step.running .stepper-num {
+    border-color: var(--yellow);
+    color: var(--yellow);
+    background: var(--yellow-bg);
+    animation: stepper-pulse 1.5s ease-in-out infinite;
+}
+
+.stepper-step.done .stepper-num {
+    border-color: var(--green);
+    color: var(--green);
+    background: var(--green-bg);
+}
+
+.stepper-step.error .stepper-num {
+    border-color: var(--red);
+    color: var(--red);
+    background: var(--red-bg);
+}
+
+.stepper-step.skipped .stepper-num {
+    opacity: 0.3;
+}
+
+.stepper-content {
+    flex: 1;
+    min-width: 0;
+    padding-top: 3px;
+}
+
+.stepper-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    transition: color 0.3s ease;
+}
+
+.stepper-step.running .stepper-title {
+    color: var(--yellow);
+}
+
+.stepper-step.done .stepper-title {
+    color: var(--green);
+}
+
+.stepper-step.error .stepper-title {
+    color: var(--red);
+}
+
+.stepper-output {
+    display: none;
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    padding: 4px 8px;
+    background: var(--bg-primary);
+    border-radius: 4px;
+    max-height: 80px;
+    overflow-y: auto;
+    word-break: break-all;
+    white-space: pre-wrap;
+}
+
+@keyframes stepper-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(210, 153, 34, 0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(210, 153, 34, 0); }
+}

@@ -17,7 +17,7 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **Process Manager** - Top 25 processes sorted by memory or CPU, kill functionality
 - **Network Overview** - Network interfaces, listening ports, active connection count
 - **System Updates** - Categorized updates (security, regular, phased, ESM) with one-click install
-- **Auto-Update** - Check GitHub releases, one-click self-update with git pull + PM2 restart
+- **Auto-Update** - Check GitHub releases, streaming self-update with real-time step-by-step progress via SSE
 
 ### Web & Application
 - **Website Management** - All hosted sites with HTTP status checks
@@ -84,7 +84,7 @@ pm2 save
 
 ## Updating
 
-The dashboard has a built-in auto-update system. Go to **Updates** in the sidebar to check for new versions and install them with one click. This requires the deployment directory to be a git repository:
+The dashboard has a built-in auto-update system. Go to **Updates** in the sidebar to check for new versions and install with a visual step-by-step progress indicator (git fetch, file install, dependency check, cache clear, restart). This requires the deployment directory to be a git repository:
 
 ```bash
 # On VPS: initialize git (one-time setup)

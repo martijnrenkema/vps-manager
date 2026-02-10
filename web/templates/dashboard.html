@@ -82,12 +82,15 @@
             </div>
         </div>
         <div class="stat-card">
-            <div class="label">Swap <span class="tooltip-icon" data-bs-toggle="tooltip" title="Virtual memory on disk, used when RAM is full. High swap usage may indicate insufficient RAM." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
-            <div class="value">{{ data.swap_pct }}%</div>
-            <div class="sub">{{ data.swap }}</div>
+            <div class="label" style="display:flex;align-items:center;justify-content:space-between">
+                <span>Swap <span class="tooltip-icon" data-bs-toggle="tooltip" title="Virtual memory on disk, used when RAM is full. High swap usage may indicate insufficient RAM." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></span>
+                {% if data.swap_pct > 0 %}<button class="btn btn-sm" id="swapClearBtn" onclick="clearSwap(this)" style="padding:1px 8px;font-size:11px">Clear</button>{% endif %}
+            </div>
+            <div class="value" id="swapValue">{{ data.swap_pct }}%</div>
+            <div class="sub" id="swapSub">{{ data.swap }}</div>
             <div class="progress-wrap">
                 <div class="progress-bar-bg">
-                    <div class="progress-bar-fill {% if data.swap_pct > 80 %}red{% elif data.swap_pct > 50 %}yellow{% else %}green{% endif %}" style="width:{{ data.swap_pct }}%"></div>
+                    <div class="progress-bar-fill {% if data.swap_pct > 80 %}red{% elif data.swap_pct > 50 %}yellow{% else %}green{% endif %}" id="swapBar" style="width:{{ data.swap_pct }}%"></div>
                 </div>
             </div>
         </div>
@@ -218,6 +221,23 @@
 {% block scripts %}
 <script>
 async function doReboot() { await apiCall('/reboot', 'POST'); }
+
+async function clearSwap(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Clearing…';
+    var data = await apiCall('/swap/clear', 'POST');
+    if (data && data.status === 'ok') {
+        document.getElementById('swapValue').textContent = '0%';
+        document.getElementById('swapSub').textContent = '0.0G / ' + document.getElementById('swapSub').textContent.split('/').pop().trim();
+        var bar = document.getElementById('swapBar');
+        bar.style.width = '0%';
+        bar.className = 'progress-bar-fill green';
+        btn.style.display = 'none';
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Clear';
+    }
+}
 
 // --- Charts ---
 const chartInstances = {};
