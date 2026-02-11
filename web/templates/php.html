@@ -48,6 +48,24 @@
     </div>
 </div>
 
+{% for v in versions %}
+{% if v.extensions %}
+<div class="card" style="margin-bottom:24px">
+    <div class="card-header d-flex align-items-center justify-content-between">
+        <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="badge badge-muted" style="font-weight:normal">{{ v.extensions|length }}</span></span>
+        <button class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" style="font-size:.8rem">Show</button>
+    </div>
+    <div class="card-body" style="display:none">
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+            {% for ext in v.extensions %}
+            <span class="badge badge-muted" style="font-weight:normal">{{ ext }}</span>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endfor %}
+
 <div class="card">
     <div class="card-header">{{ icon('link') }} Site PHP Mapping <span class="tooltip-icon" data-bs-toggle="tooltip" title="Which PHP version each website uses, configured via the Nginx socket path.">?</span></div>
     <div class="card-body">
@@ -81,6 +99,16 @@
 
 {% block scripts %}
 <script>
+function toggleExtensions(btn) {
+    var body = btn.closest('.card').querySelector('.card-body');
+    if (body.style.display === 'none') {
+        body.style.display = '';
+        btn.textContent = 'Hide';
+    } else {
+        body.style.display = 'none';
+        btn.textContent = 'Show';
+    }
+}
 async function restartPhp(version, btn) {
     showConfirm('Restart PHP-FPM', 'Restart PHP ' + version + '-FPM? This may briefly interrupt PHP sites.', async function() {
         var data = await apiCall('/php/restart/' + encodeURIComponent(version), 'POST');

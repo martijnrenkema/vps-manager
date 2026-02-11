@@ -2165,12 +2165,20 @@ def get_php_info():
                         k, v = line.split('=', 1)
                         pool_config[k.strip()] = v.strip()
 
+            # Installed extensions
+            ext_result = run_cmd_safe(["php" + ver, "-m"], timeout=5)
+            extensions = []
+            if ext_result.returncode == 0:
+                extensions = sorted([l.strip() for l in ext_result.stdout.strip().split('\n')
+                                     if l.strip() and not l.strip().startswith('[')])
+
             versions.append({
                 'version': ver,
                 'fpm_status': fpm_status,
                 'pm': pool_config.get('pm', '-'),
                 'max_children': pool_config.get('pm.max_children', '-'),
                 'memory_limit': pool_config.get('memory_limit', '-'),
+                'extensions': extensions,
             })
 
     # Per-site PHP mapping from nginx configs
@@ -2183,7 +2191,7 @@ def get_php_info():
                 continue
             real_path = os.path.realpath(config_path.strip())
             config_name = os.path.basename(config_path.strip())
-            socket_result = run_cmd_safe(["grep", "-oP", r"fastcgi_pass unix:\K[^;]+", real_path], timeout=5)
+            socket_result = run_cmd_safe(["grep", "-oP", "-m1", r"fastcgi_pass unix:\K[^;]+", real_path], timeout=5)
             socket_path = socket_result.stdout.strip() if socket_result.returncode == 0 else ''
             # Extract PHP version from socket path (e.g. /run/php/php8.3-fpm.sock)
             php_ver = '-'
