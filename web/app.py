@@ -4141,6 +4141,40 @@ def validate_config(data):
                 if key in dd and (not isinstance(dd[key], int) or dd[key] < 1):
                     errors.append(f'{key} must be a positive integer')
 
+    if 'auth' in data:
+        if not isinstance(data['auth'], dict):
+            errors.append('auth must be an object')
+        else:
+            a = data['auth']
+            if 'session_lifetime_hours' in a:
+                v = a['session_lifetime_hours']
+                if not isinstance(v, int) or v < 1 or v > 720:
+                    errors.append('session_lifetime_hours must be between 1-720')
+
+    if 'vapid_mailto' in data:
+        if not isinstance(data['vapid_mailto'], str) or not data['vapid_mailto'].startswith('mailto:'):
+            errors.append('vapid_mailto must start with mailto:')
+
+    if 'backup' in data:
+        if not isinstance(data['backup'], dict):
+            errors.append('backup must be an object')
+        else:
+            for key in ('log_path', 'backup_dir', 'db_backup_dir'):
+                if key in data['backup']:
+                    v = data['backup'][key]
+                    if not isinstance(v, str) or not v.startswith('/'):
+                        errors.append(f'backup.{key} must be an absolute path')
+
+    if 'nginx' in data:
+        if not isinstance(data['nginx'], dict):
+            errors.append('nginx must be an object')
+        else:
+            for key in ('error_log', 'access_log', 'sites_enabled'):
+                if key in data['nginx']:
+                    v = data['nginx'][key]
+                    if not isinstance(v, str) or not v.startswith('/'):
+                        errors.append(f'nginx.{key} must be an absolute path')
+
     return (len(errors) == 0, errors)
 
 
@@ -4157,10 +4191,12 @@ def update_config():
     if not is_valid:
         return jsonify({'status': 'error', 'message': 'Validation failed', 'errors': errors}), 400
 
-    # Merge into config (don't overwrite auth section from here)
+    # Merge into config (only allow session_lifetime_hours from auth)
     for key in data:
         if key == 'auth':
-            continue  # Auth is handled separately
+            if isinstance(data[key], dict) and 'session_lifetime_hours' in data[key]:
+                CONFIG['auth']['session_lifetime_hours'] = data[key]['session_lifetime_hours']
+            continue
         if key in CONFIG and isinstance(CONFIG[key], dict) and isinstance(data[key], dict):
             CONFIG[key].update(data[key])
         else:

@@ -89,27 +89,27 @@
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Thresholds</h4>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
                 <div class="form-group">
-                    <label>Disk warning (%)</label>
+                    <label>Disk warning (%) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Triggers a warning notification when disk usage exceeds this percentage." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_disk_warning" value="{{ config.thresholds.disk_warning }}" min="1" max="100">
                 </div>
                 <div class="form-group">
-                    <label>Disk critical (%)</label>
+                    <label>Disk critical (%) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Triggers a critical alert when disk usage exceeds this. Consider freeing space immediately." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_disk_critical" value="{{ config.thresholds.disk_critical }}" min="1" max="100">
                 </div>
                 <div class="form-group">
-                    <label>Memory warning (%)</label>
+                    <label>Memory warning (%) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Triggers a warning when RAM usage exceeds this percentage." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_memory_warning" value="{{ config.thresholds.memory_warning }}" min="1" max="100">
                 </div>
                 <div class="form-group">
-                    <label>Swap warning (%)</label>
+                    <label>Swap warning (%) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Triggers a warning when swap usage exceeds this. High swap often means the server needs more RAM." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_swap_warning" value="{{ config.thresholds.swap_warning }}" min="1" max="100">
                 </div>
                 <div class="form-group">
-                    <label>SSL warning (days)</label>
+                    <label>SSL warning (days) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Warns when an SSL certificate has fewer than this many days until expiry." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_ssl_warning" value="{{ config.thresholds.ssl_warning_days }}" min="1" max="90">
                 </div>
                 <div class="form-group">
-                    <label>SSL critical (days)</label>
+                    <label>SSL critical (days) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Critical alert when an SSL certificate has fewer than this many days left. Expired certificates cause browser warnings." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_ssl_critical" value="{{ config.thresholds.ssl_critical_days }}" min="1" max="30">
                 </div>
             </div>
@@ -117,34 +117,48 @@
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Monitor & Notifications</h4>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
                 <div class="form-group">
-                    <label>Monitor interval (sec)</label>
+                    <label>Monitor interval (sec) <span class="tooltip-icon" data-bs-toggle="tooltip" title="How often the background monitor checks server health. Lower values = faster alerts but more resource usage." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_monitor_interval" value="{{ config.monitor_interval }}" min="60" max="3600">
                 </div>
                 <div class="form-group">
-                    <label>Notification cooldown (sec)</label>
+                    <label>Notification cooldown (sec) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Minimum time between repeated notifications for the same alert. Prevents notification spam." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_notification_cooldown" value="{{ config.notification_cooldown }}" min="60" max="86400">
                 </div>
             </div>
 
-            <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">DDoS Detection</h4>
+            <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Session</h4>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
                 <div class="form-group">
-                    <label>Connection threshold</label>
+                    <label>Session lifetime (hours) <span class="tooltip-icon" data-bs-toggle="tooltip" title="How long a login session stays valid before requiring re-authentication." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                    <input type="number" class="form-control" id="cfg_session_lifetime" value="{{ config.auth.session_lifetime_hours }}" min="1" max="720">
+                </div>
+            </div>
+
+            <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">DDoS Detection</h4>
+            <div class="form-group" style="margin-bottom:12px">
+                <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="cfg_ddos_enabled" {% if config.ddos_detection.enabled %}checked{% endif %} style="accent-color:var(--green);width:16px;height:16px;cursor:pointer">
+                    Enable DDoS detection <span class="tooltip-icon" data-bs-toggle="tooltip" title="When enabled, the monitor checks for unusual connection patterns and alerts you." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span>
+                </label>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
+                <div class="form-group">
+                    <label>Connection threshold <span class="tooltip-icon" data-bs-toggle="tooltip" title="Maximum total network connections before a DDoS warning is triggered." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_ddos_conn" value="{{ config.ddos_detection.connection_threshold }}" min="10">
                 </div>
                 <div class="form-group">
-                    <label>SYN threshold</label>
+                    <label>SYN threshold <span class="tooltip-icon" data-bs-toggle="tooltip" title="Maximum half-open (SYN_RECV) connections before a SYN flood warning is triggered." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_ddos_syn" value="{{ config.ddos_detection.syn_threshold }}" min="5">
                 </div>
                 <div class="form-group">
-                    <label>Single IP threshold</label>
+                    <label>Single IP threshold <span class="tooltip-icon" data-bs-toggle="tooltip" title="Maximum connections from one IP address before it is flagged as suspicious." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_ddos_ip" value="{{ config.ddos_detection.single_ip_threshold }}" min="5">
                 </div>
             </div>
 
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Services</h4>
             <div class="form-group" style="max-width:500px">
-                <label>Monitored services (comma-separated)</label>
+                <label>Monitored services (comma-separated) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Systemd services to monitor. You will be alerted if a listed service stops running." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                 <div style="display:flex;gap:8px;align-items:center">
                     <input type="text" class="form-control" id="cfg_services" value="{{ config.services | join(', ') }}" style="flex:1">
                     <button type="button" class="btn" onclick="detectServices()" id="detectServicesBtn">{{ icon('refresh') }} Detect</button>
@@ -158,8 +172,70 @@
 
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">phpMyAdmin</h4>
             <div class="form-group" style="max-width:300px">
-                <label>phpMyAdmin path</label>
+                <label>phpMyAdmin path <span class="tooltip-icon" data-bs-toggle="tooltip" title="URL path prefix for phpMyAdmin, used to generate the link on the Databases page." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                 <input type="text" class="form-control" id="cfg_phpmyadmin" value="{{ config.phpmyadmin_path }}">
+            </div>
+
+            <!-- Advanced Settings -->
+            <div style="margin-top:20px;margin-bottom:16px">
+                <button type="button" class="btn" onclick="toggleAdvanced()" id="advancedToggleBtn" style="font-size:13px;padding:6px 14px">
+                    {{ icon('settings') }} Advanced Settings <span id="advancedArrow" style="font-size:10px">&#9654;</span>
+                </button>
+            </div>
+            <div id="advancedSettings" style="display:none;border:1px solid var(--border);border-radius:8px;padding:16px;margin-bottom:20px;background:var(--bg-primary)">
+                <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">File Browser</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px">
+                    <div class="form-group">
+                        <label>Default path <span class="tooltip-icon" data-bs-toggle="tooltip" title="The starting directory when opening the file browser." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_fb_default_path" value="{{ config.file_browser.default_path }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Allowed paths <span class="tooltip-icon" data-bs-toggle="tooltip" title="Comma-separated list of directories the file browser is allowed to access." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_fb_allowed_paths" value="{{ config.file_browser.allowed_paths | join(', ') }}">
+                    </div>
+                </div>
+
+                <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Backup</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px">
+                    <div class="form-group">
+                        <label>Log path <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the backup log file used to display backup status." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_backup_log_path" value="{{ config.backup.log_path }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Backup directory <span class="tooltip-icon" data-bs-toggle="tooltip" title="Directory where file backups are stored." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_backup_dir" value="{{ config.backup.backup_dir }}">
+                    </div>
+                    <div class="form-group">
+                        <label>DB backup directory <span class="tooltip-icon" data-bs-toggle="tooltip" title="Directory where database backups are stored." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_backup_db_dir" value="{{ config.backup.db_backup_dir }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Webhook secret <span class="tooltip-icon" data-bs-toggle="tooltip" title="Shared secret for authenticating incoming backup webhook calls." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_backup_webhook" value="{{ config.backup.webhook_secret }}">
+                    </div>
+                </div>
+
+                <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Nginx</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px">
+                    <div class="form-group">
+                        <label>Error log <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the nginx error log file." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_nginx_error_log" value="{{ config.nginx.error_log }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Access log <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the nginx access log file." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_nginx_access_log" value="{{ config.nginx.access_log }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Sites enabled <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the nginx sites-enabled directory." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_nginx_sites_enabled" value="{{ config.nginx.sites_enabled }}">
+                    </div>
+                </div>
+
+                <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Push Notifications</h4>
+                <div class="form-group" style="max-width:400px">
+                    <label>VAPID mailto <span class="tooltip-icon" data-bs-toggle="tooltip" title="Contact email for VAPID push notification identification (must start with mailto:)." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                    <input type="text" class="form-control" id="cfg_vapid_mailto" value="{{ config.vapid_mailto }}">
+                </div>
             </div>
 
             <button type="submit" class="btn btn-green" style="margin-top:8px">Save Configuration</button>
@@ -324,9 +400,22 @@ function applyDetectedServices() {
     showToast(`${newServices.size} services configured`, 'success');
 }
 
+function toggleAdvanced() {
+    const el = document.getElementById('advancedSettings');
+    const arrow = document.getElementById('advancedArrow');
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        arrow.innerHTML = '&#9660;';
+    } else {
+        el.style.display = 'none';
+        arrow.innerHTML = '&#9654;';
+    }
+}
+
 async function saveConfig(e) {
     e.preventDefault();
     const services = document.getElementById('cfg_services').value.split(',').map(s => s.trim()).filter(Boolean);
+    const allowedPaths = document.getElementById('cfg_fb_allowed_paths').value.split(',').map(s => s.trim()).filter(Boolean);
     const data = {
         thresholds: {
             disk_warning: parseInt(document.getElementById('cfg_disk_warning').value),
@@ -338,13 +427,33 @@ async function saveConfig(e) {
         },
         monitor_interval: parseInt(document.getElementById('cfg_monitor_interval').value),
         notification_cooldown: parseInt(document.getElementById('cfg_notification_cooldown').value),
+        auth: {
+            session_lifetime_hours: parseInt(document.getElementById('cfg_session_lifetime').value),
+        },
         ddos_detection: {
+            enabled: document.getElementById('cfg_ddos_enabled').checked,
             connection_threshold: parseInt(document.getElementById('cfg_ddos_conn').value),
             syn_threshold: parseInt(document.getElementById('cfg_ddos_syn').value),
             single_ip_threshold: parseInt(document.getElementById('cfg_ddos_ip').value),
         },
         services: services,
         phpmyadmin_path: document.getElementById('cfg_phpmyadmin').value,
+        file_browser: {
+            default_path: document.getElementById('cfg_fb_default_path').value,
+            allowed_paths: allowedPaths,
+        },
+        backup: {
+            log_path: document.getElementById('cfg_backup_log_path').value,
+            backup_dir: document.getElementById('cfg_backup_dir').value,
+            db_backup_dir: document.getElementById('cfg_backup_db_dir').value,
+            webhook_secret: document.getElementById('cfg_backup_webhook').value,
+        },
+        nginx: {
+            error_log: document.getElementById('cfg_nginx_error_log').value,
+            access_log: document.getElementById('cfg_nginx_access_log').value,
+            sites_enabled: document.getElementById('cfg_nginx_sites_enabled').value,
+        },
+        vapid_mailto: document.getElementById('cfg_vapid_mailto').value,
     };
     try {
         const res = await fetch('/api/config', {

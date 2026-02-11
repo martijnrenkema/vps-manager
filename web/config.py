@@ -58,6 +58,7 @@ def get_default_config():
             "sites_enabled": "/etc/nginx/sites-enabled/",
         },
         "phpmyadmin_path": "/phpmyadmin/",
+        "dismissed_alerts": [],
     }
 
 
