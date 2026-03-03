@@ -4,46 +4,190 @@
 {% block page_title %}Disk Usage{% endblock %}
 
 {% block content %}
+{% if sites %}
+{% set total_mb = sites | map(attribute='size_mb') | list | sum %}
 <div class="card">
-    <div class="card-header">{{ icon('hard-drive') }} Disk usage /var/www <span class="tooltip-icon" data-bs-toggle="tooltip" title="Disk space used by each site directory under /var/www. Color indicates relative size.">?</span></div>
+    <div class="card-header">{{ icon('hard-drive') }} Storage Overview <span class="tooltip-icon" data-bs-toggle="tooltip" title="Disk space used by each site directory under /var/www.">?</span></div>
     <div class="card-body">
-        {% if sites %}
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Site</th>
-                        <th>Size</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for site in sites %}
-                    <tr>
-                        <td><strong>{{ site.site }}</strong></td>
-                        <td>
-                            {% set s = site.size %}
-                            {% if 'G' in s %}
-                                <span style="color:var(--red)">{{ s }}</span>
-                            {% elif 'M' in s %}
-                                <span style="color:var(--yellow)">{{ s }}</span>
-                            {% else %}
-                                <span style="color:var(--green)">{{ s }}</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                    {% if total %}
-                    <tr style="border-top:2px solid var(--border)">
-                        <td><strong>TOTAL</strong></td>
-                        <td><strong>{{ total }}</strong></td>
-                    </tr>
-                    {% endif %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="empty-state">Unable to retrieve disk usage.</div>
+        {% if total %}
+        <div class="storage-total">{{ total }} used in /var/www</div>
         {% endif %}
+
+        <div class="storage-bar">
+            {% for site in sites %}
+            {% set pct = (site.size_mb / total_mb * 100) if total_mb > 0 else 0 %}
+            {% if pct >= 0.5 %}
+            <div class="storage-bar-segment" style="width:{{ pct }}%;background:var(--disk-color-{{ loop.index0 % 10 }})" data-bs-toggle="tooltip" data-bs-placement="top" title="{{ site.site }}: {{ site.size }} ({{ '%.1f' | format(pct) }}%)"></div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+        <div class="storage-legend">
+            {% for site in sites %}
+            {% set pct = (site.size_mb / total_mb * 100) if total_mb > 0 else 0 %}
+            <div class="storage-legend-item">
+                <span class="storage-dot" style="background:var(--disk-color-{{ loop.index0 % 10 }})"></span>
+                <span class="storage-legend-name">{{ site.site }}</span>
+                <span class="storage-legend-size">{{ site.size }}</span>
+                <span class="storage-legend-pct">{{ '%.1f' | format(pct) }}%</span>
+            </div>
+            {% endfor %}
+        </div>
     </div>
 </div>
+
+<div class="card">
+    <div class="card-header">{{ icon('list') }} Breakdown</div>
+    <div class="card-body">
+        <div class="storage-list">
+            {% set max_mb = sites[0].size_mb if sites else 1 %}
+            {% for site in sites %}
+            {% set pct = (site.size_mb / max_mb * 100) if max_mb > 0 else 0 %}
+            <div class="storage-row">
+                <div class="storage-row-header">
+                    <span class="storage-dot" style="background:var(--disk-color-{{ loop.index0 % 10 }})"></span>
+                    <span class="storage-row-name">{{ site.site }}</span>
+                    <span class="storage-row-size">{{ site.size }}</span>
+                </div>
+                <div class="storage-row-track">
+                    <div class="storage-row-fill" style="width:{{ pct }}%;background:var(--disk-color-{{ loop.index0 % 10 }})"></div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="card-header">{{ icon('hard-drive') }} Disk Usage</div>
+    <div class="card-body">
+        <div class="empty-state">Unable to retrieve disk usage.</div>
+    </div>
+</div>
+{% endif %}
+
+<style>
+:root {
+    --disk-color-0: #58a6ff;
+    --disk-color-1: #3fb950;
+    --disk-color-2: #bc8cff;
+    --disk-color-3: #d29922;
+    --disk-color-4: #39d2c0;
+    --disk-color-5: #f778ba;
+    --disk-color-6: #ff7b72;
+    --disk-color-7: #79c0ff;
+    --disk-color-8: #7ee787;
+    --disk-color-9: #d2a8ff;
+}
+
+.storage-total {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 16px;
+}
+
+/* Stacked bar */
+.storage-bar {
+    display: flex;
+    height: 24px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-body);
+    gap: 2px;
+    margin-bottom: 20px;
+}
+.storage-bar-segment {
+    min-width: 3px;
+    transition: opacity 0.2s;
+    cursor: default;
+}
+.storage-bar-segment:first-child { border-radius: 8px 0 0 8px; }
+.storage-bar-segment:last-child { border-radius: 0 8px 8px 0; }
+.storage-bar-segment:only-child { border-radius: 8px; }
+.storage-bar-segment:hover { opacity: 0.75; }
+
+/* Legend */
+.storage-legend {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+.storage-legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    transition: background 0.15s;
+}
+.storage-legend-item:hover {
+    background: rgba(255,255,255,0.04);
+}
+.storage-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+}
+.storage-legend-name {
+    color: var(--text);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.storage-legend-size {
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+}
+.storage-legend-pct {
+    color: var(--muted);
+    font-size: 12px;
+    min-width: 42px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Breakdown list */
+.storage-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.storage-row-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+.storage-row-name {
+    color: var(--text);
+    font-weight: 500;
+    font-size: 13px;
+    flex: 1;
+}
+.storage-row-size {
+    color: var(--muted);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+}
+.storage-row-track {
+    height: 6px;
+    background: var(--bg-body);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.storage-row-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+}
+
+@media (max-width: 768px) {
+    .storage-legend { grid-template-columns: 1fr; }
+    .storage-total { font-size: 18px; }
+}
+</style>
 {% endblock %}

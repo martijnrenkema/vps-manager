@@ -978,7 +978,7 @@ def get_nginx_sites():
     for config in configs:
         config_path = os.path.join(sites_dir, config)
         info_result = run_cmd_safe(
-            ["grep", "-E", "server_name|root |proxy_pass", config_path]
+            ["grep", "-E", "server_name|root |proxy_pass|access_log |error_log ", config_path]
         )
         if info_result.returncode != 0:
             continue
@@ -986,6 +986,8 @@ def get_nginx_sites():
         domains = []
         doc_root = None
         proxy = None
+        access_log_path = None
+        error_log_path = None
 
         for line in info_result.stdout.strip().split('\n'):
             line = line.strip()
@@ -999,6 +1001,10 @@ def get_nginx_sites():
                 doc_root = line.replace('root ', '').rstrip(';').strip()
             elif 'proxy_pass' in line:
                 proxy = line.replace('proxy_pass', '').rstrip(';').strip()
+            elif line.startswith('access_log') and 'off' not in line:
+                access_log_path = line.replace('access_log', '').rstrip(';').strip().split()[0]
+            elif line.startswith('error_log'):
+                error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
 
         # Deduplicate domains (certbot creates 2 server blocks per config)
         domains = list(dict.fromkeys(domains))
@@ -1020,6 +1026,8 @@ def get_nginx_sites():
                 'type': 'proxy' if proxy else 'static',
                 'location': proxy if proxy else (doc_root or 'n/a'),
                 'http_status': http_status,
+                'access_log': access_log_path,
+                'error_log': error_log_path,
             })
 
     return sites
@@ -1567,47 +1575,59 @@ def get_nginx_logs():
             if line.strip():
                 data['errors'].append(_parse_nginx_error_line(line.strip()))
 
-    # Per-site errors: parse last 200 lines of global error log, group by server
-    result = run_cmd_safe(["sudo", "tail", "-200", error_log])
-    if result.returncode == 0 and result.stdout.strip():
-        site_errors = {}
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            # Extract server name from nginx error format: "server: <domain>,"
-            server_match = re.search(r'server:\s+([^,\s]+)', line)
-            site = server_match.group(1) if server_match else 'other'
-            if site not in site_errors:
-                site_errors[site] = {'count': 0, 'last_ts': '', 'last_msg': ''}
-            site_errors[site]['count'] += 1
-            ts_match = re.match(r'(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})', line)
-            if ts_match:
-                site_errors[site]['last_ts'] = ts_match.group(1)
-            # Extract short message (between [level] and , client:)
-            msg_match = re.search(r'\[\w+\]\s+\d+#\d+:\s+\*\d+\s+(.*?)(?:,\s*client:|$)', line)
-            if msg_match:
-                site_errors[site]['last_msg'] = msg_match.group(1).strip()[:100]
-        for site, info in sorted(site_errors.items(), key=lambda x: x[1]['count'], reverse=True):
+    # Per-site errors: read each site's own error log
+    sites = get_nginx_sites()
+    for site in sites:
+        site_error_log = site.get('error_log')
+        if not site_error_log:
+            continue
+        site_name = site['domains'][0] if site.get('domains') else site.get('config', '?')
+        result = run_cmd_safe(["sudo", "tail", "-50", site_error_log])
+        if result.returncode != 0 or not result.stdout.strip():
             data['per_site'].append({
-                'site': site,
-                'count': info['count'],
-                'last_ts': info['last_ts'],
-                'last_msg': info['last_msg'],
+                'site': site_name,
+                'count': 0,
+                'last_ts': '',
+                'last_msg': '',
+                'log_path': site_error_log,
             })
+            continue
+        lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
+        last_ts = ''
+        last_msg = ''
+        if lines:
+            ts_match = re.match(r'(\d{4}/\d{2}/\d{2}\s+\d{2}:\d{2}:\d{2})', lines[-1])
+            if ts_match:
+                last_ts = ts_match.group(1)
+            msg_match = re.search(r'\[\w+\]\s+\d+#\d+:\s+\*\d+\s+(.*?)(?:,\s*client:|$)', lines[-1])
+            if msg_match:
+                last_msg = msg_match.group(1).strip()[:100]
+        data['per_site'].append({
+            'site': site_name,
+            'count': len(lines),
+            'last_ts': last_ts,
+            'last_msg': last_msg,
+            'log_path': site_error_log,
+        })
+    data['per_site'].sort(key=lambda x: x['count'], reverse=True)
 
-    # Access log summary
-    result = run_cmd(
-        f"sudo awk '{{print $9}}' {access_log} 2>/dev/null | sort | uniq -c | sort -rn | head -10"
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            parts = line.strip().split()
-            if len(parts) == 2:
-                data['access_summary'].append({
-                    'code': parts[1],
-                    'count': parts[0],
-                })
+    # Access log summary per site
+    for site in sites:
+        site_access_log = site.get('access_log')
+        if not site_access_log:
+            continue
+        site_name = site['domains'][0] if site.get('domains') else site.get('config', '?')
+        result = run_cmd(
+            f"sudo awk '{{print $9}}' {site_access_log} 2>/dev/null | sort | uniq -c | sort -rn | head -10"
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            codes = []
+            for line in result.stdout.strip().split('\n'):
+                parts = line.strip().split()
+                if len(parts) == 2:
+                    codes.append({'code': parts[1], 'count': parts[0]})
+            if codes:
+                data['access_summary'].append({'site': site_name, 'codes': codes})
 
     # PHP-FPM error log
     result = run_cmd("sudo tail -20 /var/log/php*-fpm.log 2>/dev/null")
@@ -1780,6 +1800,24 @@ def get_cronjobs():
     return data
 
 
+def _parse_size_to_mb(size_str):
+    """Parse human-readable size (e.g. '1.2G', '500M', '4.0K') to MB float"""
+    size_str = size_str.strip()
+    try:
+        if size_str.endswith('G'):
+            return float(size_str[:-1]) * 1024
+        elif size_str.endswith('M'):
+            return float(size_str[:-1])
+        elif size_str.endswith('K'):
+            return float(size_str[:-1]) / 1024
+        elif size_str.endswith('T'):
+            return float(size_str[:-1]) * 1024 * 1024
+        else:
+            return float(size_str) / (1024 * 1024)
+    except (ValueError, IndexError):
+        return 0.0
+
+
 def get_disk_per_site():
     """Get disk usage per site"""
     result = run_cmd("du -sh /var/www/*/ 2>/dev/null | sort -rh")
@@ -1793,7 +1831,7 @@ def get_disk_per_site():
             size = parts[0].strip()
             path = parts[1].strip().rstrip('/')
             site_name = os.path.basename(path)
-            sites.append({'site': site_name, 'size': size})
+            sites.append({'site': site_name, 'size': size, 'size_mb': round(_parse_size_to_mb(size), 2)})
 
     total_result = run_cmd("du -sh /var/www/ 2>/dev/null")
     total = ''
@@ -3050,7 +3088,9 @@ def updates():
 @app.route('/updates/install', methods=['POST'])
 @login_required
 def install_updates():
+    run_cmd("sudo apt update 2>&1", timeout=120)
     result = run_cmd("sudo apt upgrade -y 2>&1", timeout=300)
+    _invalidate_cache('get_system_updates')
     if result.returncode == 0:
         log_audit('system_updates_install', {'output': result.stdout[-200:]})
         _save_update_history('manual', 'success', result.stdout[-200:])
@@ -3271,22 +3311,38 @@ def nginx_logs_page():
 @app.route('/api/nginx-log')
 @login_required
 def api_nginx_log():
-    """Get content of a specific nginx log file, optionally filtered by site"""
+    """Get content of a specific nginx log file for a site"""
     site = request.args.get('site', '')
+    log_type = request.args.get('type', 'error')  # 'error' or 'access'
     try:
         lines = int(request.args.get('lines', 100))
     except (ValueError, TypeError):
         lines = 100
     lines = min(lines, 500)
-    nginx_cfg = CONFIG.get('nginx', {})
-    error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
     if site:
-        # Filter global error log by server name
+        # Find site-specific log path
+        log_path = None
+        for s in get_nginx_sites():
+            if site in s.get('domains', []):
+                log_path = s.get('access_log') if log_type == 'access' else s.get('error_log')
+                break
+        if log_path:
+            real_log = os.path.realpath(log_path)
+            if not real_log.startswith('/var/log/nginx/'):
+                return jsonify({'status': 'error', 'message': 'Invalid log path'}), 400
+            result = run_cmd_safe(["sudo", "tail", f"-{lines}", real_log])
+            if result.returncode == 0:
+                content = result.stdout.strip() if result.stdout.strip() else f'(no {log_type} logs for this site)'
+                return jsonify({'content': content, 'site': site, 'type': log_type})
+            return jsonify({'status': 'error', 'message': 'Could not read log file'}), 500
+        # Fallback: filter global error log
+        nginx_cfg = CONFIG.get('nginx', {})
+        error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
         result = run_cmd_safe(["sudo", "tail", "-2000", error_log])
         if result.returncode == 0:
             filtered = [l for l in result.stdout.split('\n') if f'server: {site}' in l]
             content = '\n'.join(filtered[-lines:]) if filtered else '(no errors for this site)'
-            return jsonify({'content': content, 'site': site})
+            return jsonify({'content': content, 'site': site, 'type': log_type})
         return jsonify({'status': 'error', 'message': 'Could not read error log'}), 500
     # Legacy: read specific file by path
     log_file = request.args.get('file', '')
