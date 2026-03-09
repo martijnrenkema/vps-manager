@@ -63,6 +63,15 @@ else:
     app.secret_key = _generated
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB upload limit
+
+
+@app.template_filter('country_flag')
+def country_flag_filter(country_code):
+    """Convert 2-letter country code to emoji flag"""
+    if not country_code or len(country_code) != 2:
+        return ''
+    cc = country_code.upper()
+    return chr(0x1F1E6 + ord(cc[0]) - 65) + chr(0x1F1E6 + ord(cc[1]) - 65)
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -1421,6 +1430,168 @@ def parse_ufw_rules(ufw_output):
     return rules
 
 
+@_ttl_cache(30)
+def get_ssh_logs():
+    """Get SSH log analysis: failed attempts, successful logins, top attackers, fail2ban actions"""
+    data = {
+        'failed_count': 0,
+        'accepted_count': 0,
+        'recent_failed': [],
+        'recent_accepted': [],
+        'top_attackers': [],
+        'fail2ban_actions': [],
+        'recent_entries': [],
+    }
+
+    # Count failed attempts today
+    result = run_cmd("sudo grep -ci 'failed\\|invalid user\\|authentication failure' /var/log/auth.log 2>/dev/null")
+    if result.returncode == 0 and result.stdout.strip().isdigit():
+        data['failed_count'] = int(result.stdout.strip())
+
+    # Count accepted logins
+    result = run_cmd("sudo grep -ci 'accepted' /var/log/auth.log 2>/dev/null")
+    if result.returncode == 0 and result.stdout.strip().isdigit():
+        data['accepted_count'] = int(result.stdout.strip())
+
+    # Recent failed attempts (last 30)
+    result = run_cmd("sudo grep -i 'failed\\|invalid user\\|authentication failure' /var/log/auth.log 2>/dev/null | tail -30")
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            entry = _parse_auth_log_line(line)
+            data['recent_failed'].append(entry)
+
+    # Recent accepted logins (last 20)
+    result = run_cmd("sudo grep -i 'accepted' /var/log/auth.log 2>/dev/null | tail -20")
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            entry = _parse_auth_log_line(line)
+            data['recent_accepted'].append(entry)
+
+    # Top attacking IPs (from failed attempts)
+    result = run_cmd(
+        "sudo grep -i 'failed\\|invalid user' /var/log/auth.log 2>/dev/null "
+        "| grep -oP 'from \\K[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' "
+        "| sort | uniq -c | sort -rn | head -20"
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            parts = line.strip().split()
+            if len(parts) >= 2:
+                data['top_attackers'].append({
+                    'ip': parts[1],
+                    'count': int(parts[0]),
+                })
+
+    # Fail2ban actions (bans/unbans)
+    result = run_cmd("sudo grep -i 'ban\\|unban' /var/log/fail2ban.log 2>/dev/null | tail -30")
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            # Parse: 2026-03-10 12:34:56,789 fail2ban.actions [1234]: NOTICE [sshd] Ban 1.2.3.4
+            ts_match = re.match(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', line)
+            timestamp = ts_match.group(1) if ts_match else ''
+            action = 'ban' if re.search(r'\bBan\b', line) else 'unban' if re.search(r'\bUnban\b', line) else 'other'
+            ip_match = re.search(r'(?:Ban|Unban|Found)\s+(\d+\.\d+\.\d+\.\d+)', line)
+            ip = ip_match.group(1) if ip_match else ''
+            jail_match = re.search(r'\[(\w+)\]\s+(?:Ban|Unban|Found)', line)
+            jail = jail_match.group(1) if jail_match else ''
+            data['fail2ban_actions'].append({
+                'timestamp': timestamp,
+                'action': action,
+                'ip': ip,
+                'jail': jail,
+                'raw': line,
+            })
+
+    # Last 20 sshd entries (general)
+    result = run_cmd("sudo grep 'sshd' /var/log/auth.log 2>/dev/null | tail -20")
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if line:
+                data['recent_entries'].append(_parse_auth_log_line(line))
+
+    # Lookup country info for all IPs
+    all_ips = set()
+    for attacker in data['top_attackers']:
+        if attacker.get('ip'):
+            all_ips.add(attacker['ip'])
+    for entry in data['fail2ban_actions']:
+        if entry.get('ip'):
+            all_ips.add(entry['ip'])
+    for entry in data['recent_failed'] + data['recent_accepted'] + data['recent_entries']:
+        if entry.get('ip'):
+            all_ips.add(entry['ip'])
+    country_map = lookup_ip_countries(list(all_ips))
+
+    # Apply country data
+    for attacker in data['top_attackers']:
+        geo = country_map.get(attacker.get('ip'))
+        if geo:
+            attacker['country'] = geo['country']
+            attacker['countryCode'] = geo['countryCode']
+    for entry in data['fail2ban_actions']:
+        geo = country_map.get(entry.get('ip'))
+        if geo:
+            entry['country'] = geo['country']
+            entry['countryCode'] = geo['countryCode']
+    for entry in data['recent_failed'] + data['recent_accepted'] + data['recent_entries']:
+        geo = country_map.get(entry.get('ip'))
+        if geo:
+            entry['country'] = geo['country']
+            entry['countryCode'] = geo['countryCode']
+
+    return data
+
+
+def _parse_auth_log_line(line):
+    """Parse an auth.log line into structured data"""
+    # Format: Mar 10 12:34:56 hostname sshd[1234]: message
+    match = re.match(
+        r'(\w+\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+\S+:\s+(.*)',
+        line
+    )
+    if match:
+        timestamp = match.group(1)
+        message = match.group(2)
+    else:
+        timestamp = ''
+        message = line
+
+    # Determine level
+    msg_lower = message.lower()
+    if 'accepted' in msg_lower:
+        level = 'accepted'
+    elif 'failed' in msg_lower or 'invalid user' in msg_lower or 'authentication failure' in msg_lower:
+        level = 'failed'
+    elif 'disconnect' in msg_lower:
+        level = 'disconnect'
+    elif 'ban' in msg_lower:
+        level = 'ban'
+    else:
+        level = 'info'
+
+    # Extract IP
+    ip_match = re.search(r'from\s+(\d+\.\d+\.\d+\.\d+)', line)
+    ip = ip_match.group(1) if ip_match else ''
+
+    return {
+        'timestamp': timestamp,
+        'level': level,
+        'message': message[:200],
+        'ip': ip,
+        'raw': line,
+    }
+
+
 def get_firewall_security():
     """Get firewall and security info"""
     data = {
@@ -2589,6 +2760,39 @@ def backup_download():
                 return response
 
     return jsonify({'status': 'error', 'message': 'Not found'}), 404
+
+
+@app.route('/ssh-logs')
+@login_required
+def ssh_logs_page():
+    data = get_ssh_logs()
+    return render_template('ssh_logs.html', data=data)
+
+
+@app.route('/api/ssh-logs')
+@login_required
+def api_ssh_logs():
+    """Get raw SSH log lines with optional filter"""
+    try:
+        lines = int(request.args.get('lines', 200))
+    except (ValueError, TypeError):
+        lines = 200
+    lines = min(lines, 2000)
+    filter_type = request.args.get('filter', 'all')
+
+    if filter_type == 'failed':
+        cmd = f"sudo grep -i 'failed\\|invalid user\\|authentication failure' /var/log/auth.log 2>/dev/null | tail -{lines}"
+    elif filter_type == 'accepted':
+        cmd = f"sudo grep -i 'accepted' /var/log/auth.log 2>/dev/null | tail -{lines}"
+    elif filter_type == 'fail2ban':
+        cmd = f"sudo grep -i 'fail2ban' /var/log/auth.log 2>/dev/null | tail -{lines}; sudo tail -{lines} /var/log/fail2ban.log 2>/dev/null"
+    else:
+        cmd = f"sudo grep 'sshd' /var/log/auth.log 2>/dev/null | tail -{lines}"
+
+    result = run_cmd(cmd)
+    if result.returncode == 0:
+        return jsonify({'content': result.stdout.strip() or '(no matching log entries)'})
+    return jsonify({'content': '(could not read log file)'}), 500
 
 
 @app.route('/firewall')

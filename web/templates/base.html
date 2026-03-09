@@ -104,6 +104,9 @@
                     <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
                 </div>
                 <div class="sidebar-group-items">
+                    <a href="{{ url_for('ssh_logs_page') }}" class="{% if request.endpoint == 'ssh_logs_page' %}active{% endif %}">
+                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> SSH Logs
+                    </a>
                     <a href="{{ url_for('firewall') }}" class="{% if request.endpoint == 'firewall' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Firewall
                     </a>
@@ -502,6 +505,7 @@
             {label: 'Cronjobs', url: '/cronjobs', keywords: 'cron schedule timer'},
             {label: 'Disk Usage', url: '/disk', keywords: 'space storage'},
             {label: 'Files', url: '/files', keywords: 'browser upload download'},
+            {label: 'SSH Logs', url: '/ssh-logs', keywords: 'ssh auth brute force login failed ban'},
             {label: 'Firewall', url: '/firewall', keywords: 'ufw fail2ban security ban'},
             {label: 'Backup', url: '/backup', keywords: 'restore nas'},
             {label: 'Updates', url: '/updates', keywords: 'packages security upgrade'},

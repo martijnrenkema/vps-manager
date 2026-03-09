@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}SSH Logs - VPS Manager{% endblock %}
+{% block page_title %}SSH Logs{% endblock %}
+
+{% macro ip_with_flag(ip, entry) %}
+{% if entry.countryCode %}<span class="country-flag" title="{{ entry.country }}">{{ entry.countryCode | country_flag }}</span> {% endif %}<code>{{ ip }}</code>
+{% endmacro %}
+
+{% block content %}
+<!-- Stats overview -->
+<div class="grid-2col">
+    <div class="card">
+        <div class="card-header">{{ icon('shield') }} SSH Overview</div>
+        <div class="card-body">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+                <div>
+                    <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Failed Attempts</div>
+                    <div style="font-size:28px;font-weight:700;color:{% if data.failed_count > 1000 %}var(--red){% elif data.failed_count > 100 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.failed_count | default(0) }}</div>
+                </div>
+                <div>
+                    <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Accepted Logins</div>
+                    <div style="font-size:28px;font-weight:700;color:var(--green)">{{ data.accepted_count | default(0) }}</div>
+                </div>
+            </div>
+            <div style="margin-top:12px;font-size:12px;color:var(--text-muted)">Counts from current auth.log</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-header">{{ icon('shield') }} Top Attacking IPs <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">by failed attempts</span></div>
+        <div class="card-body" style="padding:0">
+            {% if data.top_attackers %}
+            <div class="table-wrap">
+                <table>
+                    <thead><tr><th>IP Address</th><th>Country</th><th>Attempts</th><th></th></tr></thead>
+                    <tbody>
+                        {% for attacker in data.top_attackers[:10] %}
+                        <tr>
+                            <td><code>{{ attacker.ip }}</code></td>
+                            <td>{% if attacker.countryCode %}<span class="country-flag">{{ attacker.countryCode | country_flag }}</span> {{ attacker.country }}{% else %}<span style="color:var(--text-muted)">-</span>{% endif %}</td>
+                            <td><span class="badge badge-{% if attacker.count > 100 %}red{% elif attacker.count > 20 %}yellow{% else %}blue{% endif %}">{{ attacker.count }}</span></td>
+                            <td><button class="btn btn-sm btn-red" onclick="banIp('{{ attacker.ip }}')" title="Ban this IP">{{ icon('shield') }} Ban</button></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+                <div style="padding:16px"><span class="badge badge-green">No failed attempts found</span></div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Fail2ban actions -->
+<div class="card">
+    <div class="card-header">{{ icon('shield') }} Fail2ban Actions <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">recent bans & unbans</span></div>
+    <div class="card-body" style="padding:0">
+        {% if data.fail2ban_actions %}
+        <div class="log-entries">
+            {% for entry in data.fail2ban_actions | reverse %}
+            <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                <div class="log-entry-summary">
+                    <span class="log-timestamp">{{ entry.timestamp }}</span>
+                    {% if entry.action == 'ban' %}
+                        <span class="log-level log-level-error">BAN</span>
+                    {% elif entry.action == 'unban' %}
+                        <span class="log-level log-level-notice">UNBAN</span>
+                    {% else %}
+                        <span class="log-level log-level-unknown">{{ entry.action }}</span>
+                    {% endif %}
+                    {% if entry.jail %}<span class="badge" style="font-size:11px;margin-right:6px">{{ entry.jail }}</span>{% endif %}
+                    <span class="log-message">{% if entry.ip %}{{ ip_with_flag(entry.ip, entry) }}{% endif %}</span>
+                </div>
+                <div class="log-detail">
+                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+            <div style="padding:16px"><span class="badge badge-green">No fail2ban actions found</span></div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent failed attempts -->
+<div class="card">
+    <div class="card-header">
+        {{ icon('file-text') }} Failed Login Attempts <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">last 30 entries</span>
+        <button class="btn btn-sm" onclick="viewFullLog('failed')" style="float:right">View more</button>
+    </div>
+    <div class="card-body" style="padding:0">
+        {% if data.recent_failed %}
+        <div class="log-entries">
+            {% for entry in data.recent_failed | reverse %}
+            <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                <div class="log-entry-summary">
+                    <span class="log-timestamp">{{ entry.timestamp }}</span>
+                    <span class="log-level log-level-error">failed</span>
+                    {% if entry.ip %}<span style="margin-right:8px;font-size:12px">{{ ip_with_flag(entry.ip, entry) }}</span>{% endif %}
+                    <span class="log-message">{{ entry.message }}</span>
+                </div>
+                <div class="log-detail">
+                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+            <div style="padding:16px"><span class="badge badge-green">No failed login attempts</span></div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent accepted logins -->
+<div class="card">
+    <div class="card-header">
+        {{ icon('file-text') }} Accepted Logins <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">last 20 entries</span>
+        <button class="btn btn-sm" onclick="viewFullLog('accepted')" style="float:right">View more</button>
+    </div>
+    <div class="card-body" style="padding:0">
+        {% if data.recent_accepted %}
+        <div class="log-entries">
+            {% for entry in data.recent_accepted | reverse %}
+            <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                <div class="log-entry-summary">
+                    <span class="log-timestamp">{{ entry.timestamp }}</span>
+                    <span class="log-level" style="background:rgba(63,185,80,0.15);color:var(--green)">accepted</span>
+                    {% if entry.ip %}<span style="margin-right:8px;font-size:12px">{{ ip_with_flag(entry.ip, entry) }}</span>{% endif %}
+                    <span class="log-message">{{ entry.message }}</span>
+                </div>
+                <div class="log-detail">
+                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+            <div style="padding:16px"><span class="badge badge-green">No accepted logins found</span></div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Recent SSH log entries -->
+<div class="card">
+    <div class="card-header">
+        {{ icon('file-text') }} Recent SSH Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">last 20 sshd entries</span>
+        <button class="btn btn-sm" onclick="viewFullLog('all')" style="float:right">View more</button>
+    </div>
+    <div class="card-body" style="padding:0">
+        {% if data.recent_entries %}
+        <div class="log-entries">
+            {% for entry in data.recent_entries | reverse %}
+            <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                <div class="log-entry-summary">
+                    <span class="log-timestamp">{{ entry.timestamp }}</span>
+                    {% if entry.level == 'accepted' %}
+                        <span class="log-level" style="background:rgba(63,185,80,0.15);color:var(--green)">accepted</span>
+                    {% elif entry.level == 'failed' %}
+                        <span class="log-level log-level-error">failed</span>
+                    {% elif entry.level == 'disconnect' %}
+                        <span class="log-level log-level-unknown">disconnect</span>
+                    {% elif entry.level == 'ban' %}
+                        <span class="log-level log-level-error">ban</span>
+                    {% else %}
+                        <span class="log-level log-level-notice">info</span>
+                    {% endif %}
+                    {% if entry.ip %}<span style="margin-right:8px;font-size:12px">{{ ip_with_flag(entry.ip, entry) }}</span>{% endif %}
+                    <span class="log-message">{{ entry.message }}</span>
+                </div>
+                <div class="log-detail">
+                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+            <div style="padding:16px"><span class="badge badge-green">No SSH log entries found</span></div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function viewFullLog(filter) {
+    document.getElementById('logModal').style.display = 'flex';
+    var titles = {all: 'SSH Log', failed: 'Failed Login Attempts', accepted: 'Accepted Logins', fail2ban: 'Fail2ban Log'};
+    document.getElementById('logModalTitle').textContent = titles[filter] || 'SSH Log';
+    document.getElementById('logModalContent').textContent = 'Loading...';
+    try {
+        var res = await fetch('/api/ssh-logs?filter=' + encodeURIComponent(filter) + '&lines=500');
+        var data = await res.json();
+        document.getElementById('logModalContent').textContent = data.content || '(no log entries)';
+    } catch (e) {
+        document.getElementById('logModalContent').textContent = 'Error: ' + e.message;
+    }
+}
+
+async function banIp(ip) {
+    if (!confirm('Ban IP ' + ip + ' via fail2ban + UFW?')) return;
+    try {
+        var res = await fetch('/firewall/ban', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({ip: ip, jail: 'sshd'})
+        });
+        var data = await res.json();
+        if (res.ok) {
+            showToast(data.message || 'IP banned', 'success');
+        } else {
+            showToast(data.message || 'Failed to ban IP', 'error');
+        }
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+}
+</script>
+{% endblock %}
