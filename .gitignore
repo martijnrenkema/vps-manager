@@ -11,9 +11,12 @@ web/data/
 # Environment
 .env
 
-# IDE
+# IDE / editor config
 .vscode/
 .idea/
+.claude/
+CLAUDE.md
+claude.md
 
 # OS
 .DS_Store
@@ -21,8 +24,3 @@ Thumbs.db
 
 # CLI tool (local only, not part of web dashboard)
 vps-manager.py
-
-# Local config
-.claude/
-CLAUDE.md
-claude.md
