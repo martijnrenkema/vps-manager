@@ -11,12 +11,9 @@ web/data/
 # Environment
 .env
 
-# IDE / editor config
+# IDE
 .vscode/
 .idea/
-.claude/
-CLAUDE.md
-claude.md
 
 # OS
 .DS_Store
