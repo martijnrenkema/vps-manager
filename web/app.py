@@ -17,6 +17,7 @@ import shlex
 import shutil
 import stat as stat_module
 import subprocess
+import tempfile
 import threading
 import time
 import logging
@@ -34,6 +35,7 @@ from flask_wtf.csrf import CSRFProtect
 from pywebpush import webpush, WebPushException
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
+import urllib.error
 import urllib.request
 import base64
 
@@ -92,10 +94,15 @@ else:
     import secrets as _secrets
     _generated_pass = _secrets.token_urlsafe(16)
     PASSWORD_HASH = generate_password_hash(_generated_pass)
+    _pw_file = Path(__file__).parent / 'data' / '.generated_password'
+    try:
+        _pw_file.write_text(_generated_pass)
+        os.chmod(_pw_file, 0o600)
+    except OSError:
+        pass
     logging.warning(
-        'WARNING: No password configured. Generated temporary password: %s  '
-        'Set VPS_MANAGER_PASS env var or change password in settings.',
-        _generated_pass
+        'WARNING: No password configured. Generated temporary password saved to data/.generated_password  '
+        'Set VPS_MANAGER_PASS env var or change password in settings.'
     )
 
 # ---------------------------------------------------------------------------
@@ -114,6 +121,76 @@ NOTIFICATION_HISTORY_PATH = DATA_DIR / 'notification_history.json'
 MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
 METRICS_PATH = DATA_DIR / 'metrics.json'
 _SEVERITY_ORDER = {'error': 0, 'warning': 1, 'info': 2}
+
+
+# ---------------------------------------------------------------------------
+# Atomic JSON writes (prevents corruption on crash/power loss)
+# ---------------------------------------------------------------------------
+
+def _atomic_write_json(path, data):
+    """Write JSON to file atomically via temp file + os.replace()"""
+    path = Path(path)
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f)
+        os.replace(tmp_path, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
+# ---------------------------------------------------------------------------
+# Terminal: Allowed commands (allowlist approach)
+# ---------------------------------------------------------------------------
+
+TERMINAL_ALLOWED_COMMANDS = {
+    # File system
+    'ls', 'cat', 'head', 'tail', 'less', 'more', 'wc', 'file', 'stat',
+    'find', 'locate', 'du', 'df', 'tree', 'readlink', 'realpath', 'basename',
+    'dirname', 'pwd', 'cd', 'touch',
+    # Text processing
+    'grep', 'egrep', 'fgrep', 'sed', 'awk', 'sort', 'uniq', 'cut', 'tr',
+    'diff', 'comm', 'tee', 'xargs',
+    # System info
+    'uname', 'hostname', 'uptime', 'whoami', 'id', 'w', 'who', 'last',
+    'free', 'vmstat', 'iostat', 'top', 'htop', 'ps', 'pgrep', 'lscpu',
+    'lsblk', 'mount', 'lsof',
+    # Networking
+    'ping', 'traceroute', 'dig', 'nslookup', 'host', 'curl', 'wget',
+    'ss', 'netstat', 'ip', 'ifconfig', 'mtr',
+    # Package management
+    'apt', 'apt-get', 'apt-cache', 'dpkg',
+    # Service management
+    'systemctl', 'journalctl', 'service',
+    # Web server
+    'nginx', 'php', 'php8.3-fpm',
+    # PM2
+    'pm2',
+    # Certificates
+    'certbot',
+    # Firewall
+    'ufw', 'fail2ban-client',
+    # Git
+    'git',
+    # Database
+    'mysql', 'mysqldump', 'mariadb',
+    # Misc tools
+    'date', 'cal', 'echo', 'printf', 'true', 'false', 'test',
+    'tar', 'gzip', 'gunzip', 'zip', 'unzip', 'zcat',
+    'md5sum', 'sha256sum', 'openssl',
+    'crontab',
+}
+
+# Paths that must never be configured as allowed_paths for the file browser
+FORBIDDEN_ALLOWED_PATHS = {
+    '/', '/etc', '/root', '/proc', '/sys', '/dev', '/boot',
+    '/usr', '/bin', '/sbin', '/lib', '/lib64',
+}
+
 
 # ---------------------------------------------------------------------------
 # Audit Log
@@ -141,7 +218,7 @@ def log_audit(action, details=None):
         log.append(entry)
         if len(log) > AUDIT_MAX_ENTRIES:
             log = log[-AUDIT_MAX_ENTRIES:]
-        AUDIT_LOG_PATH.write_text(json.dumps(log))
+        _atomic_write_json(AUDIT_LOG_PATH, log)
 
 # ---------------------------------------------------------------------------
 # TTL Cache for expensive system queries
@@ -223,7 +300,7 @@ def _load_subscriptions():
 
 def _save_subscriptions(subs):
     """Save subscriptions to JSON file"""
-    SUBSCRIPTIONS_PATH.write_text(json.dumps(subs))
+    _atomic_write_json(SUBSCRIPTIONS_PATH, subs)
 
 
 def _load_notification_log():
@@ -238,7 +315,7 @@ def _load_notification_log():
 
 def _save_notification_log(log):
     """Save notification cooldown log"""
-    NOTIFICATION_LOG_PATH.write_text(json.dumps(log))
+    _atomic_write_json(NOTIFICATION_LOG_PATH, log)
 
 
 def _load_notification_history():
@@ -253,7 +330,7 @@ def _load_notification_history():
 
 def _save_notification_history(history):
     """Save notification history (max 100 entries)"""
-    NOTIFICATION_HISTORY_PATH.write_text(json.dumps(history[-100:]))
+    _atomic_write_json(NOTIFICATION_HISTORY_PATH, history[-100:])
 
 
 def _add_notification_history(title, body, category):
@@ -341,7 +418,7 @@ def _save_metrics(metrics):
     metrics = [m for m in metrics if m.get('ts', 0) > cutoff]
     # Max 288 entries (24h * 60min / 5min)
     metrics = metrics[-288:]
-    METRICS_PATH.write_text(json.dumps(metrics))
+    _atomic_write_json(METRICS_PATH, metrics)
 
 
 def _get_net_interface():
@@ -467,6 +544,7 @@ def _monitor_loop():
     logger.info("Push notification monitor started")
 
     while True:
+        cycle_start = time.time()
         try:
             # Collect metrics every cycle (independent of subscriptions)
             try:
@@ -522,6 +600,10 @@ def _monitor_loop():
                     # Only re-send if the message content changed (e.g. "2 updates" -> "5 updates")
                     if isinstance(log_entry, dict):
                         if log_entry.get('message') == alert['message']:
+                            continue
+                        # Time-based cooldown: don't re-notify too frequently even if message changed
+                        cooldown = CONFIG.get('notification_cooldown', 3600)
+                        if now - log_entry.get('ts', 0) < cooldown:
                             continue
                     elif isinstance(log_entry, (int, float)):
                         # Legacy cooldown format: migrate to new format, skip this cycle
@@ -593,7 +675,9 @@ def _monitor_loop():
             logger.warning("Monitor error", exc_info=True)
 
         gc.collect()
-        time.sleep(MONITOR_INTERVAL)
+        elapsed = time.time() - cycle_start
+        remaining = max(10, MONITOR_INTERVAL - elapsed)
+        time.sleep(remaining)
 
 # Cached server info (fetched once at startup)
 _server_ip = None
@@ -634,7 +718,7 @@ def get_server_uptime_short():
 
 
 VERSION_FILE = Path(__file__).parent / 'VERSION'
-APP_DIR = '/var/www/vps.dmmusic.nl'
+APP_DIR = os.environ.get('VPS_MANAGER_DIR') or str(Path(__file__).parent.parent.resolve())
 
 
 def _get_current_version():
@@ -661,6 +745,7 @@ def check_app_update_alert():
         with urllib.request.urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode())
     except Exception:
+        logger.debug('GitHub API check failed', exc_info=True)
         return []
 
     latest = data.get('tag_name', '').lstrip('v')
@@ -1019,12 +1104,21 @@ def get_nginx_sites():
         domains = list(dict.fromkeys(domains))
 
         if domains:
-            # Check HTTP status for first domain
+            # Check HTTP status for first domain (HTTPS with HTTP fallback, follow redirects)
             http_result = run_cmd_safe(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", f"https://{domains[0]}", "--max-time", "5"],
+                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
+                 f"https://{domains[0]}", "--max-time", "5"],
                 timeout=10
             )
             http_status = http_result.stdout.strip() if http_result.stdout else '---'
+            if http_status == '000':
+                # HTTPS failed, try HTTP
+                http_result = run_cmd_safe(
+                    ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
+                     f"http://{domains[0]}", "--max-time", "5"],
+                    timeout=10
+                )
+                http_status = http_result.stdout.strip() if http_result.stdout else '---'
 
             sites.append({
                 'config': config,
@@ -1141,14 +1235,15 @@ def get_services_status():
             services.append(svc)
             seen.add(svc)
 
-    # Deduplicate php-fpm
+    # Deduplicate auto-discovered PHP-FPM versions (keep all configured ones)
+    configured_set = set(default_services)
     final_services = []
-    php_found = False
+    php_auto_found = False
     for svc in services:
-        if 'php' in svc and 'fpm' in svc:
-            if php_found:
+        if 'php' in svc and 'fpm' in svc and svc not in configured_set:
+            if php_auto_found:
                 continue
-            php_found = True
+            php_auto_found = True
         final_services.append(svc)
 
     result = run_cmd_safe(["systemctl", "is-active"] + final_services)
@@ -1204,7 +1299,7 @@ def _load_backup_status():
 
 def _save_backup_status(status):
     """Save backup status history"""
-    BACKUP_STATUS_PATH.write_text(json.dumps(status))
+    _atomic_write_json(BACKUP_STATUS_PATH, status)
 
 
 @_ttl_cache(60)
@@ -2297,32 +2392,60 @@ def get_network_info():
 
 @_ttl_cache(30)
 def get_uptime_status():
-    """Check HTTP status for all nginx sites"""
+    """Check HTTP status for all nginx sites (HTTPS with HTTP fallback, HEAD with GET fallback)"""
     sites = get_nginx_sites()
     results = []
     for site in sites:
         domain = site['domains'][0] if site.get('domains') else None
         if not domain:
             continue
-        try:
-            req = urllib.request.Request(f"https://{domain}", method='HEAD')
-            start = time.time()
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                elapsed = (time.time() - start) * 1000
-                results.append({
-                    'domain': domain,
-                    'status_code': resp.status,
-                    'response_ms': round(elapsed),
-                    'is_up': True,
-                })
-        except Exception as e:
-            status = getattr(getattr(e, 'response', None), 'status', 0) or 0
-            results.append({
+
+        result_entry = None
+        # Try HTTPS first, then HTTP as fallback
+        for scheme in ('https', 'http'):
+            if result_entry:
+                break
+            # Try HEAD first, fall back to GET on 405
+            for method in ('HEAD', 'GET'):
+                try:
+                    req = urllib.request.Request(f"{scheme}://{domain}", method=method)
+                    start = time.time()
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        elapsed = (time.time() - start) * 1000
+                        result_entry = {
+                            'domain': domain,
+                            'status_code': resp.status,
+                            'response_ms': round(elapsed),
+                            'is_up': True,
+                        }
+                        break
+                except urllib.error.HTTPError as e:
+                    if e.code == 405 and method == 'HEAD':
+                        continue  # Try GET
+                    # Got an HTTP response (even if error), site is reachable
+                    result_entry = {
+                        'domain': domain,
+                        'status_code': e.code,
+                        'response_ms': 0,
+                        'is_up': e.code < 500,
+                    }
+                    break
+                except Exception:
+                    if scheme == 'https' and method == 'HEAD':
+                        continue  # Try HTTPS GET first
+                    if scheme == 'https':
+                        break  # Fall through to HTTP
+                    # Both schemes failed
+                    pass
+
+        if not result_entry:
+            result_entry = {
                 'domain': domain,
-                'status_code': status,
+                'status_code': 0,
                 'response_ms': 0,
                 'is_up': False,
-            })
+            }
+        results.append(result_entry)
     return results
 
 
@@ -2347,7 +2470,7 @@ def check_uptime_all():
             # Keep max 288 entries (24h at 5-min interval)
             history[domain] = history[domain][-288:]
 
-        UPTIME_HISTORY_PATH.write_text(json.dumps(history))
+        _atomic_write_json(UPTIME_HISTORY_PATH, history)
 
     return results
 
@@ -2441,11 +2564,20 @@ def get_all_domains():
 
 
 def is_path_allowed(path):
-    """Check if path is within allowed directories (whitelist approach)"""
+    """Check if path is within allowed directories (whitelist approach).
+    Uses realpath() to resolve symlinks and prevent symlink escapes.
+    """
     allowed = CONFIG.get('file_browser', {}).get('allowed_paths', ['/var/www'])
-    norm = os.path.abspath(path)
+    try:
+        norm = os.path.realpath(path)
+    except OSError:
+        return False
     for a in allowed:
-        if norm == a or norm.startswith(a + '/'):
+        try:
+            real_a = os.path.realpath(a)
+        except OSError:
+            continue
+        if norm == real_a or norm.startswith(real_a + '/'):
             return True
     return False
 
@@ -3064,35 +3196,28 @@ def firewall_ufw_delete():
 
 
 def lookup_ip_countries(ip_list):
-    """Batch lookup country info for a list of IPs via ip-api.com"""
+    """Batch lookup country info for a list of IPs via ipwho.is (HTTPS)"""
     import urllib.request
 
     if not ip_list:
         return {}
 
-    # ip-api.com batch endpoint, max 100 per request
     results = {}
-    batch_size = 100
-    for i in range(0, len(ip_list), batch_size):
-        batch = ip_list[i:i + batch_size]
-        payload = json.dumps([{'query': ip, 'fields': 'query,country,countryCode'} for ip in batch])
-        req = urllib.request.Request(
-            'http://ip-api.com/batch',
-            data=payload.encode('utf-8'),
-            headers={'Content-Type': 'application/json'},
-        )
+    for ip in ip_list[:100]:  # Limit to 100 lookups
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            req = urllib.request.Request(
+                f'https://ipwho.is/{ip}?fields=ip,country,country_code',
+                headers={'User-Agent': 'VPS-Manager'},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
                 data = json.loads(resp.read().decode())
-            for entry in data:
-                ip = entry.get('query', '')
-                if entry.get('countryCode'):
-                    results[ip] = {
-                        'country': entry.get('country', ''),
-                        'countryCode': entry.get('countryCode', ''),
-                    }
+            if data.get('country_code'):
+                results[ip] = {
+                    'country': data.get('country', ''),
+                    'countryCode': data.get('country_code', ''),
+                }
         except Exception:
-            pass  # Graceful fallback: no country data
+            logger.debug('IP geo lookup failed for %s', ip, exc_info=True)
 
     return results
 
@@ -3144,7 +3269,7 @@ def firewall_banned_ips():
                     }
         os.unlink(tmp.name)
     except Exception:
-        pass
+        logger.debug('Fail2ban parse failed', exc_info=True)
 
     for jail_name in jail_names:
         jail_result = run_cmd(f"sudo fail2ban-client status {shlex.quote(jail_name)} 2>/dev/null", timeout=10)
@@ -3214,7 +3339,7 @@ def _save_update_history(source, status, details=''):
     history.append(entry)
     if len(history) > UPDATES_HISTORY_MAX:
         history = history[-UPDATES_HISTORY_MAX:]
-    UPDATES_HISTORY_PATH.write_text(json.dumps(history))
+    _atomic_write_json(UPDATES_HISTORY_PATH, history)
 
 
 def _parse_unattended_upgrades_log():
@@ -3289,19 +3414,27 @@ def updates():
     return render_template('updates.html', updates=update_list)
 
 
+_apt_lock = threading.Lock()
+
+
 @app.route('/updates/install', methods=['POST'])
 @login_required
 def install_updates():
-    run_cmd("sudo apt update 2>&1", timeout=120)
-    result = run_cmd("sudo apt upgrade -y 2>&1", timeout=300)
-    _invalidate_cache('get_system_updates')
-    if result.returncode == 0:
-        log_audit('system_updates_install', {'output': result.stdout[-200:]})
-        _save_update_history('manual', 'success', result.stdout[-200:])
-        return jsonify({'status': 'ok', 'message': 'Updates installed', 'output': result.stdout[-500:]})
-    log_audit('system_updates_install_failed', {'error': result.stderr[-200:]})
-    _save_update_history('manual', 'failure', result.stderr[-200:])
-    return jsonify({'status': 'error', 'message': 'Installation error', 'output': result.stderr[-500:]}), 500
+    if not _apt_lock.acquire(blocking=False):
+        return jsonify({'status': 'error', 'message': 'Another update operation is already running'}), 409
+    try:
+        run_cmd("sudo apt update 2>&1", timeout=120)
+        result = run_cmd("sudo apt upgrade -y 2>&1", timeout=300)
+        _invalidate_cache('get_system_updates')
+        if result.returncode == 0:
+            log_audit('system_updates_install', {'output': result.stdout[-200:]})
+            _save_update_history('manual', 'success', result.stdout[-200:])
+            return jsonify({'status': 'ok', 'message': 'Updates installed', 'output': result.stdout[-500:]})
+        log_audit('system_updates_install_failed', {'error': result.stderr[-200:]})
+        _save_update_history('manual', 'failure', result.stderr[-200:])
+        return jsonify({'status': 'error', 'message': 'Installation error', 'output': result.stderr[-500:]}), 500
+    finally:
+        _apt_lock.release()
 
 
 # ---------------------------------------------------------------------------
@@ -3344,6 +3477,15 @@ def update_check():
 @login_required
 def update_install():
     """Pull latest code from GitHub and restart the PM2 process"""
+    if not _apt_lock.acquire(blocking=False):
+        return jsonify({'status': 'error', 'message': 'Another update operation is already running'}), 409
+    try:
+        return _do_update_install()
+    finally:
+        _apt_lock.release()
+
+
+def _do_update_install():
     current_before = _get_current_version()
 
     # Fetch and reset to origin/main
@@ -3409,6 +3551,11 @@ def _delayed_restart(delay=1.5):
 @login_required
 def update_install_stream():
     """SSE endpoint that streams update progress step by step"""
+    if not _apt_lock.acquire(blocking=False):
+        def error_stream():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Another update operation is already running'})}\n\n"
+        return Response(error_stream(), mimetype='text/event-stream')
+
     def generate():
         import json as _json
 
@@ -3494,8 +3641,14 @@ def update_install_stream():
         t = threading.Thread(target=_delayed_restart, daemon=True)
         t.start()
 
+    def generate_with_lock():
+        try:
+            yield from generate()
+        finally:
+            _apt_lock.release()
+
     return Response(
-        generate(),
+        generate_with_lock(),
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
@@ -3622,12 +3775,43 @@ def terminal_exec():
     if not cmd:
         return jsonify({'stdout': '', 'stderr': 'No command specified', 'cwd': cwd})
 
+    # Handle 'clear' locally (before validation)
+    if cmd.strip() == 'clear':
+        return jsonify({'stdout': '', 'stderr': '', 'cwd': cwd, 'clear': True})
+
     # Validate cwd is a real directory
     real_cwd = os.path.realpath(cwd)
     if not os.path.isdir(real_cwd):
         real_cwd = '/'
 
-    # Block dangerous patterns (defense-in-depth, not a security boundary)
+    # --- Allowlist: check every pipe segment's first command ---
+    # Block subshell escapes: backticks, $(...), $(( patterns
+    if '`' in cmd or '$(' in cmd:
+        log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'subshell escape'})
+        return jsonify({'stdout': '', 'stderr': 'Blocked: subshell expressions not allowed', 'cwd': real_cwd})
+
+    # Split on pipes and check each segment
+    pipe_segments = re.split(r'\|', cmd)
+    for segment in pipe_segments:
+        segment = segment.strip()
+        if not segment:
+            continue
+        # Strip leading 'sudo' to check the actual command
+        check = segment
+        if check.startswith('sudo '):
+            check = check[5:].strip()
+        try:
+            tokens = shlex.split(check)
+        except ValueError:
+            tokens = check.split()
+        if not tokens:
+            continue
+        base_cmd = os.path.basename(tokens[0])
+        if base_cmd not in TERMINAL_ALLOWED_COMMANDS:
+            log_audit('terminal_blocked', {'command': cmd[:200], 'reason': f'not in allowlist: {base_cmd}'})
+            return jsonify({'stdout': '', 'stderr': f'Blocked: command not allowed: {base_cmd}', 'cwd': real_cwd})
+
+    # Block dangerous patterns (defense-in-depth, extra layer on top of allowlist)
     cmd_lower = cmd.lower()
     dangerous_strings = [
         'rm -rf /', 'rm -rf /*', 'rm -rf ~', 'rm -rf .', 'rm -rf *',
@@ -3653,14 +3837,12 @@ def terminal_exec():
     ]
     for pattern in dangerous_strings:
         if pattern in cmd_lower:
+            log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'dangerous string'})
             return jsonify({'stdout': '', 'stderr': 'Blocked: dangerous command', 'cwd': real_cwd})
     for pattern in dangerous_patterns:
         if re.search(pattern, cmd_lower):
+            log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'dangerous pattern'})
             return jsonify({'stdout': '', 'stderr': 'Blocked: dangerous command', 'cwd': real_cwd})
-
-    # Handle 'clear' locally
-    if cmd == 'clear':
-        return jsonify({'stdout': '', 'stderr': '', 'cwd': real_cwd, 'clear': True})
 
     # Run the command from the current working directory, then capture new cwd
     # This way cd, pushd, etc. all work naturally
@@ -4391,6 +4573,15 @@ def validate_config(data):
                 for p in fb['allowed_paths']:
                     if not isinstance(p, str) or not p.startswith('/'):
                         errors.append(f'Allowed path must be an absolute path string: {p}')
+                    elif len(p) < 4:
+                        errors.append(f'Allowed path too short (min 4 chars): {p}')
+                    else:
+                        try:
+                            resolved = os.path.realpath(p)
+                        except OSError:
+                            resolved = p
+                        if resolved in FORBIDDEN_ALLOWED_PATHS:
+                            errors.append(f'Forbidden allowed path (too broad): {p}')
 
     if 'ddos_detection' in data:
         if not isinstance(data['ddos_detection'], dict):
@@ -4466,6 +4657,7 @@ def update_config():
 
     # Update runtime values
     MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
+    app.permanent_session_lifetime = timedelta(hours=CONFIG['auth'].get('session_lifetime_hours', 24))
 
     log_audit('config_update', {'keys': list(data.keys())})
     return jsonify({'status': 'ok', 'message': 'Settings saved'})
@@ -4490,6 +4682,13 @@ def change_password():
     PASSWORD_HASH = generate_password_hash(new_pass)
     CONFIG['auth']['password_hash'] = PASSWORD_HASH
     save_config(CONFIG)
+
+    # Remove generated password file if it exists
+    _pw_file = DATA_DIR / '.generated_password'
+    try:
+        _pw_file.unlink(missing_ok=True)
+    except OSError:
+        pass
 
     log_audit('password_change')
     return jsonify({'status': 'ok', 'message': 'Password changed successfully'})
@@ -4724,7 +4923,7 @@ def api_audit():
 @login_required
 def audit_clear():
     log_audit('audit_clear')
-    AUDIT_LOG_PATH.write_text('[]')
+    _atomic_write_json(AUDIT_LOG_PATH, [])
     return jsonify({'status': 'ok', 'message': 'Audit log cleared'})
 
 

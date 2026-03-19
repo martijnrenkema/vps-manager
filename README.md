@@ -34,7 +34,7 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **Cronjob Editor** - Full CRUD for user and root crontabs with schedule validation, human-readable descriptions
 - **Disk Usage** - Per-site disk usage breakdown
 - **File Browser & Editor** - Browse, upload (drag & drop, multi-file), download, delete, permission management (chmod matrix + chown), in-browser file editing
-- **Web Terminal** - Browser-based command execution
+- **Web Terminal** - Browser-based command execution with allowlist-based command filtering
 
 ### Security
 - **Firewall & Security** - UFW rules, Fail2ban config, IP banning/unbanning, ban duration tracking, whitelist management
@@ -42,6 +42,10 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **2FA Authentication** - TOTP two-factor auth with QR code setup
 - **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
 - **Audit Log** - Full audit trail for all actions with user, IP, and timestamp
+- **Terminal Allowlist** - Command allowlist approach with subshell escape blocking, all blocked commands logged
+- **Symlink Protection** - File browser resolves symlinks to prevent directory traversal escapes
+- **Atomic JSON Writes** - All config and state files written atomically via temp file + rename to prevent corruption
+- **No External CDN** - Bootstrap and fonts served locally, no third-party dependencies at runtime
 
 ### UX & Interface
 - **Command Palette** - Quick navigation with `Ctrl+K` / `Cmd+K`, fuzzy search across all pages
@@ -109,7 +113,8 @@ web/
 │   ├── style.css       # Dark theme stylesheet
 │   ├── sw.js           # Service worker (push notifications)
 │   ├── manifest.json   # PWA manifest
-│   └── *.png           # App icons
+│   ├── *.png           # App icons
+│   └── vendor/         # Bootstrap CSS/JS + Inter font (no CDN)
 └── templates/
     ├── base.html        # Layout with sidebar navigation
     ├── login.html       # Login + 2FA
@@ -221,11 +226,14 @@ Add webhook calls to your backup script on the VPS:
 
 ```bash
 WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
-WEBHOOK_SECRET="your-webhook-secret"  # Set in Settings > Backup
+
+# Load webhook secret from env file (set in Settings > Backup)
+source /var/www/vps.dmmusic.nl/data/.backup_env 2>/dev/null
+WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
 
 # Trap errors for failure reporting
 report_failure() {
-    curl -s -X POST "$WEBHOOK_URL" \
+    [ -n "$WEBHOOK_SECRET" ] && curl -s -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
         -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
         -d "{\"status\": \"failure\", \"details\": \"$1\"}" > /dev/null 2>&1
@@ -236,7 +244,7 @@ set -e
 # ... your backup commands ...
 
 # Report success at the end
-curl -s -X POST "$WEBHOOK_URL" \
+[ -n "$WEBHOOK_SECRET" ] && curl -s -X POST "$WEBHOOK_URL" \
     -H "Content-Type: application/json" \
     -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
     -d '{"status": "success", "details": "Backup completed"}' > /dev/null 2>&1

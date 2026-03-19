@@ -211,7 +211,7 @@
                     </div>
                     <div class="form-group">
                         <label>Webhook secret <span class="tooltip-icon" data-bs-toggle="tooltip" title="Shared secret for authenticating incoming backup webhook calls." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
-                        <input type="text" class="form-control" id="cfg_backup_webhook" value="{{ config.backup.webhook_secret }}">
+                        <input type="password" class="form-control" id="cfg_backup_webhook" value="{{ config.backup.webhook_secret }}" autocomplete="off">
                     </div>
                 </div>
 

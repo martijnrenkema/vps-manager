@@ -10,7 +10,12 @@ DATE=$(date +%Y%m%d)
 CHECKSUM_FILE="$BACKUP_DIR/checksums_$DATE.sha256"
 LOG="/var/log/vps-backup.log"
 WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
-WEBHOOK_SECRET="9CGr0rmMOOz1uyFnoGjbrZgzhYmIm9zHXVMCsIdq0hw"
+# Load webhook secret from env file (never hardcode secrets in scripts)
+BACKUP_ENV="/var/www/vps.dmmusic.nl/data/.backup_env"
+if [ -f "$BACKUP_ENV" ]; then
+    source "$BACKUP_ENV"
+fi
+WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
 WWW_DIR="/var/www"
 
 # Directories to skip in /var/www/ (not actual sites)
@@ -20,9 +25,11 @@ SKIP_DIRS="html"
 report_failure() {
     local err_msg="Backup failed at line $1: $2"
     echo "$(date): $err_msg" >> "$LOG"
-    curl -s -X POST "$WEBHOOK_URL" \
-        -H "Content-Type: application/json" -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-        -d "{\"status\": \"failure\", \"details\": \"$err_msg\"}" > /dev/null 2>&1 || true
+    if [ -n "$WEBHOOK_SECRET" ]; then
+        curl -s -X POST "$WEBHOOK_URL" \
+            -H "Content-Type: application/json" -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
+            -d "{\"status\": \"failure\", \"details\": \"$err_msg\"}" > /dev/null 2>&1 || true
+    fi
 }
 trap 'report_failure $LINENO "$BASH_COMMAND"' ERR
 set -e
@@ -140,6 +147,8 @@ DB_COUNT=$(echo "$DATABASES" | wc -w)
 echo "$(date): Backup completed - $SITE_COUNT sites, $DB_COUNT databases - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums" >> "$LOG"
 
 # Report success to VPS Manager
-curl -s -X POST "$WEBHOOK_URL" \
-    -H "Content-Type: application/json" -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-    -d "{\"status\": \"success\", \"details\": \"Backup completed - $SITE_COUNT sites, $DB_COUNT databases - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums verified\"}" > /dev/null 2>&1 || true
+if [ -n "$WEBHOOK_SECRET" ]; then
+    curl -s -X POST "$WEBHOOK_URL" \
+        -H "Content-Type: application/json" -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
+        -d "{\"status\": \"success\", \"details\": \"Backup completed - $SITE_COUNT sites, $DB_COUNT databases - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums verified\"}" > /dev/null 2>&1 || true
+fi

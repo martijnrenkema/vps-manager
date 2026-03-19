@@ -4,6 +4,8 @@ Loads, saves and provides defaults for all configurable values.
 """
 
 import json
+import os
+import tempfile
 import threading
 from pathlib import Path
 
@@ -87,6 +89,16 @@ def load_config():
 
 
 def save_config(config):
-    """Save config to disk with thread safety"""
+    """Save config to disk with thread safety (atomic write)"""
     with _config_lock:
-        CONFIG_PATH.write_text(json.dumps(config, indent=2))
+        fd, tmp_path = tempfile.mkstemp(dir=str(CONFIG_PATH.parent), suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(config, f, indent=2)
+            os.replace(tmp_path, str(CONFIG_PATH))
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
