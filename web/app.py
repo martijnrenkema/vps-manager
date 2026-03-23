@@ -743,7 +743,23 @@ def get_server_uptime_short():
 
 
 VERSION_FILE = Path(__file__).parent / 'VERSION'
-APP_DIR = os.environ.get('VPS_MANAGER_DIR') or str(Path(__file__).parent.parent.resolve())
+
+def _resolve_app_dir():
+    """Resolve APP_DIR: find the directory containing .git"""
+    if os.environ.get('VPS_MANAGER_DIR'):
+        return os.environ['VPS_MANAGER_DIR']
+    # Check parent (flat deployment: app.py in root with .git)
+    app_parent = Path(__file__).parent.resolve()
+    if (app_parent / '.git').is_dir():
+        return str(app_parent)
+    # Check parent.parent (repo structure: web/app.py with .git in root)
+    repo_root = app_parent.parent.resolve()
+    if (repo_root / '.git').is_dir():
+        return str(repo_root)
+    # Fallback to parent
+    return str(app_parent)
+
+APP_DIR = _resolve_app_dir()
 
 
 def _get_current_version():
