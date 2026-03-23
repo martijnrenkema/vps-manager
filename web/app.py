@@ -1134,6 +1134,73 @@ def get_server_overview():
     }
 
 
+def _ensure_nginx_site_logs(config_path, domain):
+    """Auto-add access_log and error_log directives to an nginx config that lacks them.
+    Inserts after the first 'server_name' line in the first HTTPS server block.
+    Returns True if the config was modified."""
+    result = run_cmd_safe(["sudo", "cat", config_path], timeout=5)
+    if result.returncode != 0:
+        return False
+
+    lines = result.stdout.split('\n')
+    has_error_log = any('error_log' in l for l in lines)
+    has_access_log = any('access_log' in l and 'off' not in l for l in lines)
+
+    if has_error_log and has_access_log:
+        return False
+
+    # Find the first 'server_name' line that is NOT inside an 'if' block or port-80 redirect
+    # We look for the server_name in the main HTTPS block (after listen 443 or after root)
+    insert_idx = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('root ') or (stripped.startswith('server_name') and i > 0):
+            # Check if this is in the main block (not the redirect block)
+            # Use 'root' as anchor since redirect blocks don't have it
+            if stripped.startswith('root '):
+                insert_idx = i + 1
+                break
+
+    if insert_idx is None:
+        # Fallback: insert after first server_name
+        for i, line in enumerate(lines):
+            if line.strip().startswith('server_name') and 'if' not in lines[max(0, i-1)]:
+                insert_idx = i + 1
+                break
+
+    if insert_idx is None:
+        return False
+
+    # Build log directives to insert
+    safe_domain = domain.replace('/', '').replace('..', '')
+    new_lines = []
+    if not has_access_log:
+        new_lines.append(f'    access_log /var/log/nginx/{safe_domain}-access.log;')
+    if not has_error_log:
+        new_lines.append(f'    error_log /var/log/nginx/{safe_domain}-error.log;')
+
+    # Insert the new lines
+    for offset, new_line in enumerate(new_lines):
+        lines.insert(insert_idx + offset, new_line)
+
+    new_content = '\n'.join(lines)
+
+    # Write via temp file
+    temp_path = str(DATA_DIR / f'nginx_autolog_{safe_domain}')
+    try:
+        with open(temp_path, 'w') as f:
+            f.write(new_content)
+        cp_result = run_cmd_safe(["sudo", "cp", temp_path, config_path], timeout=5)
+        os.remove(temp_path)
+        if cp_result.returncode != 0:
+            return False
+    except OSError:
+        return False
+
+    log_audit('nginx_auto_add_logs', {'config': os.path.basename(config_path), 'domain': domain})
+    return True
+
+
 @_ttl_cache(60)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
@@ -1145,6 +1212,7 @@ def get_nginx_sites():
     configs = [s.strip() for s in result.stdout.strip().split('\n')
                if s.strip() and s.strip() != 'default']
     sites = []
+    configs_modified = False
 
     for config in configs:
         config_path = os.path.join(sites_dir, config)
@@ -1181,6 +1249,22 @@ def get_nginx_sites():
         domains = list(dict.fromkeys(domains))
 
         if domains:
+            # Auto-add log directives if missing
+            if not access_log_path or not error_log_path:
+                if _ensure_nginx_site_logs(config_path, domains[0]):
+                    configs_modified = True
+                    # Re-read the updated config
+                    info_result = run_cmd_safe(
+                        ["grep", "-E", "access_log |error_log ", config_path]
+                    )
+                    if info_result.returncode == 0:
+                        for line in info_result.stdout.strip().split('\n'):
+                            line = line.strip()
+                            if line.startswith('access_log') and 'off' not in line:
+                                access_log_path = line.replace('access_log', '').rstrip(';').strip().split()[0]
+                            elif line.startswith('error_log'):
+                                error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
+
             # Check HTTP status for first domain (HTTPS with HTTP fallback, follow redirects)
             http_result = run_cmd_safe(
                 ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
@@ -1209,6 +1293,14 @@ def get_nginx_sites():
                 'access_log': access_log_path,
                 'error_log': error_log_path,
             })
+
+    # Reload nginx if we modified any configs
+    if configs_modified:
+        valid = run_cmd_safe(["sudo", "nginx", "-t"], timeout=10)
+        if valid.returncode == 0:
+            run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=10)
+        else:
+            logger.warning("Nginx config invalid after auto-adding logs, skipping reload")
 
     return sites
 
