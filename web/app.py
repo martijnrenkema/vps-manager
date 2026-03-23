@@ -887,6 +887,7 @@ def validate_web_config():
 
 # Login rate limiting: max 5 attempts per IP per 5 minutes
 _login_attempts = {}  # {ip: [timestamp, ...]}
+_login_attempts_lock = threading.Lock()
 _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW = 300  # seconds
 _LOGIN_MAX_IPS = 1000  # max tracked IPs to prevent memory growth
@@ -914,18 +915,20 @@ def _cleanup_login_attempts():
 
 def _is_rate_limited(ip):
     """Check if an IP has exceeded login attempt limits"""
-    now = time.time()
-    attempts = _login_attempts.get(ip, [])
-    # Remove expired attempts for this IP
-    attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
-    _login_attempts[ip] = attempts
-    _cleanup_login_attempts()
-    return len(attempts) >= _LOGIN_MAX_ATTEMPTS
+    with _login_attempts_lock:
+        now = time.time()
+        attempts = _login_attempts.get(ip, [])
+        # Remove expired attempts for this IP
+        attempts = [t for t in attempts if now - t < _LOGIN_WINDOW]
+        _login_attempts[ip] = attempts
+        _cleanup_login_attempts()
+        return len(attempts) >= _LOGIN_MAX_ATTEMPTS
 
 
 def _record_attempt(ip):
     """Record a failed login attempt"""
-    _login_attempts.setdefault(ip, []).append(time.time())
+    with _login_attempts_lock:
+        _login_attempts.setdefault(ip, []).append(time.time())
 
 
 def login_required(f):
@@ -1172,7 +1175,7 @@ def _ensure_nginx_site_logs(config_path, domain):
         return False
 
     # Build log directives to insert
-    safe_domain = domain.replace('/', '').replace('..', '')
+    safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain)
     new_lines = []
     if not has_access_log:
         new_lines.append(f'    access_log /var/log/nginx/{safe_domain}-access.log;')
@@ -1191,11 +1194,15 @@ def _ensure_nginx_site_logs(config_path, domain):
         with open(temp_path, 'w') as f:
             f.write(new_content)
         cp_result = run_cmd_safe(["sudo", "cp", temp_path, config_path], timeout=5)
-        os.remove(temp_path)
         if cp_result.returncode != 0:
             return False
     except OSError:
         return False
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
     log_audit('nginx_auto_add_logs', {'config': os.path.basename(config_path), 'domain': domain})
     return True
@@ -1905,7 +1912,7 @@ def get_firewall_security():
         if jail_match:
             jail_names = [j.strip() for j in jail_match.group(1).split(',') if j.strip()]
             for jail_name in jail_names:
-                jail_result = run_cmd(f"sudo fail2ban-client status {jail_name} 2>/dev/null")
+                jail_result = run_cmd(f"sudo fail2ban-client status {shlex.quote(jail_name)} 2>/dev/null")
                 jail_info = {'name': jail_name, 'status': 'unknown', 'banned': 0, 'total_banned': 0}
                 if jail_result.returncode == 0:
                     jail_info['status'] = 'active'
@@ -2053,7 +2060,7 @@ def get_nginx_logs():
             continue
         site_name = site['domains'][0] if site.get('domains') else site.get('config', '?')
         result = run_cmd(
-            f"sudo awk '{{print $9}}' {site_access_log} 2>/dev/null | sort | uniq -c | sort -rn | head -10"
+            f"sudo awk '{{print $9}}' {shlex.quote(site_access_log)} 2>/dev/null | sort | uniq -c | sort -rn | head -10"
         )
         if result.returncode == 0 and result.stdout.strip():
             codes = []
@@ -3727,10 +3734,27 @@ def _delayed_restart(delay=1.5):
     run_cmd_safe(["pm2", "restart", "vps-manager"], timeout=15)
 
 
+@app.route('/api/update/install-token', methods=['POST'])
+@login_required
+def update_install_token():
+    """Generate a one-time token for the SSE update stream (CSRF-protected POST)"""
+    import secrets
+    token = secrets.token_urlsafe(32)
+    session['update_stream_token'] = token
+    return jsonify({'token': token})
+
+
 @app.route('/api/update/install-stream')
 @login_required
 def update_install_stream():
-    """SSE endpoint that streams update progress step by step"""
+    """SSE endpoint that streams update progress step by step (token-protected)"""
+    token = request.args.get('token', '')
+    expected = session.pop('update_stream_token', None)
+    if not token or token != expected:
+        def denied():
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid or expired token'})}\n\n"
+        return Response(denied(), mimetype='text/event-stream')
+
     if not _apt_lock.acquire(blocking=False):
         def error_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': 'Another update operation is already running'})}\n\n"
@@ -3977,14 +4001,19 @@ def terminal_exec():
     if not os.path.isdir(real_cwd):
         real_cwd = '/'
 
-    # --- Allowlist: check every pipe segment's first command ---
+    # --- Allowlist: check every segment's first command ---
     # Block subshell escapes: backticks, $(...), $(( patterns
     if '`' in cmd or '$(' in cmd:
         log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'subshell escape'})
         return jsonify({'stdout': '', 'stderr': 'Blocked: subshell expressions not allowed', 'cwd': real_cwd})
 
-    # Split on pipes and check each segment
-    pipe_segments = re.split(r'\|', cmd)
+    # Block all output redirection (>, >>) to prevent arbitrary file writes
+    if '>' in cmd:
+        log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'output redirection'})
+        return jsonify({'stdout': '', 'stderr': 'Blocked: output redirection not allowed. Use the File Editor to write files.', 'cwd': real_cwd})
+
+    # Split on all shell operators: |, &&, ||, ;
+    pipe_segments = re.split(r'\|{1,2}|&&|;', cmd)
     for segment in pipe_segments:
         segment = segment.strip()
         if not segment:
@@ -4833,11 +4862,19 @@ def validate_config(data):
         if not isinstance(data['nginx'], dict):
             errors.append('nginx must be an object')
         else:
-            for key in ('error_log', 'access_log', 'sites_enabled'):
+            for key in ('error_log', 'access_log'):
                 if key in data['nginx']:
                     v = data['nginx'][key]
                     if not isinstance(v, str) or not v.startswith('/'):
                         errors.append(f'nginx.{key} must be an absolute path')
+                    elif not v.startswith('/var/log/nginx/'):
+                        errors.append(f'nginx.{key} must be under /var/log/nginx/')
+            if 'sites_enabled' in data['nginx']:
+                v = data['nginx']['sites_enabled']
+                if not isinstance(v, str) or not v.startswith('/'):
+                    errors.append('nginx.sites_enabled must be an absolute path')
+                elif not v.startswith('/etc/nginx/'):
+                    errors.append('nginx.sites_enabled must be under /etc/nginx/')
 
     if 'caddy' in data:
         if not isinstance(data['caddy'], dict):
@@ -5844,7 +5881,7 @@ def _ensure_caddy_site_logs(config_file):
 
     # Insert in reverse order so line indices stay valid
     for insert_idx, domain in reversed(insertions):
-        safe_domain = domain.replace('/', '').replace('..', '')
+        safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain)
         log_block = [
             '    log {',
             f'        output file /var/log/caddy/{safe_domain}.log',
@@ -5862,11 +5899,15 @@ def _ensure_caddy_site_logs(config_file):
         with open(temp_path, 'w') as f:
             f.write(new_content)
         cp_result = run_cmd_safe(["sudo", "cp", temp_path, config_file], timeout=5)
-        os.remove(temp_path)
         if cp_result.returncode != 0:
             return False
     except OSError:
         return False
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
     domains_added = [d for _, d in insertions]
     log_audit('caddy_auto_add_logs', {'config': os.path.basename(config_file), 'domains': domains_added})

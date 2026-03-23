@@ -298,7 +298,7 @@ async function checkAppUpdate() {
     checkBtn.disabled = false;
 }
 
-function installAppUpdate() {
+async function installAppUpdate() {
     var installBtn = document.getElementById('appInstallBtn');
     var stepperEl = document.getElementById('appUpdateStepper');
     var errorEl = document.getElementById('appUpdateError');
@@ -331,7 +331,10 @@ function installAppUpdate() {
     stepperEl.scrollIntoView({ behavior: 'smooth' });
 
     var completed = false;
-    var es = new EventSource('/api/update/install-stream');
+    // Get one-time token via CSRF-protected POST, then open SSE stream
+    var tokenRes = await fetch('/api/update/install-token', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
+    var tokenData = await tokenRes.json();
+    var es = new EventSource('/api/update/install-stream?token=' + encodeURIComponent(tokenData.token));
 
     es.onmessage = function(e) {
         var data = JSON.parse(e.data);
