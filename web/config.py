@@ -54,10 +54,18 @@ def get_default_config():
             "syn_threshold": 50,
             "single_ip_threshold": 50,
         },
+        "web_server": "nginx",
         "nginx": {
             "error_log": "/var/log/nginx/error.log",
             "access_log": "/var/log/nginx/access.log",
             "sites_enabled": "/etc/nginx/sites-enabled/",
+        },
+        "caddy": {
+            "config_file": "/etc/caddy/Caddyfile",
+            "sites_dir": "/etc/caddy/sites/",
+            "access_log": "/var/log/caddy/access.log",
+            "error_log": "/var/log/caddy/error.log",
+            "data_dir": "/var/lib/caddy/.local/share/caddy/",
         },
         "phpmyadmin_path": "/phpmyadmin/",
         "dismissed_alerts": [],

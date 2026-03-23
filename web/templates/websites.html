@@ -5,7 +5,7 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('globe') }} Nginx Sites <span class="tooltip-icon" data-bs-toggle="tooltip" title="Websites configured in Nginx. 'Proxy' sites forward traffic to an application, 'static' sites serve files directly.">?</span></div>
+    <div class="card-header">{{ icon('globe') }} {% if web_server == 'caddy' %}Caddy Sites{% else %}Nginx Sites{% endif %} <span class="tooltip-icon" data-bs-toggle="tooltip" title="Websites configured in {{ 'Caddy' if web_server == 'caddy' else 'Nginx' }}. 'Proxy' sites forward traffic to an application, 'static' sites serve files directly.">?</span></div>
     <div class="card-body">
         {% if sites %}
         <div class="table-wrap">
@@ -49,8 +49,8 @@
                         <td data-label="Location"><code>{{ site.location }}</code></td>
                         <td data-label="Config"><code style="color:var(--text-muted)">{{ site.config }}</code></td>
                         <td data-label="Actions" style="white-space:nowrap">
-                            <a href="/nginx-config?select={{ site.config|urlencode }}" class="btn btn-sm" title="Edit config">{{ icon('edit') }} Config</a>
-                            <a href="/nginx-logs" class="btn btn-sm" title="View logs">{{ icon('file-text') }} Logs</a>
+                            <a href="/web-config?select={{ site.config|urlencode }}" class="btn btn-sm" title="Edit config">{{ icon('edit') }} Config</a>
+                            <a href="/web-logs" class="btn btn-sm" title="View logs">{{ icon('file-text') }} Logs</a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -58,7 +58,7 @@
             </table>
         </div>
         {% else %}
-        <div class="empty-state">Unable to retrieve nginx sites.</div>
+        <div class="empty-state">Unable to retrieve {{ 'Caddy' if web_server == 'caddy' else 'Nginx' }} sites.</div>
         {% endif %}
     </div>
 </div>

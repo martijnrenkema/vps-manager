@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Caddy Logs - VPS Manager{% endblock %}
+{% block page_title %}Caddy Logs{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="card-header">{{ icon('file-text') }} Caddy Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">global (last 20 entries)</span></div>
+    <div class="card-body" style="padding:0">
+        {% if data.errors %}
+            <div class="log-entries">
+                {% for entry in data.errors %}
+                <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                    <div class="log-entry-summary">
+                        <span class="log-timestamp">{{ entry.timestamp }}</span>
+                        <span class="log-level log-level-{{ entry.level }}">{{ entry.level }}</span>
+                        <span class="log-message">{{ entry.message }}</span>
+                    </div>
+                    <div class="log-detail">
+                        <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        {% else %}
+            <div style="padding:16px">
+                <span class="badge badge-green">No errors in Caddy logs</span>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if data.php_errors %}
+<div class="card">
+    <div class="card-header">{{ icon('file-text') }} PHP-FPM Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">php-fpm (last 20 entries)</span></div>
+    <div class="card-body" style="padding:0">
+        <div class="log-entries">
+            {% for entry in data.php_errors %}
+            <div class="log-entry" onclick="this.classList.toggle('expanded')">
+                <div class="log-entry-summary">
+                    <span class="log-level log-level-error">php</span>
+                    <span class="log-message">{{ entry.message }}</span>
+                </div>
+                <div class="log-detail">
+                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if data.per_site %}
+<div class="card">
+    <div class="card-header">{{ icon('folder') }} Errors per Site <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">per-site error logs</span></div>
+    <div class="card-body">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Site</th>
+                        <th>Errors</th>
+                        <th>Last Error</th>
+                        <th>Last Message</th>
+                        <th>Log</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in data.per_site %}
+                    <tr>
+                        <td><strong>{{ entry.site }}</strong></td>
+                        <td><span class="badge badge-{% if entry.count > 50 %}red{% elif entry.count > 10 %}yellow{% elif entry.count == 0 %}green{% else %}blue{% endif %}">{{ entry.count }}</span></td>
+                        <td>
+                            {% if entry.last_ts %}
+                                <span style="font-size:12px;color:var(--text-muted)">{{ entry.last_ts }}</span>
+                            {% else %}
+                                <span style="font-size:12px;color:var(--text-muted)">-</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if entry.last_msg %}
+                                <span style="font-size:12px;color:var(--text-secondary);max-width:400px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ entry.last_msg }}</span>
+                            {% endif %}
+                        </td>
+                        <td><code style="font-size:11px">{{ entry.log_path | default('-') }}</code></td>
+                        <td style="white-space:nowrap">
+                            <button class="btn btn-sm" onclick='viewSiteLog({{ entry.site | tojson }}, "error")'>{{ icon('file-text') }} Errors</button>
+                            <button class="btn btn-sm" onclick='viewSiteLog({{ entry.site | tojson }}, "access")' style="margin-left:4px">{{ icon('bar-chart') }} Access</button>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% if data.access_summary %}
+<div class="card">
+    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span class="tooltip-icon" data-bs-toggle="tooltip" title="HTTP status codes: 2xx = success, 3xx = redirect, 4xx = client error (e.g. 404 not found), 5xx = server error." style="margin-left:0">?</span> <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">per-site access logs</span></div>
+    <div class="card-body">
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Site</th>
+                        <th>HTTP Status Codes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in data.access_summary %}
+                    <tr>
+                        <td><strong>{{ item.site }}</strong></td>
+                        <td>
+                            {% for code_item in item.codes %}
+                                {% if code_item.code.startswith('2') %}
+                                    <span class="badge badge-green">{{ code_item.code }}</span>
+                                {% elif code_item.code.startswith('3') %}
+                                    <span class="badge" style="background:rgba(57,210,192,0.15);color:var(--cyan)">{{ code_item.code }}</span>
+                                {% elif code_item.code.startswith('4') %}
+                                    <span class="badge badge-yellow">{{ code_item.code }}</span>
+                                {% elif code_item.code.startswith('5') %}
+                                    <span class="badge badge-red">{{ code_item.code }}</span>
+                                {% else %}
+                                    <span class="badge">{{ code_item.code }}</span>
+                                {% endif %}
+                                <span style="font-size:12px;color:var(--text-muted);margin-right:12px">{{ code_item.count }}x</span>
+                            {% endfor %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function viewSiteLog(site, type) {
+    type = type || 'error';
+    document.getElementById('logModal').style.display = 'flex';
+    document.getElementById('logModalTitle').textContent = (type === 'access' ? 'Access log: ' : 'Error log: ') + site;
+    document.getElementById('logModalContent').textContent = 'Loading...';
+    try {
+        var res = await fetch('/api/web-log?site=' + encodeURIComponent(site) + '&type=' + type + '&lines=200');
+        var data = await res.json();
+        if (res.ok) {
+            document.getElementById('logModalContent').textContent = data.content || '(no ' + type + ' logs)';
+        } else {
+            document.getElementById('logModalContent').textContent = 'Error: ' + (data.message || 'Unknown error');
+        }
+    } catch (e) {
+        document.getElementById('logModalContent').textContent = 'Error: ' + e.message;
+    }
+}
+</script>
+{% endblock %}

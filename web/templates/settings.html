@@ -156,6 +156,23 @@
                 </div>
             </div>
 
+            <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Web Server</h4>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px">
+                <div class="form-group">
+                    <label>Active web server <span class="tooltip-icon" data-bs-toggle="tooltip" title="Choose which web server VPS Manager should manage. This affects sites, config editor, logs, and SSL certificate handling." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <select class="form-control" id="cfg_web_server" style="flex:1" onchange="toggleWebServerFields()">
+                            <option value="nginx" {% if config.web_server == 'nginx' %}selected{% endif %}>Nginx</option>
+                            <option value="caddy" {% if config.web_server == 'caddy' %}selected{% endif %}>Caddy</option>
+                        </select>
+                        <button type="button" class="btn" onclick="detectWebServer()" id="detectWebServerBtn">{{ icon('refresh') }} Detect</button>
+                    </div>
+                </div>
+            </div>
+            <div id="detectedWebServer" style="display:none;margin-bottom:16px">
+                <div id="detectedWebServerResult" style="font-size:13px;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-primary)"></div>
+            </div>
+
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Services</h4>
             <div class="form-group" style="max-width:500px">
                 <label>Monitored services (comma-separated) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Systemd services to monitor. You will be alerted if a listed service stops running." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
@@ -215,6 +232,7 @@
                     </div>
                 </div>
 
+                <div id="nginxFields" style="{% if config.web_server == 'caddy' %}display:none{% endif %}">
                 <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Nginx</h4>
                 <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px">
                     <div class="form-group">
@@ -229,6 +247,33 @@
                         <label>Sites enabled <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the nginx sites-enabled directory." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                         <input type="text" class="form-control" id="cfg_nginx_sites_enabled" value="{{ config.nginx.sites_enabled }}">
                     </div>
+                </div>
+                </div>
+
+                <div id="caddyFields" style="{% if config.web_server != 'caddy' %}display:none{% endif %}">
+                <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Caddy</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:20px">
+                    <div class="form-group">
+                        <label>Config file <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the main Caddyfile." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_caddy_config_file" value="{{ config.caddy.config_file }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Sites directory <span class="tooltip-icon" data-bs-toggle="tooltip" title="Directory for per-site Caddy config files (used with import directive)." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_caddy_sites_dir" value="{{ config.caddy.sites_dir }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Error log <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the Caddy error log file." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_caddy_error_log" value="{{ config.caddy.error_log }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Access log <span class="tooltip-icon" data-bs-toggle="tooltip" title="Path to the Caddy access log file." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_caddy_access_log" value="{{ config.caddy.access_log }}">
+                    </div>
+                    <div class="form-group">
+                        <label>Data directory <span class="tooltip-icon" data-bs-toggle="tooltip" title="Caddy data directory (contains certificates and other runtime data)." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                        <input type="text" class="form-control" id="cfg_caddy_data_dir" value="{{ config.caddy.data_dir }}">
+                    </div>
+                </div>
                 </div>
 
                 <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Push Notifications</h4>
@@ -412,11 +457,38 @@ function toggleAdvanced() {
     }
 }
 
+function toggleWebServerFields() {
+    const ws = document.getElementById('cfg_web_server').value;
+    document.getElementById('nginxFields').style.display = ws === 'nginx' ? '' : 'none';
+    document.getElementById('caddyFields').style.display = ws === 'caddy' ? '' : 'none';
+}
+
+async function detectWebServer() {
+    const btn = document.getElementById('detectWebServerBtn');
+    btn.disabled = true;
+    try {
+        const res = await fetch('/api/webserver/detect');
+        const data = await res.json();
+        const resultDiv = document.getElementById('detectedWebServerResult');
+        let html = `Detected: <strong>${data.detected}</strong>`;
+        html += ` (Nginx: ${data.nginx_installed ? 'installed' : 'not found'}, Caddy: ${data.caddy_installed ? 'installed' : 'not found'})`;
+        if (data.detected !== data.current) {
+            html += `<br><button class="btn btn-sm btn-green" style="margin-top:8px" onclick="document.getElementById('cfg_web_server').value='${data.detected}';toggleWebServerFields();document.getElementById('detectedWebServer').style.display='none';showToast('Web server changed to ${data.detected} - save settings to apply','success')">Switch to ${data.detected}</button>`;
+        }
+        resultDiv.innerHTML = html;
+        document.getElementById('detectedWebServer').style.display = 'block';
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+    btn.disabled = false;
+}
+
 async function saveConfig(e) {
     e.preventDefault();
     const services = document.getElementById('cfg_services').value.split(',').map(s => s.trim()).filter(Boolean);
     const allowedPaths = document.getElementById('cfg_fb_allowed_paths').value.split(',').map(s => s.trim()).filter(Boolean);
     const data = {
+        web_server: document.getElementById('cfg_web_server').value,
         thresholds: {
             disk_warning: parseInt(document.getElementById('cfg_disk_warning').value),
             disk_critical: parseInt(document.getElementById('cfg_disk_critical').value),
@@ -452,6 +524,13 @@ async function saveConfig(e) {
             error_log: document.getElementById('cfg_nginx_error_log').value,
             access_log: document.getElementById('cfg_nginx_access_log').value,
             sites_enabled: document.getElementById('cfg_nginx_sites_enabled').value,
+        },
+        caddy: {
+            config_file: document.getElementById('cfg_caddy_config_file').value,
+            sites_dir: document.getElementById('cfg_caddy_sites_dir').value,
+            error_log: document.getElementById('cfg_caddy_error_log').value,
+            access_log: document.getElementById('cfg_caddy_access_log').value,
+            data_dir: document.getElementById('cfg_caddy_data_dir').value,
         },
         vapid_mailto: document.getElementById('cfg_vapid_mailto').value,
     };

@@ -20,12 +20,13 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **Auto-Update** - Check GitHub releases, streaming self-update with real-time step-by-step progress via SSE
 
 ### Web & Application
-- **Website Management** - All hosted sites with HTTP status checks
+- **Website Management** - All hosted sites with HTTP status checks (Nginx and Caddy)
 - **Uptime Monitoring** - HTTP health checks for all sites, response time history chart (24h), dashboard alerts on downtime
 - **PM2 Processes** - Node.js process management (restart, stop, logs) with bulk actions
-- **Nginx Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors
-- **Nginx Config Editor** - Edit, enable/disable site configs with built-in `nginx -t` validation and syntax highlighting
-- **SSL Certificates** - Expiry dates, warnings, and auto-renewal status
+- **Nginx / Caddy Support** - Full support for both web servers (either/or, configurable in Settings with auto-detection)
+- **Web Server Logs** - Expandable error entries, per-site log viewer, PHP-FPM errors (Nginx plain text + Caddy JSON format)
+- **Config Editor** - Edit site configs with syntax highlighting: Nginx (`nginx -t` validation, enable/disable via symlinks) or Caddyfile (`caddy validate`, enable/disable via `.disabled` extension)
+- **SSL Certificates** - Nginx: Let's Encrypt via certbot with manual renewal. Caddy: automatic HTTPS via built-in ACME
 - **DNS Record Viewer** - Per-domain DNS lookup (A, AAAA, MX, CNAME, TXT, NS records)
 - **PHP Management** - Installed PHP versions, FPM pool status, per-site PHP mapping, FPM restart
 - **MariaDB Databases** - Database sizes, table counts, phpMyAdmin link
@@ -122,9 +123,11 @@ web/
     ├── websites.html    # Hosted sites
     ├── uptime.html      # Uptime monitoring with response chart
     ├── pm2.html         # PM2 processes
-    ├── nginx_logs.html  # Log viewer
+    ├── nginx_logs.html  # Nginx log viewer
     ├── nginx_config.html # Nginx site config editor
-    ├── ssl.html         # SSL certificates
+    ├── caddy_logs.html  # Caddy log viewer (JSON format)
+    ├── caddy_config.html # Caddy config editor
+    ├── ssl.html         # SSL certificates (certbot + Caddy auto-HTTPS)
     ├── dns.html         # DNS record viewer
     ├── services.html    # Service monitoring
     ├── processes.html   # System process manager
@@ -157,9 +160,13 @@ export VPS_MANAGER_USER=admin
 export VPS_MANAGER_PASS=your-password
 ```
 
+### Web Server
+
+Supports both **Nginx** and **Caddy** as the web server. Configure in Settings with auto-detection. The entire dashboard adapts: site listing, config editor, log viewer, SSL management, sidebar labels, and command palette.
+
 ### Monitored Services
 
-Default: `nginx`, `php8.3-fpm`, `mariadb`, `fail2ban`. Configurable in settings.
+Default: `nginx`, `php8.3-fpm`, `mariadb`, `fail2ban`. Configurable in settings. When using Caddy, replace `nginx` with `caddy` (auto-detected via the Detect button).
 
 ### Alert Thresholds
 
@@ -282,9 +289,11 @@ fi
 - [pyotp](https://github.com/pyauth/pyotp) - TOTP two-factor authentication
 - [qrcode](https://github.com/lincolnloop/python-qrcode) - QR code generation for 2FA setup
 
-## Nginx Configuration
+## Reverse Proxy Configuration
 
-Example Nginx reverse proxy config for the web dashboard:
+Example reverse proxy config for the web dashboard:
+
+### Nginx
 
 ```nginx
 server {
@@ -303,6 +312,49 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/vps.example.com/privkey.pem;
 }
 ```
+
+### Caddy
+
+```caddyfile
+vps.example.com {
+    reverse_proxy localhost:5050
+}
+```
+
+Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
+
+## Changelog
+
+### v1.5.0 - Caddy Web Server Support
+- **Caddy support** - Full Caddy web server support alongside Nginx (either/or model, configurable in Settings)
+- **Caddyfile editor** - Config editor with Caddyfile syntax highlighting, validation (`caddy validate`), and site enable/disable
+- **Caddy log viewer** - JSON log parsing with structured error/access log display, journalctl fallback
+- **Caddy auto-HTTPS** - SSL certificate management via Caddy's built-in ACME (no certbot needed)
+- **Auto-detection** - Detect installed web server automatically via Settings page
+- **Dynamic UI** - Sidebar, command palette, SSL page, and websites page adapt based on active web server
+- **Security hardening** - Path traversal protection on all Caddy config routes, log path validation, config path restrictions
+- **CLI tool** - Auto-detection via SSH, Caddy sites/logs/SSL support, `--web-logs` alias
+
+### v1.4.0 - Security Hardening
+- Fixed 24 security audit findings across 5 priority levels
+- Input validation, path traversal protection, CSRF hardening
+
+### v1.3.0 - Uptime Monitoring & DNS
+- Uptime monitoring with response time charts
+- DNS record viewer per domain
+
+### v1.2.0 - Push Notifications & PWA
+- Web Push notifications with configurable categories
+- PWA support with service worker
+
+### v1.1.0 - File Browser & Cronjobs
+- File browser with editor, upload, permissions
+- Cronjob CRUD editor
+
+### v1.0.0 - Initial Release
+- Server dashboard with service monitoring
+- Nginx config editor, SSL management
+- Firewall, backup monitoring, audit log
 
 ## License
 

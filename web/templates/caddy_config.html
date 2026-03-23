@@ -1,0 +1,303 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Caddy Config - VPS Manager{% endblock %}
+{% block page_title %}Caddy Config{% endblock %}
+
+{% block content %}
+<div class="nginx-editor-layout">
+    <!-- Sidebar: config list -->
+    <div class="nginx-config-sidebar">
+        <div class="card" style="margin-bottom:0;height:100%">
+            <div class="card-header">{{ icon('file-text') }} Caddyfile <span class="tooltip-icon" data-bs-toggle="tooltip" title="Caddy configuration files. The main Caddyfile is always active. Site files in the sites/ directory can be enabled/disabled.">?</span></div>
+            <div class="card-body" style="padding:8px">
+                <div style="font-size:10px;text-transform:uppercase;color:var(--green);font-weight:600;letter-spacing:0.8px;padding:8px 8px 4px">Main Config</div>
+                <div id="mainConfig">
+                    <div class="nginx-config-item" data-name="{{ configs.main }}" data-type="main" onclick="loadConfig('{{ configs.main }}', 'main')">
+                        <span class="badge-dot green"></span> {{ configs.main }}
+                    </div>
+                </div>
+                {% if configs.sites %}
+                <div style="font-size:10px;text-transform:uppercase;color:var(--accent);font-weight:600;letter-spacing:0.8px;padding:12px 8px 4px">Site Files</div>
+                <div id="siteConfigs">
+                    {% for name in configs.sites %}
+                    <div class="nginx-config-item" data-name="{{ name }}" data-type="site" onclick="loadConfig('{{ name }}', 'site')">
+                        <span class="badge-dot green"></span> {{ name }}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if configs.disabled %}
+                <div style="font-size:10px;text-transform:uppercase;color:var(--text-muted);font-weight:600;letter-spacing:0.8px;padding:12px 8px 4px">Disabled</div>
+                <div id="disabledConfigs">
+                    {% for name in configs.disabled %}
+                    <div class="nginx-config-item" data-name="{{ name }}" data-type="site" onclick="loadConfig('{{ name }}', 'site')">
+                        <span class="badge-dot" style="background:var(--text-muted)"></span> {{ name }}
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Main: editor -->
+    <div class="nginx-editor-main">
+        <div class="card" style="margin-bottom:0;height:100%;display:flex;flex-direction:column">
+            <div class="card-header" style="justify-content:space-between;flex-wrap:wrap;gap:8px">
+                <div style="display:flex;align-items:center;gap:8px">
+                    {{ icon('edit') }} <span id="editorTitle">Select a config file</span>
+                </div>
+                <div class="btn-group" id="editorActions" style="display:none;flex-wrap:wrap;gap:6px">
+                    <button class="btn btn-sm btn-green" onclick="saveConfig()">{{ icon('save') }} Save</button>
+                    <button class="btn btn-sm" onclick="validateConfig()">{{ icon('check') }} Validate</button>
+                    <button class="btn btn-sm btn-green" id="btnEnable" onclick="toggleSite('enable')" style="display:none">{{ icon('toggle-right') }} Enable</button>
+                    <button class="btn btn-sm btn-yellow" id="btnDisable" onclick="toggleSite('disable')" style="display:none">{{ icon('toggle-left') }} Disable</button>
+                </div>
+            </div>
+            <div style="flex:1;display:flex;flex-direction:column;overflow:hidden">
+                <div class="editor-container" id="editorContainer" style="flex:1">
+                    <div class="editor-line-numbers" id="lineNumbers"></div>
+                    <div class="nginx-editor-wrap">
+                        <pre class="highlight-overlay" id="highlightOverlay"><code id="highlightCode"></code></pre>
+                        <textarea class="editor-textarea" id="editorTextarea" placeholder="Select a config file from the sidebar..." spellcheck="false"></textarea>
+                    </div>
+                </div>
+                <div class="editor-statusbar" id="editorStatusbar">
+                    <span id="editorStatus">No file loaded</span>
+                    <span id="editorInfo"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Validation output modal -->
+<div class="modal-overlay" id="validateModal">
+    <div class="vps-modal" style="max-width:600px">
+        <div class="vps-modal-header">
+            <h3 id="validateTitle">Caddy Config Test</h3>
+            <button class="vps-modal-close" onclick="document.getElementById('validateModal').style.display='none'">&times;</button>
+        </div>
+        <div class="vps-modal-body">
+            <pre id="validateOutput" style="max-height:300px"></pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentConfigName = '';
+let currentConfigType = '';
+let configChanged = false;
+
+function loadConfig(name, type) {
+    if (configChanged && !confirm('You have unsaved changes. Discard them?')) return;
+    // Update active state in sidebar
+    document.querySelectorAll('.nginx-config-item').forEach(el => el.classList.remove('active'));
+    const item = document.querySelector(`.nginx-config-item[data-name="${CSS.escape(name)}"][data-type="${CSS.escape(type)}"]`);
+    if (item) item.classList.add('active');
+
+    currentConfigName = name;
+    currentConfigType = type;
+    configChanged = false;
+
+    document.getElementById('editorTitle').textContent = name;
+    document.getElementById('editorActions').style.display = 'flex';
+    document.getElementById('editorStatus').textContent = 'Loading...';
+
+    // Show enable/disable buttons for site files (not main Caddyfile)
+    const isDisabled = name.endsWith('.disabled');
+    document.getElementById('btnEnable').style.display = (type === 'site' && isDisabled) ? '' : 'none';
+    document.getElementById('btnDisable').style.display = (type === 'site' && !isDisabled) ? '' : 'none';
+
+    fetch(`/api/caddy/config/read?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`)
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                document.getElementById('editorTextarea').value = data.content;
+                updateLineNumbers();
+                document.getElementById('editorStatus').textContent = 'Loaded';
+                document.getElementById('editorInfo').textContent = `${data.content.split('\n').length} lines`;
+            } else {
+                document.getElementById('editorStatus').textContent = data.message || 'Error';
+            }
+        })
+        .catch(() => {
+            document.getElementById('editorStatus').textContent = 'Connection error';
+        });
+}
+
+function updateLineNumbers() {
+    const textarea = document.getElementById('editorTextarea');
+    const lines = textarea.value.split('\n').length;
+    const nums = document.getElementById('lineNumbers');
+    nums.innerHTML = Array.from({length: lines}, (_, i) => i + 1).join('\n');
+    highlightCaddyfile(textarea.value);
+}
+
+function highlightCaddyfile(code) {
+    const hl = document.getElementById('highlightCode');
+    if (!hl) return;
+    let html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    html = html
+        .replace(/(#[^\n]*)/g, '<span class="hl-comment">$1</span>')
+        .replace(/\b(reverse_proxy|file_server|tls|encode|header|handle|handle_path|route|respond|redir|import|root|log|output|php_fastcgi|rewrite|uri|basicauth|forward_auth|request_header|try_files|templates|push|metrics|acme_server|abort|error|invoke|map|vars|skip_log|method|bind|auto_https)\b/g, '<span class="hl-directive">$1</span>')
+        .replace(/(\{[a-zA-Z_.][a-zA-Z0-9_.]*\})/g, '<span class="hl-variable">$1</span>')
+        .replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, '<span class="hl-string">$1</span>')
+        .replace(/\b(\d+)\b/g, '<span class="hl-number">$1</span>')
+        .replace(/([{}])/g, '<span class="hl-brace">$1</span>');
+    hl.innerHTML = html + '\n';
+}
+
+document.getElementById('editorTextarea').addEventListener('input', function() {
+    configChanged = true;
+    document.getElementById('editorStatus').textContent = 'Modified (unsaved)';
+    document.getElementById('editorStatus').style.color = 'var(--yellow)';
+    updateLineNumbers();
+});
+
+document.getElementById('editorTextarea').addEventListener('scroll', function() {
+    document.getElementById('lineNumbers').scrollTop = this.scrollTop;
+    document.getElementById('highlightOverlay').scrollTop = this.scrollTop;
+    document.getElementById('highlightOverlay').scrollLeft = this.scrollLeft;
+});
+
+// Tab support
+document.getElementById('editorTextarea').addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 4;
+        configChanged = true;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveConfig();
+    }
+});
+
+async function saveConfig() {
+    if (!currentConfigName) return;
+
+    const content = document.getElementById('editorTextarea').value;
+    document.getElementById('editorStatus').textContent = 'Saving...';
+    document.getElementById('editorStatus').style.color = 'var(--text-muted)';
+
+    try {
+        const res = await fetch('/api/caddy/config/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({name: currentConfigName, content, type: currentConfigType})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            document.getElementById('editorStatus').textContent = 'Saved';
+            document.getElementById('editorStatus').style.color = 'var(--green)';
+            configChanged = false;
+        } else {
+            showToast(data.message || 'Error', 'error');
+            document.getElementById('editorStatus').textContent = 'Save failed';
+            document.getElementById('editorStatus').style.color = 'var(--red)';
+            if (data.output) {
+                document.getElementById('validateTitle').textContent = 'Caddy Config Validation Failed';
+                document.getElementById('validateTitle').style.color = 'var(--red)';
+                document.getElementById('validateOutput').textContent = data.output;
+                document.getElementById('validateModal').style.display = 'flex';
+            }
+        }
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+}
+
+async function validateConfig() {
+    try {
+        const res = await fetch('/api/caddy/validate', {
+            method: 'POST',
+            headers: {'X-CSRFToken': csrfToken}
+        });
+        const data = await res.json();
+        const modal = document.getElementById('validateModal');
+        const title = document.getElementById('validateTitle');
+        const output = document.getElementById('validateOutput');
+
+        if (data.valid) {
+            title.textContent = 'Config OK';
+            title.style.color = 'var(--green)';
+        } else {
+            title.textContent = 'Config Invalid';
+            title.style.color = 'var(--red)';
+        }
+        output.textContent = data.output || 'No output';
+        modal.style.display = 'flex';
+    } catch (e) {
+        showToast('Connection error', 'error');
+    }
+}
+
+async function toggleSite(action) {
+    if (!currentConfigName) return;
+    const confirmMsg = action === 'disable'
+        ? `Disable "${currentConfigName}"? This will add .disabled extension.`
+        : `Enable "${currentConfigName}"? This will remove .disabled extension.`;
+
+    showConfirm(action === 'disable' ? 'Disable Site' : 'Enable Site', confirmMsg, async () => {
+        try {
+            const res = await fetch('/api/caddy/config/toggle', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify({name: currentConfigName, action})
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+                setTimeout(() => location.reload(), 500);
+            } else {
+                showToast(data.message || 'Error', 'error');
+                if (data.output) {
+                    document.getElementById('validateTitle').textContent = action + ' Failed';
+                    document.getElementById('validateTitle').style.color = 'var(--red)';
+                    document.getElementById('validateOutput').textContent = data.output;
+                    document.getElementById('validateModal').style.display = 'flex';
+                }
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+        }
+    });
+}
+
+// Close validate modal
+document.getElementById('validateModal').addEventListener('click', function(e) {
+    if (e.target === this) this.style.display = 'none';
+});
+
+// Warn on unsaved changes
+window.addEventListener('beforeunload', function(e) {
+    if (configChanged) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
+
+// Auto-select config from URL param
+{% if selected %}
+document.addEventListener('DOMContentLoaded', function() {
+    const selectName = {{ selected|tojson }};
+    let item = document.querySelector(`.nginx-config-item[data-name="${selectName}"]`);
+    if (item) {
+        loadConfig(selectName, item.dataset.type);
+    }
+});
+{% else %}
+// Auto-load main Caddyfile
+document.addEventListener('DOMContentLoaded', function() {
+    loadConfig({{ configs.main|tojson }}, 'main');
+});
+{% endif %}
+</script>
+{% endblock %}

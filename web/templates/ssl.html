@@ -6,8 +6,12 @@
 {% block content %}
 <div class="card">
     <div class="card-header" style="justify-content:space-between">
-        <span>{{ icon('lock') }} Let's Encrypt Certificates <span class="tooltip-icon" data-bs-toggle="tooltip" title="Free SSL/TLS certificates from Let's Encrypt. Certificates expire after 90 days and should be renewed before 30 days remaining.">?</span></span>
+        <span>{{ icon('lock') }} {% if web_server == 'caddy' %}SSL Certificates (Caddy Auto-HTTPS){% else %}Let's Encrypt Certificates{% endif %} <span class="tooltip-icon" data-bs-toggle="tooltip" title="{% if web_server == 'caddy' %}Caddy automatically manages SSL certificates via ACME. Certificates are auto-renewed before expiry.{% else %}Free SSL/TLS certificates from Let's Encrypt. Certificates expire after 90 days and should be renewed before 30 days remaining.{% endif %}">?</span></span>
+        {% if web_server == 'caddy' %}
+        <button class="btn btn-sm" onclick="showConfirm('Reload Caddy', 'Reload Caddy to trigger certificate check?', renewAll)">{{ icon('refresh') }} Reload Caddy</button>
+        {% else %}
         <button class="btn btn-sm btn-green" onclick="showConfirm('SSL Renewal', 'Force renew all certificates?', renewAll)">{{ icon('refresh') }} Renew All</button>
+        {% endif %}
     </div>
     <div class="card-body">
         {% if certs %}
@@ -38,7 +42,11 @@
                             {% endif %}
                         </td>
                         <td data-label="Action">
+                            {% if web_server != 'caddy' %}
                             <button class="btn btn-sm" onclick="renewCert({{ cert.domain.split(' ')[0] | tojson }})">Renew</button>
+                            {% else %}
+                            <span style="font-size:12px;color:var(--text-muted)">Auto</span>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}
@@ -112,7 +120,12 @@ async function refreshSslTable() {
                 : '<span class="badge badge-red">Critical!</span>';
             var domain = cert.domain || '';
             var firstDomain = domain.split(' ')[0];
-            return '<tr><td>' + escHtml(domain) + '</td><td>' + escHtml(cert.expiry || '') + '</td><td>' + cert.days_left + '</td><td>' + badge + '</td><td><button class="btn btn-sm" onclick="renewCert(\'' + firstDomain.replace(/'/g, "\\'") + '\')">Renew</button></td></tr>';
+            {% if web_server == 'caddy' %}
+            var actionCol = '<span style="font-size:12px;color:var(--text-muted)">Auto</span>';
+            {% else %}
+            var actionCol = '<button class="btn btn-sm" onclick="renewCert(\'' + firstDomain.replace(/'/g, "\\'") + '\')">Renew</button>';
+            {% endif %}
+            return '<tr><td>' + escHtml(domain) + '</td><td>' + escHtml(cert.expiry || '') + '</td><td>' + cert.days_left + '</td><td>' + badge + '</td><td>' + actionCol + '</td></tr>';
         }).join('');
     } catch(e) {}
 }

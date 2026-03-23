@@ -167,7 +167,7 @@ TERMINAL_ALLOWED_COMMANDS = {
     # Service management
     'systemctl', 'journalctl', 'service',
     # Web server
-    'nginx', 'php', 'php8.3-fpm',
+    'nginx', 'caddy', 'php', 'php8.3-fpm',
     # PM2
     'pm2',
     # Certificates
@@ -190,6 +190,30 @@ FORBIDDEN_ALLOWED_PATHS = {
     '/', '/etc', '/root', '/proc', '/sys', '/dev', '/boot',
     '/usr', '/bin', '/sbin', '/lib', '/lib64',
 }
+
+# Allowed path prefixes for web server config operations
+CADDY_ALLOWED_PREFIXES = ('/etc/caddy/',)
+CADDY_ALLOWED_LOG_PREFIXES = ('/var/log/caddy/',)
+NGINX_ALLOWED_LOG_PREFIXES = ('/var/log/nginx/',)
+
+
+def _is_caddy_path_safe(path):
+    """Validate that a path is within allowed Caddy directories"""
+    try:
+        resolved = os.path.realpath(path)
+    except OSError:
+        resolved = path
+    return any(resolved.startswith(prefix) for prefix in CADDY_ALLOWED_PREFIXES)
+
+
+def _is_log_path_safe(path, web_server='nginx'):
+    """Validate that a log path is within allowed directories"""
+    try:
+        resolved = os.path.realpath(path)
+    except OSError:
+        resolved = path
+    prefixes = CADDY_ALLOWED_LOG_PREFIXES if web_server == 'caddy' else NGINX_ALLOWED_LOG_PREFIXES
+    return any(resolved.startswith(prefix) for prefix in prefixes)
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +249,7 @@ def log_audit(action, details=None):
 # ---------------------------------------------------------------------------
 _cache_store = {}
 _cache_lock = threading.Lock()
+_config_runtime_lock = threading.Lock()
 
 
 def _ttl_cache(seconds):
@@ -567,7 +592,7 @@ def _monitor_loop():
             data = get_server_overview()
             services = get_services_status()
             pm2 = get_pm2_processes()
-            ssl = get_ssl_certificates()
+            ssl = get_ssl_info()
             alerts = get_dashboard_alerts(data, services, pm2, ssl)
             del data, services, pm2, ssl
 
@@ -766,6 +791,7 @@ def inject_global_info():
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
         'app_version': _get_current_version(),
+        'web_server': get_web_server(),
     }
 
 
@@ -806,6 +832,57 @@ def run_cmd_safe(args, timeout=30):
 def is_safe_name(name):
     """Validate that a name only contains safe characters (alphanumeric, dot, dash, underscore)"""
     return bool(re.match(r'^[a-zA-Z0-9._-]+$', name))
+
+
+# ---------------------------------------------------------------------------
+# Web server abstraction (Nginx / Caddy)
+# ---------------------------------------------------------------------------
+
+def get_web_server():
+    """Return current web server type: 'nginx' or 'caddy'"""
+    return CONFIG.get('web_server', 'nginx')
+
+
+def detect_web_server():
+    """Auto-detect installed web server"""
+    nginx = run_cmd_safe(['which', 'nginx'], timeout=5)
+    caddy = run_cmd_safe(['which', 'caddy'], timeout=5)
+    has_nginx = nginx.returncode == 0
+    has_caddy = caddy.returncode == 0
+    if has_caddy and not has_nginx:
+        return 'caddy'
+    if has_nginx and not has_caddy:
+        return 'nginx'
+    # Both or neither: return configured value
+    return CONFIG.get('web_server', 'nginx')
+
+
+def get_sites():
+    """Dispatcher: get sites from active web server"""
+    if get_web_server() == 'caddy':
+        return get_caddy_sites()
+    return get_nginx_sites()
+
+
+def get_web_logs():
+    """Dispatcher: get web server logs"""
+    if get_web_server() == 'caddy':
+        return get_caddy_logs()
+    return get_nginx_logs()
+
+
+def get_ssl_info():
+    """Dispatcher: get SSL certificate info"""
+    if get_web_server() == 'caddy':
+        return get_caddy_certificates()
+    return get_ssl_certificates()
+
+
+def validate_web_config():
+    """Dispatcher: validate web server config"""
+    if get_web_server() == 'caddy':
+        return validate_caddy()
+    return validate_nginx()
 
 
 # Login rate limiting: max 5 attempts per IP per 5 minutes
@@ -2392,8 +2469,8 @@ def get_network_info():
 
 @_ttl_cache(30)
 def get_uptime_status():
-    """Check HTTP status for all nginx sites (HTTPS with HTTP fallback, HEAD with GET fallback)"""
-    sites = get_nginx_sites()
+    """Check HTTP status for all sites (HTTPS with HTTP fallback, HEAD with GET fallback)"""
+    sites = get_sites()
     results = []
     for site in sites:
         domain = site['domains'][0] if site.get('domains') else None
@@ -2553,8 +2630,8 @@ def get_dns_records(domain):
 
 @_ttl_cache(120)
 def get_all_domains():
-    """Get all known domains from nginx sites"""
-    sites = get_nginx_sites()
+    """Get all known domains from web server sites"""
+    sites = get_sites()
     domains = []
     for site in sites:
         for d in site.get('domains', []):
@@ -2604,7 +2681,7 @@ def dashboard():
     data = get_server_overview()
     services = get_services_status()
     pm2 = get_pm2_processes()
-    ssl = get_ssl_certificates()
+    ssl = get_ssl_info()
     alerts = get_dashboard_alerts(data, services, pm2, ssl)
     # Add DDoS and backup alerts
     alerts.extend(check_ddos_indicators())
@@ -2634,7 +2711,7 @@ def dismiss_alert():
 @app.route('/websites')
 @login_required
 def websites():
-    sites = get_nginx_sites()
+    sites = get_sites()
     return render_template('websites.html', sites=sites)
 
 
@@ -2722,14 +2799,14 @@ def pm2_logs(name):
 @app.route('/ssl')
 @login_required
 def ssl():
-    certs = get_ssl_certificates()
+    certs = get_ssl_info()
     return render_template('ssl.html', certs=certs)
 
 
 @app.route('/api/ssl')
 @login_required
 def api_ssl():
-    certs = get_ssl_certificates()
+    certs = get_ssl_info()
     return jsonify(certs)
 
 
@@ -2738,6 +2815,17 @@ def api_ssl():
 def ssl_renew():
     data = request.get_json() or {}
     domain = data.get('domain')
+
+    if get_web_server() == 'caddy':
+        # Caddy auto-manages SSL; reload to trigger renewal check
+        result = run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=30)
+        if result.returncode == 0:
+            _invalidate_cache('get_caddy_certificates')
+            return jsonify({'status': 'ok', 'message': 'Caddy reloaded - certificates will auto-renew', 'output': ''})
+        output = result.stderr or result.stdout or ''
+        return jsonify({'status': 'error', 'message': 'Failed to reload Caddy', 'output': output}), 500
+
+    # Nginx: certbot renewal
     if domain:
         if not is_safe_name(domain):
             return jsonify({'status': 'error', 'message': 'Invalid domain name'}), 400
@@ -3658,34 +3746,43 @@ def update_install_stream():
     )
 
 
+@app.route('/web-logs')
 @app.route('/nginx-logs')
 @login_required
 def nginx_logs_page():
-    data = get_nginx_logs()
-    return render_template('nginx_logs.html', data=data)
+    ws = get_web_server()
+    data = get_web_logs()
+    template = 'caddy_logs.html' if ws == 'caddy' else 'nginx_logs.html'
+    return render_template(template, data=data)
 
 
+@app.route('/api/web-log')
 @app.route('/api/nginx-log')
 @login_required
 def api_nginx_log():
-    """Get content of a specific nginx log file for a site"""
+    """Get content of a specific web server log file for a site"""
     site = request.args.get('site', '')
     log_type = request.args.get('type', 'error')  # 'error' or 'access'
+    ws = get_web_server()
     try:
         lines = int(request.args.get('lines', 100))
     except (ValueError, TypeError):
         lines = 100
     lines = min(lines, 500)
+
+    # Allowed log directories per web server
+    allowed_log_dirs = ('/var/log/caddy/',) if ws == 'caddy' else ('/var/log/nginx/',)
+
     if site:
         # Find site-specific log path
         log_path = None
-        for s in get_nginx_sites():
+        for s in get_sites():
             if site in s.get('domains', []):
                 log_path = s.get('access_log') if log_type == 'access' else s.get('error_log')
                 break
         if log_path:
             real_log = os.path.realpath(log_path)
-            if not real_log.startswith('/var/log/nginx/'):
+            if not any(real_log.startswith(d) for d in allowed_log_dirs):
                 return jsonify({'status': 'error', 'message': 'Invalid log path'}), 400
             result = run_cmd_safe(["sudo", "tail", f"-{lines}", real_log])
             if result.returncode == 0:
@@ -3693,11 +3790,15 @@ def api_nginx_log():
                 return jsonify({'content': content, 'site': site, 'type': log_type})
             return jsonify({'status': 'error', 'message': 'Could not read log file'}), 500
         # Fallback: filter global error log
-        nginx_cfg = CONFIG.get('nginx', {})
-        error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
+        if ws == 'caddy':
+            caddy_cfg = CONFIG.get('caddy', {})
+            error_log = caddy_cfg.get('error_log', '/var/log/caddy/error.log')
+        else:
+            nginx_cfg = CONFIG.get('nginx', {})
+            error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
         result = run_cmd_safe(["sudo", "tail", "-2000", error_log])
         if result.returncode == 0:
-            filtered = [l for l in result.stdout.split('\n') if f'server: {site}' in l]
+            filtered = [l for l in result.stdout.split('\n') if site in l]
             content = '\n'.join(filtered[-lines:]) if filtered else '(no errors for this site)'
             return jsonify({'content': content, 'site': site, 'type': log_type})
         return jsonify({'status': 'error', 'message': 'Could not read error log'}), 500
@@ -3706,7 +3807,7 @@ def api_nginx_log():
     if not log_file or '..' in log_file:
         return jsonify({'status': 'error', 'message': 'Invalid log file'}), 400
     real_log = os.path.realpath(log_file)
-    if not real_log.startswith('/var/log/nginx/'):
+    if not any(real_log.startswith(d) for d in allowed_log_dirs):
         return jsonify({'status': 'error', 'message': 'Invalid log file'}), 400
     result = run_cmd_safe(["sudo", "tail", f"-{lines}", real_log])
     if result.returncode == 0:
@@ -4509,7 +4610,7 @@ def detect_services():
 
     # Known relevant service prefixes/names
     relevant = {
-        'nginx', 'mariadb', 'mysql', 'mysqld', 'fail2ban', 'ufw', 'cron',
+        'nginx', 'caddy', 'mariadb', 'mysql', 'mysqld', 'fail2ban', 'ufw', 'cron',
         'ssh', 'sshd', 'postfix', 'dovecot', 'redis', 'redis-server',
         'memcached', 'docker', 'containerd', 'certbot',
     }
@@ -4526,6 +4627,22 @@ def detect_services():
 
     detected.sort()
     return jsonify(detected)
+
+
+@app.route('/api/webserver/detect')
+@login_required
+def detect_webserver_route():
+    """Auto-detect installed web server"""
+    detected = detect_web_server()
+    current = get_web_server()
+    nginx = run_cmd_safe(['which', 'nginx'], timeout=5)
+    caddy = run_cmd_safe(['which', 'caddy'], timeout=5)
+    return jsonify({
+        'detected': detected,
+        'current': current,
+        'nginx_installed': nginx.returncode == 0,
+        'caddy_installed': caddy.returncode == 0,
+    })
 
 
 def validate_config(data):
@@ -4616,6 +4733,10 @@ def validate_config(data):
                     if not isinstance(v, str) or not v.startswith('/'):
                         errors.append(f'backup.{key} must be an absolute path')
 
+    if 'web_server' in data:
+        if data['web_server'] not in ('nginx', 'caddy'):
+            errors.append('web_server must be "nginx" or "caddy"')
+
     if 'nginx' in data:
         if not isinstance(data['nginx'], dict):
             errors.append('nginx must be an object')
@@ -4625,6 +4746,31 @@ def validate_config(data):
                     v = data['nginx'][key]
                     if not isinstance(v, str) or not v.startswith('/'):
                         errors.append(f'nginx.{key} must be an absolute path')
+
+    if 'caddy' in data:
+        if not isinstance(data['caddy'], dict):
+            errors.append('caddy must be an object')
+        else:
+            for key in ('config_file', 'sites_dir'):
+                if key in data['caddy']:
+                    v = data['caddy'][key]
+                    if not isinstance(v, str) or not v.startswith('/'):
+                        errors.append(f'caddy.{key} must be an absolute path')
+                    elif not v.startswith('/etc/caddy/'):
+                        errors.append(f'caddy.{key} must be under /etc/caddy/')
+            for key in ('access_log', 'error_log'):
+                if key in data['caddy']:
+                    v = data['caddy'][key]
+                    if not isinstance(v, str) or not v.startswith('/'):
+                        errors.append(f'caddy.{key} must be an absolute path')
+                    elif not v.startswith('/var/log/caddy/'):
+                        errors.append(f'caddy.{key} must be under /var/log/caddy/')
+            if 'data_dir' in data['caddy']:
+                v = data['caddy']['data_dir']
+                if not isinstance(v, str) or not v.startswith('/'):
+                    errors.append('caddy.data_dir must be an absolute path')
+                elif not v.startswith('/var/lib/caddy/'):
+                    errors.append('caddy.data_dir must be under /var/lib/caddy/')
 
     return (len(errors) == 0, errors)
 
@@ -4643,21 +4789,27 @@ def update_config():
         return jsonify({'status': 'error', 'message': 'Validation failed', 'errors': errors}), 400
 
     # Merge into config (only allow session_lifetime_hours from auth)
-    for key in data:
-        if key == 'auth':
-            if isinstance(data[key], dict) and 'session_lifetime_hours' in data[key]:
-                CONFIG['auth']['session_lifetime_hours'] = data[key]['session_lifetime_hours']
-            continue
-        if key in CONFIG and isinstance(CONFIG[key], dict) and isinstance(data[key], dict):
-            CONFIG[key].update(data[key])
-        else:
-            CONFIG[key] = data[key]
+    with _config_runtime_lock:
+        for key in data:
+            if key == 'auth':
+                if isinstance(data[key], dict) and 'session_lifetime_hours' in data[key]:
+                    CONFIG['auth']['session_lifetime_hours'] = data[key]['session_lifetime_hours']
+                continue
+            if key in CONFIG and isinstance(CONFIG[key], dict) and isinstance(data[key], dict):
+                CONFIG[key].update(data[key])
+            else:
+                CONFIG[key] = data[key]
 
-    save_config(CONFIG)
+        save_config(CONFIG)
 
     # Update runtime values
     MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
     app.permanent_session_lifetime = timedelta(hours=CONFIG['auth'].get('session_lifetime_hours', 24))
+
+    # Invalidate web server caches if web_server setting changed
+    if 'web_server' in data:
+        _invalidate_cache('get_nginx_sites', 'get_caddy_sites', 'get_nginx_logs',
+                          'get_caddy_logs', 'get_ssl_certificates', 'get_caddy_certificates')
 
     log_audit('config_update', {'keys': list(data.keys())})
     return jsonify({'status': 'ok', 'message': 'Settings saved'})
@@ -4861,14 +5013,14 @@ def api_refresh(section):
     """AJAX endpoint to refresh a specific section"""
     handlers = {
         'overview': get_server_overview,
-        'websites': get_nginx_sites,
+        'websites': get_sites,
         'pm2': get_pm2_processes,
-        'ssl': get_ssl_certificates,
+        'ssl': get_ssl_info,
         'services': get_services_status,
         'backup': get_backup_status,
         'firewall': get_firewall_security,
         'updates': get_system_updates,
-        'nginx-logs': get_nginx_logs,
+        'nginx-logs': get_web_logs,
         'databases': get_database_info,
         'cronjobs': get_cronjobs,
     }
@@ -5330,11 +5482,501 @@ def validate_nginx():
     return result.returncode == 0, output.strip()
 
 
+# ---------------------------------------------------------------------------
+# Caddy backend functions
+# ---------------------------------------------------------------------------
+
+def _parse_caddyfile(content, sites_dir=None):
+    """Parse a Caddyfile and extract site blocks.
+    Returns list of dicts with keys: address, root, proxy, file_server, tls, log_output.
+    """
+    sites = []
+
+    # Expand imports: if we see 'import sites/*' or 'import /path/to/dir/*', load those files
+    expanded = content
+    if sites_dir and _is_caddy_path_safe(sites_dir):
+        import_pattern = re.compile(r'^\s*import\s+(\S+)\s*$', re.MULTILINE)
+        for m in import_pattern.finditer(content):
+            import_path = m.group(1)
+            # Skip snippet imports (no path chars)
+            if '/' not in import_path and '*' not in import_path:
+                continue
+            # Resolve relative to sites_dir
+            if not import_path.startswith('/'):
+                import_path = os.path.join(sites_dir, import_path)
+            # Only expand paths within /etc/caddy/
+            if not _is_caddy_path_safe(import_path.replace('*', '')):
+                continue
+            # Expand glob patterns
+            if '*' in import_path:
+                base_dir = import_path.replace('*', '').rstrip('/')
+                result = run_cmd_safe(["sudo", "ls", base_dir], timeout=5)
+                if result.returncode == 0:
+                    for fname in result.stdout.strip().split('\n'):
+                        fname = fname.strip()
+                        if fname and not fname.endswith('.disabled'):
+                            fpath = os.path.join(base_dir, fname)
+                            if not _is_caddy_path_safe(fpath):
+                                continue
+                            file_result = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
+                            if file_result.returncode == 0:
+                                expanded += '\n' + file_result.stdout
+
+    # Parse site blocks: address { ... }
+    # Simple brace-counting parser
+    lines = expanded.split('\n')
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+        # Skip comments, empty lines
+        if not line or line.startswith('#'):
+            i += 1
+            continue
+        # Skip snippet blocks: (name) { ... }
+        if line.startswith('('):
+            depth = 0
+            # Count braces on current line; if none, look ahead for opening brace
+            depth += lines[i].count('{') - lines[i].count('}')
+            i += 1
+            if depth == 0 and i < len(lines):
+                # Opening brace might be on the next line
+                depth += lines[i].count('{') - lines[i].count('}')
+                i += 1
+            while i < len(lines) and depth > 0:
+                depth += lines[i].count('{') - lines[i].count('}')
+                i += 1
+            continue
+
+        # Check for global options block
+        if line == '{':
+            depth = 1
+            i += 1
+            while i < len(lines) and depth > 0:
+                depth += lines[i].count('{') - lines[i].count('}')
+                i += 1
+            continue
+
+        # Check for site address (domain/host followed by { on same or next line)
+        address = None
+        if '{' in line:
+            address = line.split('{')[0].strip()
+        elif i + 1 < len(lines) and lines[i + 1].strip() == '{':
+            address = line
+        elif line and not line.startswith('}') and not any(line.startswith(d) for d in [
+            'import', 'log', 'tls', 'root', 'reverse_proxy', 'file_server',
+            'encode', 'header', 'handle', 'route', 'respond', 'redir',
+        ]):
+            # Likely a site address on its own line
+            address = line
+
+        if not address or address == '}':
+            i += 1
+            continue
+
+        # Find the block content
+        block_lines = []
+        depth = 0
+        # Find opening brace
+        if '{' in lines[i]:
+            depth = lines[i].count('{') - lines[i].count('}')
+            i += 1
+        else:
+            i += 1
+            if i < len(lines) and '{' in lines[i]:
+                depth = lines[i].count('{') - lines[i].count('}')
+                i += 1
+
+        while i < len(lines) and depth > 0:
+            block_lines.append(lines[i])
+            depth += lines[i].count('{') - lines[i].count('}')
+            i += 1
+
+        # Parse block directives
+        doc_root = None
+        proxy = None
+        file_server = False
+        tls_mode = None
+        log_output = None
+
+        for bline in block_lines:
+            bline = bline.strip()
+            if bline.startswith('root'):
+                parts = bline.split(None, 1)
+                if len(parts) > 1:
+                    # root can be 'root * /path' or 'root /path'
+                    root_val = parts[1].rstrip()
+                    if root_val.startswith('* '):
+                        root_val = root_val[2:].strip()
+                    doc_root = root_val
+            elif bline.startswith('reverse_proxy'):
+                parts = bline.split(None, 1)
+                if len(parts) > 1:
+                    proxy = parts[1].split('{')[0].strip()
+            elif bline.startswith('file_server'):
+                file_server = True
+            elif bline.startswith('tls'):
+                parts = bline.split(None, 1)
+                tls_mode = parts[1].strip() if len(parts) > 1 else 'auto'
+            elif bline.startswith('log'):
+                # Look for output directive in nested block
+                if '{' in bline:
+                    pass  # handled below
+            elif bline.startswith('output') and 'file' in bline:
+                # output file /path/to/log
+                parts = bline.split()
+                for idx, p in enumerate(parts):
+                    if p == 'file' and idx + 1 < len(parts):
+                        log_output = parts[idx + 1]
+
+        # Also scan for log output in block
+        in_log = False
+        for bline in block_lines:
+            bline = bline.strip()
+            if bline.startswith('log'):
+                in_log = True
+            elif in_log and bline.startswith('}'):
+                in_log = False
+            elif in_log and 'output' in bline and 'file' in bline:
+                parts = bline.split()
+                for idx, p in enumerate(parts):
+                    if p == 'file' and idx + 1 < len(parts):
+                        log_output = parts[idx + 1]
+
+        # Clean up address: remove protocol prefixes for domain extraction
+        clean_addr = address
+        for prefix in ('https://', 'http://'):
+            if clean_addr.startswith(prefix):
+                clean_addr = clean_addr[len(prefix):]
+        # Remove port if present
+        domains = []
+        for addr_part in clean_addr.split():
+            addr_part = addr_part.strip(',')
+            domain = addr_part.split(':')[0] if ':' in addr_part else addr_part
+            if domain and domain not in ('localhost', '*', ':'):
+                domains.append(domain)
+
+        if domains:
+            sites.append({
+                'address': address,
+                'domains': domains,
+                'root': doc_root,
+                'proxy': proxy,
+                'file_server': file_server,
+                'tls': tls_mode,
+                'log_output': log_output,
+            })
+
+    return sites
+
+
+@_ttl_cache(60)
+def get_caddy_sites():
+    """Get Caddy sites with HTTP status"""
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
+
+    result = run_cmd_safe(["sudo", "cat", config_file], timeout=10)
+    if result.returncode != 0:
+        return []
+
+    parsed = _parse_caddyfile(result.stdout, sites_dir=sites_dir)
+    sites = []
+
+    for site in parsed:
+        domains = site['domains']
+        proxy = site.get('proxy')
+        doc_root = site.get('root')
+        log_output = site.get('log_output')
+
+        # HTTP status check (same logic as nginx)
+        http_result = run_cmd_safe(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
+             f"https://{domains[0]}", "--max-time", "5"],
+            timeout=10
+        )
+        http_status = http_result.stdout.strip() if http_result.stdout else '---'
+        if http_status == '000':
+            http_result = run_cmd_safe(
+                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
+                 f"http://{domains[0]}", "--max-time", "5"],
+                timeout=10
+            )
+            http_status = http_result.stdout.strip() if http_result.stdout else '---'
+
+        sites.append({
+            'config': os.path.basename(config_file),
+            'domains': domains,
+            'domain': ', '.join(domains),
+            'root': doc_root,
+            'proxy': proxy,
+            'type': 'proxy' if proxy else 'static',
+            'location': proxy if proxy else (doc_root or 'n/a'),
+            'http_status': http_status,
+            'access_log': log_output,
+            'error_log': log_output,  # Caddy uses single log file per site
+        })
+
+    return sites
+
+
+def _parse_caddy_log_line(line):
+    """Parse a single Caddy JSON log line into structured data"""
+    try:
+        entry = json.loads(line)
+        ts = entry.get('ts', 0)
+        if isinstance(ts, (int, float)):
+            timestamp = datetime.fromtimestamp(ts).strftime('%Y/%m/%d %H:%M:%S')
+        else:
+            timestamp = str(ts)
+        level = entry.get('level', 'unknown')
+        msg = entry.get('msg', '')
+        # For access logs, build a useful message
+        req = entry.get('request', {})
+        if req:
+            method = req.get('method', '')
+            uri = req.get('uri', '')
+            host = req.get('host', '')
+            status = entry.get('status', '')
+            msg = f"{method} {host}{uri} -> {status}" if method else msg
+        return {
+            'timestamp': timestamp,
+            'level': level,
+            'message': str(msg)[:120],
+            'raw': line,
+        }
+    except (json.JSONDecodeError, ValueError):
+        return {'timestamp': '', 'level': 'unknown', 'message': line[:120], 'raw': line}
+
+
+@_ttl_cache(30)
+def get_caddy_logs():
+    """Get Caddy log information"""
+    caddy_cfg = CONFIG.get('caddy', {})
+    error_log = caddy_cfg.get('error_log', '/var/log/caddy/error.log')
+    access_log = caddy_cfg.get('access_log', '/var/log/caddy/access.log')
+
+    data = {'errors': [], 'per_site': [], 'access_summary': [], 'php_errors': []}
+
+    # Validate log paths
+    if not _is_log_path_safe(error_log, 'caddy'):
+        error_log = '/var/log/caddy/error.log'
+    if not _is_log_path_safe(access_log, 'caddy'):
+        access_log = '/var/log/caddy/access.log'
+
+    # Caddy error log (JSON lines)
+    result = run_cmd_safe(["sudo", "tail", "-20", error_log])
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            if line.strip():
+                data['errors'].append(_parse_caddy_log_line(line.strip()))
+
+    # Also try journalctl for Caddy logs if file doesn't exist
+    if not data['errors']:
+        result = run_cmd(
+            "sudo journalctl -u caddy --no-pager -n 20 --output=cat 2>/dev/null",
+            timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            for line in result.stdout.strip().split('\n'):
+                if line.strip():
+                    data['errors'].append(_parse_caddy_log_line(line.strip()))
+
+    # Per-site log info
+    sites = get_caddy_sites()
+    for site in sites:
+        site_log = site.get('error_log')
+        site_name = site['domains'][0] if site.get('domains') else '?'
+        if not site_log or not _is_log_path_safe(site_log, 'caddy'):
+            data['per_site'].append({
+                'site': site_name,
+                'count': 0,
+                'last_ts': '',
+                'last_msg': '',
+                'log_path': site_log or '',
+            })
+            continue
+        result = run_cmd_safe(["sudo", "tail", "-50", site_log])
+        if result.returncode != 0 or not result.stdout.strip():
+            data['per_site'].append({
+                'site': site_name,
+                'count': 0,
+                'last_ts': '',
+                'last_msg': '',
+                'log_path': site_log,
+            })
+            continue
+        lines = [l.strip() for l in result.stdout.strip().split('\n') if l.strip()]
+        error_lines = []
+        for l in lines:
+            try:
+                entry = json.loads(l)
+                if entry.get('level') in ('error', 'warn', 'fatal', 'panic'):
+                    error_lines.append(l)
+            except json.JSONDecodeError:
+                if 'error' in l.lower() or 'warn' in l.lower():
+                    error_lines.append(l)
+        last_ts = ''
+        last_msg = ''
+        if error_lines:
+            parsed = _parse_caddy_log_line(error_lines[-1])
+            last_ts = parsed['timestamp']
+            last_msg = parsed['message']
+        data['per_site'].append({
+            'site': site_name,
+            'count': len(error_lines),
+            'last_ts': last_ts,
+            'last_msg': last_msg,
+            'log_path': site_log,
+        })
+    data['per_site'].sort(key=lambda x: x['count'], reverse=True)
+
+    # Access log summary: parse JSON access log for status codes per site
+    for site in sites:
+        site_log = site.get('access_log')
+        site_name = site['domains'][0] if site.get('domains') else '?'
+        if not site_log or not _is_log_path_safe(site_log, 'caddy'):
+            continue
+        result = run_cmd_safe(["sudo", "tail", "-500", site_log])
+        if result.returncode != 0 or not result.stdout.strip():
+            continue
+        status_counts = {}
+        for line in result.stdout.strip().split('\n'):
+            try:
+                entry = json.loads(line.strip())
+                status = str(entry.get('status', ''))
+                if status:
+                    status_counts[status] = status_counts.get(status, 0) + 1
+            except json.JSONDecodeError:
+                continue
+        if status_counts:
+            codes = [{'code': k, 'count': str(v)} for k, v in
+                     sorted(status_counts.items(), key=lambda x: x[1], reverse=True)[:10]]
+            data['access_summary'].append({'site': site_name, 'codes': codes})
+
+    # PHP-FPM errors (same for both web servers)
+    result = run_cmd("sudo tail -20 /var/log/php*-fpm.log 2>/dev/null")
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.strip().split('\n'):
+            line = line.strip()
+            if line and not line.startswith('==>'):
+                data['php_errors'].append({
+                    'message': line[:150],
+                    'raw': line,
+                })
+
+    return data
+
+
+@_ttl_cache(120)
+def get_caddy_certificates():
+    """Get SSL certificate info from Caddy auto-HTTPS"""
+    caddy_cfg = CONFIG.get('caddy', {})
+    data_dir = caddy_cfg.get('data_dir', '/var/lib/caddy/.local/share/caddy/')
+    cert_dir = os.path.join(data_dir, 'certificates')
+
+    # Find all certificate files
+    result = run_cmd_safe(
+        ["sudo", "find", cert_dir, "-name", "*.crt"],
+        timeout=10
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return []
+
+    certs = []
+    seen_domains = set()
+    for cert_path in result.stdout.strip().split('\n'):
+        cert_path = cert_path.strip()
+        if not cert_path:
+            continue
+
+        # Extract domain from path: .../certificates/acme-v02.../domain.com/domain.com.crt
+        parts = cert_path.split('/')
+        domain = None
+        for idx, p in enumerate(parts):
+            if p == 'certificates' and idx + 2 < len(parts):
+                domain = parts[idx + 2]  # Skip the ACME provider dir
+                break
+        if not domain or domain in seen_domains:
+            continue
+        seen_domains.add(domain)
+
+        # Read certificate expiry
+        expiry_result = run_cmd_safe(
+            ["sudo", "openssl", "x509", "-in", cert_path, "-enddate", "-noout"],
+            timeout=5
+        )
+        if expiry_result.returncode != 0:
+            continue
+
+        # Parse: notAfter=Mar 15 12:00:00 2027 GMT
+        expiry_str = expiry_result.stdout.strip().replace('notAfter=', '')
+        try:
+            expiry_dt = datetime.strptime(expiry_str, '%b %d %H:%M:%S %Y %Z')
+            days_left = (expiry_dt - datetime.now()).days
+            expiry_date = expiry_dt.strftime('%Y-%m-%d')
+        except ValueError:
+            try:
+                expiry_dt = datetime.strptime(expiry_str, '%b  %d %H:%M:%S %Y %Z')
+                days_left = (expiry_dt - datetime.now()).days
+                expiry_date = expiry_dt.strftime('%Y-%m-%d')
+            except ValueError:
+                continue
+
+        certs.append({
+            'domain': domain,
+            'expiry': expiry_date,
+            'days_left': days_left,
+        })
+
+    certs.sort(key=lambda x: x['days_left'])
+    return certs
+
+
+def list_caddy_configs():
+    """List Caddy config files (main Caddyfile + site files)"""
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
+
+    configs = {'main': os.path.basename(config_file), 'sites': [], 'disabled': []}
+
+    result = run_cmd_safe(["sudo", "ls", sites_dir], timeout=5)
+    if result.returncode == 0 and result.stdout.strip():
+        for name in result.stdout.strip().split('\n'):
+            name = name.strip()
+            if not name:
+                continue
+            if name.endswith('.disabled'):
+                configs['disabled'].append(name)
+            else:
+                configs['sites'].append(name)
+
+    return configs
+
+
+def validate_caddy():
+    """Run caddy validate, return (is_valid, output)"""
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    result = run_cmd_safe(
+        ["sudo", "caddy", "validate", "--config", config_file],
+        timeout=15
+    )
+    output = (result.stderr or '') + (result.stdout or '')
+    return result.returncode == 0, output.strip()
+
+
+@app.route('/web-config')
 @app.route('/nginx-config')
 @login_required
 def nginx_config():
-    configs = list_nginx_configs()
+    ws = get_web_server()
     selected = request.args.get('select', '')
+    if ws == 'caddy':
+        configs = list_caddy_configs()
+        return render_template('caddy_config.html', configs=configs, selected=selected)
+    configs = list_nginx_configs()
     return render_template('nginx_config.html', configs=configs, selected=selected)
 
 
@@ -5410,7 +6052,7 @@ def nginx_config_save():
     run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
 
     log_audit('nginx_config_save', {'name': name, 'type': config_type})
-    _invalidate_cache('get_nginx_sites')
+    _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
 
     if reload_result.returncode == 0:
         return jsonify({'status': 'ok', 'message': 'Config saved and nginx reloaded'})
@@ -5449,7 +6091,7 @@ def nginx_config_enable():
     if reload_result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Nginx reload failed after enabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_enable', {'name': name})
-    _invalidate_cache('get_nginx_sites')
+    _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
     return jsonify({'status': 'ok', 'message': f'{name} enabled and nginx reloaded'})
 
 
@@ -5472,7 +6114,7 @@ def nginx_config_disable():
     if reload_result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Nginx reload failed after disabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_disable', {'name': name})
-    _invalidate_cache('get_nginx_sites')
+    _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
     return jsonify({'status': 'ok', 'message': f'{name} disabled and nginx reloaded'})
 
 
@@ -5481,6 +6123,172 @@ def nginx_config_disable():
 def nginx_validate_route():
     """Test nginx configuration"""
     is_valid, output = validate_nginx()
+    return jsonify({'status': 'ok' if is_valid else 'error', 'valid': is_valid, 'output': output})
+
+
+@app.route('/api/webserver/validate', methods=['POST'])
+@login_required
+def webserver_validate_route():
+    """Validate active web server configuration"""
+    is_valid, output = validate_web_config()
+    return jsonify({'status': 'ok' if is_valid else 'error', 'valid': is_valid, 'output': output})
+
+
+# ---------------------------------------------------------------------------
+# Caddy config editor routes
+# ---------------------------------------------------------------------------
+
+@app.route('/api/caddy/config/read')
+@login_required
+def caddy_config_read():
+    """Read a Caddy config file"""
+    name = request.args.get('name', '')
+    config_type = request.args.get('type', 'main')
+
+    if config_type not in ('main', 'site'):
+        return jsonify({'status': 'error', 'message': 'Invalid type'}), 400
+
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
+
+    if config_type == 'main':
+        path = config_file
+    else:
+        if not name or not is_safe_name(name):
+            return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+        path = os.path.join(sites_dir, name)
+
+    if not _is_caddy_path_safe(path):
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
+
+    result = run_cmd_safe(["sudo", "cat", path], timeout=10)
+    if result.returncode == 0:
+        return jsonify({'status': 'ok', 'content': result.stdout, 'name': name or os.path.basename(config_file), 'type': config_type})
+    return jsonify({'status': 'error', 'message': 'Could not read config'}), 500
+
+
+@app.route('/api/caddy/config/save', methods=['POST'])
+@login_required
+def caddy_config_save():
+    """Save Caddy config with validation and reload"""
+    data = request.get_json() or {}
+    name = data.get('name', '')
+    content = data.get('content', '')
+    config_type = data.get('type', 'main')
+
+    if config_type not in ('main', 'site'):
+        return jsonify({'status': 'error', 'message': 'Invalid type'}), 400
+
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
+
+    if config_type == 'main':
+        path = config_file
+    else:
+        if not name or not is_safe_name(name):
+            return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+        path = os.path.join(sites_dir, name)
+
+    if not _is_caddy_path_safe(path):
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
+
+    # Backup current config
+    run_cmd(f"sudo cp {shlex.quote(path)} {shlex.quote(path + '.backup')} 2>/dev/null", timeout=10)
+
+    # Write content via temp file
+    safe_name = name if name and is_safe_name(name) else 'Caddyfile'
+    temp_path = str(DATA_DIR / f'caddy_temp_{safe_name}')
+    try:
+        with open(temp_path, 'w') as f:
+            f.write(content)
+    except OSError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    # Copy to caddy dir
+    cp_result = run_cmd(f"sudo cp {shlex.quote(temp_path)} {shlex.quote(path)}", timeout=10)
+    try:
+        os.remove(temp_path)
+    except OSError:
+        pass
+
+    if cp_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Failed to write config'}), 500
+
+    # Validate caddy config
+    is_valid, output = validate_caddy()
+    if not is_valid:
+        # Restore backup
+        run_cmd(f"sudo cp {shlex.quote(path + '.backup')} {shlex.quote(path)} 2>/dev/null", timeout=10)
+        run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
+        return jsonify({'status': 'error', 'message': 'Caddy config validation failed', 'output': output}), 400
+
+    # Reload caddy
+    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=15)
+    # Clean up backup
+    run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
+
+    log_audit('caddy_config_save', {'name': name or 'Caddyfile', 'type': config_type})
+    _invalidate_cache('get_caddy_sites', 'get_caddy_logs', 'get_caddy_certificates')
+
+    if reload_result.returncode == 0:
+        return jsonify({'status': 'ok', 'message': 'Config saved and Caddy reloaded'})
+    return jsonify({'status': 'ok', 'message': 'Config saved but Caddy reload failed'})
+
+
+@app.route('/api/caddy/config/toggle', methods=['POST'])
+@login_required
+def caddy_config_toggle():
+    """Enable/disable a Caddy site file by renaming with .disabled extension"""
+    data = request.get_json() or {}
+    name = data.get('name', '')
+    action = data.get('action', '')  # 'enable' or 'disable'
+
+    base_name = name.removesuffix('.disabled') if name else ''
+    if not base_name or not is_safe_name(base_name):
+        return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
+    if action not in ('enable', 'disable'):
+        return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
+
+    caddy_cfg = CONFIG.get('caddy', {})
+    sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
+
+    if action == 'disable':
+        old_path = os.path.join(sites_dir, name)
+        new_path = os.path.join(sites_dir, name + '.disabled')
+    else:
+        old_path = os.path.join(sites_dir, name)
+        new_path = os.path.join(sites_dir, name.removesuffix('.disabled'))
+
+    if not _is_caddy_path_safe(old_path) or not _is_caddy_path_safe(new_path):
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
+
+    result = run_cmd(f"sudo mv {shlex.quote(old_path)} {shlex.quote(new_path)}", timeout=10)
+    if result.returncode != 0:
+        return jsonify({'status': 'error', 'message': f'Failed to {action} config'}), 500
+
+    # Validate and reload
+    is_valid, output = validate_caddy()
+    if not is_valid:
+        # Revert
+        run_cmd(f"sudo mv {shlex.quote(new_path)} {shlex.quote(old_path)}", timeout=10)
+        return jsonify({'status': 'error', 'message': f'Caddy validation failed after {action}', 'output': output}), 400
+
+    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=15)
+    log_audit(f'caddy_config_{action}', {'name': name})
+    _invalidate_cache('get_caddy_sites', 'get_caddy_logs', 'get_caddy_certificates')
+
+    if reload_result.returncode == 0:
+        return jsonify({'status': 'ok', 'message': f'Site {action}d and Caddy reloaded'})
+    return jsonify({'status': 'ok', 'message': f'Site {action}d but Caddy reload failed'})
+
+
+@app.route('/api/caddy/validate', methods=['POST'])
+@login_required
+def caddy_validate_route():
+    """Test Caddy configuration"""
+    is_valid, output = validate_caddy()
     return jsonify({'status': 'ok' if is_valid else 'error', 'valid': is_valid, 'output': output})
 
 
