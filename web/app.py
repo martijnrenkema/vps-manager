@@ -5761,6 +5761,118 @@ def _parse_caddyfile(content, sites_dir=None):
     return sites
 
 
+def _ensure_caddy_site_logs(config_file):
+    """Auto-add log blocks to Caddy site blocks that lack them.
+    Modifies the Caddyfile in place. Returns True if changes were made."""
+    result = run_cmd_safe(["sudo", "cat", config_file], timeout=5)
+    if result.returncode != 0:
+        return False
+
+    lines = result.stdout.split('\n')
+    new_lines = list(lines)
+    insertions = []  # (line_index, domain) - collect first, insert later
+
+    i = 0
+    while i < len(lines):
+        line = lines[i].strip()
+
+        # Skip empty, comments, snippets, global options
+        if not line or line.startswith('#') or line.startswith('('):
+            i += 1
+            continue
+        if line == '{':
+            depth = 1
+            i += 1
+            while i < len(lines) and depth > 0:
+                depth += lines[i].count('{') - lines[i].count('}')
+                i += 1
+            continue
+
+        # Detect site address
+        address = None
+        if '{' in line:
+            address = line.split('{')[0].strip()
+        elif i + 1 < len(lines) and lines[i + 1].strip() == '{':
+            address = line
+
+        if not address or address == '}':
+            i += 1
+            continue
+
+        # Find the block boundaries
+        block_start = i
+        depth = 0
+        if '{' in lines[i]:
+            depth = lines[i].count('{') - lines[i].count('}')
+            i += 1
+        else:
+            i += 1
+            if i < len(lines) and '{' in lines[i]:
+                depth = lines[i].count('{') - lines[i].count('}')
+                i += 1
+
+        block_content_start = i
+        while i < len(lines) and depth > 0:
+            depth += lines[i].count('{') - lines[i].count('}')
+            i += 1
+        block_end = i  # line after closing brace
+
+        # Check if this block has a log directive
+        has_log = False
+        for j in range(block_content_start, block_end):
+            if lines[j].strip().startswith('log'):
+                has_log = True
+                break
+
+        if has_log:
+            continue
+
+        # Extract domain for log filename
+        clean_addr = address
+        for prefix in ('https://', 'http://'):
+            if clean_addr.startswith(prefix):
+                clean_addr = clean_addr[len(prefix):]
+        domain = clean_addr.split()[0].split(':')[0].strip(',') if clean_addr.split() else None
+        if not domain or domain in ('localhost', '*', ':'):
+            continue
+
+        # Insert before the closing brace (block_end - 1)
+        insertions.append((block_end - 1, domain))
+
+    if not insertions:
+        return False
+
+    # Insert in reverse order so line indices stay valid
+    for insert_idx, domain in reversed(insertions):
+        safe_domain = domain.replace('/', '').replace('..', '')
+        log_block = [
+            '    log {',
+            f'        output file /var/log/caddy/{safe_domain}.log',
+            '    }',
+        ]
+        for offset, log_line in enumerate(log_block):
+            new_lines.insert(insert_idx, log_line)
+
+    new_content = '\n'.join(new_lines)
+
+    # Write via temp file
+    safe_name = os.path.basename(config_file).replace('/', '')
+    temp_path = str(DATA_DIR / f'caddy_autolog_{safe_name}')
+    try:
+        with open(temp_path, 'w') as f:
+            f.write(new_content)
+        cp_result = run_cmd_safe(["sudo", "cp", temp_path, config_file], timeout=5)
+        os.remove(temp_path)
+        if cp_result.returncode != 0:
+            return False
+    except OSError:
+        return False
+
+    domains_added = [d for _, d in insertions]
+    log_audit('caddy_auto_add_logs', {'config': os.path.basename(config_file), 'domains': domains_added})
+    return True
+
+
 @_ttl_cache(60)
 def get_caddy_sites():
     """Get Caddy sites with HTTP status"""
@@ -5771,6 +5883,32 @@ def get_caddy_sites():
     result = run_cmd_safe(["sudo", "cat", config_file], timeout=10)
     if result.returncode != 0:
         return []
+
+    # Auto-add log blocks to sites missing them
+    configs_modified = False
+    if _ensure_caddy_site_logs(config_file):
+        configs_modified = True
+    # Also check imported site files
+    if sites_dir and _is_caddy_path_safe(sites_dir):
+        ls_result = run_cmd_safe(["sudo", "ls", sites_dir], timeout=5)
+        if ls_result.returncode == 0 and ls_result.stdout.strip():
+            for fname in ls_result.stdout.strip().split('\n'):
+                fname = fname.strip()
+                if fname and not fname.endswith('.disabled'):
+                    fpath = os.path.join(sites_dir, fname)
+                    if _is_caddy_path_safe(fpath) and _ensure_caddy_site_logs(fpath):
+                        configs_modified = True
+
+    if configs_modified:
+        valid = run_cmd_safe(["sudo", "caddy", "validate", "--config", config_file], timeout=10)
+        if valid.returncode == 0:
+            run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=10)
+        else:
+            logger.warning("Caddy config invalid after auto-adding logs, skipping reload")
+        # Re-read config after modifications
+        result = run_cmd_safe(["sudo", "cat", config_file], timeout=10)
+        if result.returncode != 0:
+            return []
 
     parsed = _parse_caddyfile(result.stdout, sites_dir=sites_dir)
     sites = []
