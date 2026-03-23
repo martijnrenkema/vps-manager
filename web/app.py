@@ -5639,33 +5639,44 @@ def _parse_caddyfile(content, sites_dir=None):
 
     # Expand imports: if we see 'import sites/*' or 'import /path/to/dir/*', load those files
     expanded = content
-    if sites_dir and _is_caddy_path_safe(sites_dir):
-        import_pattern = re.compile(r'^\s*import\s+(\S+)\s*$', re.MULTILINE)
-        for m in import_pattern.finditer(content):
-            import_path = m.group(1)
-            # Skip snippet imports (no path chars)
-            if '/' not in import_path and '*' not in import_path:
+    # Resolve relative imports against the Caddyfile's directory (not sites_dir)
+    caddyfile_dir = os.path.dirname(sites_dir.rstrip('/')) if sites_dir else '/etc/caddy'
+
+    import_pattern = re.compile(r'^\s*import\s+(\S+)\s*$', re.MULTILINE)
+    for m in import_pattern.finditer(content):
+        import_path = m.group(1)
+        # Skip snippet imports (no path chars, no glob)
+        if '/' not in import_path and '*' not in import_path:
+            continue
+        # Resolve relative paths against the Caddyfile's parent directory
+        if not import_path.startswith('/'):
+            import_path = os.path.join(caddyfile_dir, import_path)
+        # Security: only expand paths within /etc/caddy/
+        clean_path = import_path.replace('*', '').rstrip('/')
+        if not _is_caddy_path_safe(clean_path if clean_path else caddyfile_dir):
+            continue
+        # Expand glob patterns
+        if '*' in import_path:
+            base_dir = os.path.dirname(import_path)  # e.g. /etc/caddy/sites from /etc/caddy/sites/*
+            if not base_dir or not _is_caddy_path_safe(base_dir):
                 continue
-            # Resolve relative to sites_dir
-            if not import_path.startswith('/'):
-                import_path = os.path.join(sites_dir, import_path)
-            # Only expand paths within /etc/caddy/
-            if not _is_caddy_path_safe(import_path.replace('*', '')):
-                continue
-            # Expand glob patterns
-            if '*' in import_path:
-                base_dir = import_path.replace('*', '').rstrip('/')
-                result = run_cmd_safe(["sudo", "ls", base_dir], timeout=5)
-                if result.returncode == 0:
-                    for fname in result.stdout.strip().split('\n'):
-                        fname = fname.strip()
-                        if fname and not fname.endswith('.disabled'):
-                            fpath = os.path.join(base_dir, fname)
-                            if not _is_caddy_path_safe(fpath):
-                                continue
-                            file_result = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
-                            if file_result.returncode == 0:
-                                expanded += '\n' + file_result.stdout
+            result = run_cmd_safe(["sudo", "ls", base_dir], timeout=5)
+            if result.returncode == 0:
+                for fname in result.stdout.strip().split('\n'):
+                    fname = fname.strip()
+                    if fname and not fname.endswith('.disabled'):
+                        fpath = os.path.join(base_dir, fname)
+                        if not _is_caddy_path_safe(fpath):
+                            continue
+                        file_result = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
+                        if file_result.returncode == 0:
+                            expanded += '\n' + file_result.stdout
+        else:
+            # Direct file import (no glob)
+            if _is_caddy_path_safe(import_path):
+                file_result = run_cmd_safe(["sudo", "cat", import_path], timeout=5)
+                if file_result.returncode == 0:
+                    expanded += '\n' + file_result.stdout
 
     # Parse site blocks: address { ... }
     # Simple brace-counting parser
@@ -5709,7 +5720,14 @@ def _parse_caddyfile(content, sites_dir=None):
             address = line
         elif line and not line.startswith('}') and not any(line.startswith(d) for d in [
             'import', 'log', 'tls', 'root', 'reverse_proxy', 'file_server',
-            'encode', 'header', 'handle', 'route', 'respond', 'redir',
+            'encode', 'header', 'handle', 'handle_path', 'route', 'respond', 'redir',
+            'email', 'admin', 'auto_https', 'order', 'storage', 'acme_ca',
+            'ocsp_stapling', 'grace_period', 'shutdown_delay', 'servers',
+            'skip_install_trust', 'default_bind', 'default_sni',
+            'php_fastcgi', 'basicauth', 'forward_auth', 'request_header',
+            'try_files', 'rewrite', 'uri', 'method', 'bind', 'abort',
+            'error', 'metrics', 'templates', 'push', 'vars', 'map',
+            'invoke', 'skip_log', 'request_body',
         ]):
             # Likely a site address on its own line
             address = line
@@ -5941,11 +5959,21 @@ def get_caddy_sites():
     if result.returncode != 0:
         return []
 
-    # Auto-add log blocks to sites missing them
+    # Auto-add log blocks to sites missing them (with backup/rollback)
     configs_modified = False
-    if _ensure_caddy_site_logs(config_file):
-        configs_modified = True
-    # Also check imported site files
+    modified_files = []  # [(path, backup_content), ...]
+
+    def _try_add_logs(fpath):
+        """Try to add logs, keeping backup for rollback"""
+        backup = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
+        if backup.returncode != 0:
+            return False
+        if _ensure_caddy_site_logs(fpath):
+            modified_files.append((fpath, backup.stdout))
+            return True
+        return False
+
+    _try_add_logs(config_file)
     if sites_dir and _is_caddy_path_safe(sites_dir):
         ls_result = run_cmd_safe(["sudo", "ls", sites_dir], timeout=5)
         if ls_result.returncode == 0 and ls_result.stdout.strip():
@@ -5953,15 +5981,32 @@ def get_caddy_sites():
                 fname = fname.strip()
                 if fname and not fname.endswith('.disabled'):
                     fpath = os.path.join(sites_dir, fname)
-                    if _is_caddy_path_safe(fpath) and _ensure_caddy_site_logs(fpath):
-                        configs_modified = True
+                    if _is_caddy_path_safe(fpath):
+                        _try_add_logs(fpath)
 
-    if configs_modified:
+    if modified_files:
         valid = run_cmd_safe(["sudo", "caddy", "validate", "--config", config_file], timeout=10)
         if valid.returncode == 0:
             run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=10)
+            configs_modified = True
         else:
-            logger.warning("Caddy config invalid after auto-adding logs, skipping reload")
+            # Rollback all modified files
+            logger.warning("Caddy config invalid after auto-adding logs, rolling back")
+            for fpath, backup_content in modified_files:
+                tmp = str(DATA_DIR / 'caddy_rollback_tmp')
+                try:
+                    with open(tmp, 'w') as f:
+                        f.write(backup_content)
+                    run_cmd_safe(["sudo", "cp", tmp, fpath], timeout=5)
+                except OSError:
+                    pass
+                finally:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+
+    if configs_modified:
         # Re-read config after modifications
         result = run_cmd_safe(["sudo", "cat", config_file], timeout=10)
         if result.returncode != 0:
@@ -6577,6 +6622,45 @@ def caddy_validate_route():
     """Test Caddy configuration"""
     is_valid, output = validate_caddy()
     return jsonify({'status': 'ok' if is_valid else 'error', 'valid': is_valid, 'output': output})
+
+
+@app.route('/api/caddy/debug')
+@login_required
+def caddy_debug():
+    """Debug endpoint: show Caddyfile content and parsed sites"""
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
+
+    result = run_cmd_safe(["sudo", "cat", config_file], timeout=10)
+    caddyfile_content = result.stdout if result.returncode == 0 else f'ERROR: {result.stderr}'
+
+    # Check sites dir
+    sites_dir_content = {}
+    if _is_caddy_path_safe(sites_dir):
+        ls_result = run_cmd_safe(["sudo", "ls", sites_dir], timeout=5)
+        if ls_result.returncode == 0:
+            for fname in ls_result.stdout.strip().split('\n'):
+                if fname.strip():
+                    fpath = os.path.join(sites_dir, fname.strip())
+                    if _is_caddy_path_safe(fpath):
+                        fr = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
+                        sites_dir_content[fname.strip()] = fr.stdout if fr.returncode == 0 else f'ERROR: {fr.stderr}'
+
+    # Parse without auto-log injection
+    parsed = _parse_caddyfile(result.stdout if result.returncode == 0 else '', sites_dir=sites_dir)
+
+    return jsonify({
+        'config_file': config_file,
+        'sites_dir': sites_dir,
+        'caddyfile_readable': result.returncode == 0,
+        'caddyfile_lines': len(caddyfile_content.split('\n')) if result.returncode == 0 else 0,
+        'caddyfile_content': caddyfile_content[:5000],
+        'sites_dir_files': list(sites_dir_content.keys()),
+        'parsed_sites': [{'address': s.get('address'), 'domains': s.get('domains'), 'has_log': s.get('log_output') is not None} for s in parsed],
+        'parsed_count': len(parsed),
+        'web_server_config': get_web_server(),
+    })
 
 
 # ---------------------------------------------------------------------------
