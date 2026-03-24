@@ -130,15 +130,51 @@ function simpleHumanCron(schedule) {
     const p = schedule.split(' ');
     if (p.length !== 5) return schedule;
     const [min, hr, dom, mon, dow] = p;
-    if (min.startsWith('*/')) return `Every ${min.slice(2)} minutes`;
-    if (hr.startsWith('*/')) return `Every ${hr.slice(2)} hours`;
-    if (dom === '*' && mon === '*' && dow === '*') return `Daily at ${hr.padStart(2,'0')}:${min.padStart(2,'0')}`;
-    if (dom === '*' && mon === '*' && dow !== '*') {
-        const days = {0:'Sun',1:'Mon',2:'Tue',3:'Wed',4:'Thu',5:'Fri',6:'Sat',7:'Sun'};
-        const dayStr = dow.split(',').map(d => days[d] || d).join(',');
-        return `${dayStr} at ${hr.padStart(2,'0')}:${min.padStart(2,'0')}`;
+
+    const dayNames = {0:'Sun',1:'Mon',2:'Tue',3:'Wed',4:'Thu',5:'Fri',6:'Sat',7:'Sun'};
+    const monthNames = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'};
+
+    function expandDays(s) {
+        return s.split(',').map(part => {
+            if (part.includes('-')) {
+                const [a, b] = part.split('-');
+                return (dayNames[a] || a) + '-' + (dayNames[b] || b);
+            }
+            return dayNames[part] || part;
+        }).join(', ');
     }
-    return schedule;
+
+    function formatTime(h, m) {
+        if (h.includes('-')) return h + ':' + m.padStart(2, '0') + ' (every hour)';
+        if (h.includes('/')) return 'every ' + h.slice(2) + ' hours at :' + m.padStart(2, '0');
+        return h.padStart(2, '0') + ':' + m.padStart(2, '0');
+    }
+
+    if (min.startsWith('*/')) return `Every ${min.slice(2)} minutes`;
+    if (hr.startsWith('*/')) return `Every ${hr.slice(2)} hours at :${min.padStart(2,'0')}`;
+
+    // Build time part
+    let time = formatTime(hr, min);
+
+    // Build day part
+    let dayPart = '';
+    if (dow !== '*' && dom === '*') {
+        dayPart = expandDays(dow);
+    } else if (dom !== '*' && dow === '*') {
+        dayPart = `day ${dom} of the month`;
+    } else if (dom === '*' && dow === '*') {
+        dayPart = 'Daily';
+    }
+
+    // Build month part
+    let monthPart = '';
+    if (mon !== '*') {
+        monthPart = mon.split(',').map(m => monthNames[m] || m).join(', ');
+    }
+
+    let result = dayPart ? `${dayPart} at ${time}` : `At ${time}`;
+    if (monthPart) result += ` in ${monthPart}`;
+    return result;
 }
 
 async function loadCronjobs() {
@@ -166,9 +202,8 @@ function renderJobList(containerId, jobs, type) {
     }
     container.innerHTML = jobs.map((job, idx) => `
         <div class="cron-entry" style="align-items:center">
-            <div class="cron-schedule">
+            <div class="cron-schedule" title="${escHtml(job.schedule)}">
                 <span class="badge badge-green">${escHtml(job.human_schedule)}</span>
-                <code class="cron-raw">${escHtml(job.schedule)}</code>
             </div>
             <div class="cron-command" style="flex:1"><code>${escHtml(job.command)}</code></div>
             <div class="btn-group" style="flex-shrink:0">

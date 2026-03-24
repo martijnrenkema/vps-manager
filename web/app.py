@@ -2264,20 +2264,23 @@ def get_cronjobs():
 
     result = run_cmd("crontab -l 2>/dev/null")
     if result.returncode == 0:
-        data['user'] = result.stdout.strip()
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line or line.startswith('#') or line.startswith('MAILTO') or '=' in line.split()[0] if line.split() else True:
-                continue
-            parts = line.split()
-            if len(parts) >= 6:
-                schedule_parts = parts[:5]
-                command = ' '.join(parts[5:])
-                data['user_jobs'].append({
-                    'schedule': ' '.join(schedule_parts),
-                    'human_schedule': _cron_to_human(schedule_parts),
-                    'command': command,
-                })
+        user_crontab = result.stdout.strip()
+        # Skip user crontab section if it's identical to root (app running as root)
+        if user_crontab != data['root']:
+            data['user'] = user_crontab
+            for line in user_crontab.split('\n'):
+                line = line.strip()
+                if not line or line.startswith('#') or line.startswith('MAILTO') or ('=' in line.split()[0] if line.split() else True):
+                    continue
+                parts = line.split()
+                if len(parts) >= 6:
+                    schedule_parts = parts[:5]
+                    command = ' '.join(parts[5:])
+                    data['user_jobs'].append({
+                        'schedule': ' '.join(schedule_parts),
+                        'human_schedule': _cron_to_human(schedule_parts),
+                        'command': command,
+                    })
 
     result = run_cmd("systemctl list-timers --no-pager 2>/dev/null")
     if result.returncode == 0:
