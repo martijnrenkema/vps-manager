@@ -1425,15 +1425,25 @@ def get_ssl_certificates():
 
 @_ttl_cache(30)
 def get_services_status():
-    """Get status of key services"""
+    """Get status of key services (only shows installed services)"""
     result = run_cmd(
         "systemctl list-units --type=service --state=active --no-legend 2>/dev/null | awk '{print $1}'"
     )
     active_services = result.stdout.strip().split('\n') if result.stdout else []
 
+    # Get all known unit files to determine which services are actually installed
+    unit_result = run_cmd(
+        "systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}'"
+    )
+    installed_units = set()
+    if unit_result.returncode == 0:
+        for u in unit_result.stdout.strip().split('\n'):
+            installed_units.add(u.strip().replace('.service', ''))
+
     default_services = CONFIG.get('services', ['nginx', 'php8.3-fpm', 'mariadb', 'fail2ban'])
-    services = list(default_services)
-    seen = set(default_services)
+    # Filter default services to only those actually installed
+    services = [s for s in default_services if s in installed_units]
+    seen = set(services)
 
     for svc in active_services:
         svc = svc.strip().replace('.service', '')
@@ -1446,10 +1456,10 @@ def get_services_status():
             services.append(svc)
             seen.add(svc)
 
-    # Deduplicate auto-discovered PHP-FPM versions (keep all configured ones)
-    configured_set = set(default_services)
+    # Deduplicate auto-discovered PHP-FPM versions
     final_services = []
     php_auto_found = False
+    configured_set = set(s for s in default_services if s in installed_units)
     for svc in services:
         if 'php' in svc and 'fpm' in svc and svc not in configured_set:
             if php_auto_found:
