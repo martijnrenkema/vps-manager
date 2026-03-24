@@ -800,14 +800,33 @@ def check_app_update_alert():
     return []
 
 
+@_ttl_cache(300)
+def get_available_features():
+    """Detect which optional features/services are installed on the server"""
+    features = {}
+    checks = {
+        'php': 'which php 2>/dev/null || ls /usr/sbin/php-fpm* 2>/dev/null',
+        'mysql': 'which mysql 2>/dev/null || which mariadb 2>/dev/null',
+        'pm2': 'which pm2 2>/dev/null',
+    }
+    for feature, cmd in checks.items():
+        result = run_cmd(cmd, timeout=5)
+        features[feature] = result.returncode == 0 and bool(result.stdout.strip())
+    return features
+
+
 @app.context_processor
 def inject_global_info():
+    features = get_available_features()
     return {
         'server_ip': get_server_ip(),
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
         'app_version': _get_current_version(),
         'web_server': get_web_server(),
+        'has_php': features.get('php', False),
+        'has_mysql': features.get('mysql', False),
+        'has_pm2': features.get('pm2', False),
     }
 
 

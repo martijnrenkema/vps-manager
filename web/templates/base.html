@@ -46,9 +46,11 @@
                     <a href="{{ url_for('uptime') }}" class="{% if request.endpoint == 'uptime' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span> Uptime
                     </a>
+                    {% if has_pm2 %}
                     <a href="{{ url_for('pm2') }}" class="{% if request.endpoint == 'pm2' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span> PM2
                     </a>
+                    {% endif %}
                     <a href="{{ url_for('nginx_logs_page') }}" class="{% if request.endpoint == 'nginx_logs_page' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span> {% if web_server == 'caddy' %}Caddy Logs{% else %}Nginx Logs{% endif %}
                     </a>
@@ -78,12 +80,16 @@
                     <a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span> Network
                     </a>
+                    {% if has_mysql %}
                     <a href="{{ url_for('databases') }}" class="{% if request.endpoint == 'databases' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Databases
                     </a>
+                    {% endif %}
+                    {% if has_php %}
                     <a href="{{ url_for('php') }}" class="{% if request.endpoint == 'php' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span> PHP
                     </a>
+                    {% endif %}
                     <a href="{{ url_for('cronjobs') }}" class="{% if request.endpoint == 'cronjobs' %}active{% endif %}">
                         <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Cronjobs
                     </a>
@@ -489,7 +495,7 @@
             {label: 'Dashboard', url: '/', keywords: 'home overview stats'},
             {label: 'Websites', url: '/websites', keywords: 'sites domains nginx caddy'},
             {label: 'Uptime', url: '/uptime', keywords: 'monitor status check'},
-            {label: 'PM2 Processes', url: '/pm2', keywords: 'node process manager'},
+            {% if has_pm2 %}{label: 'PM2 Processes', url: '/pm2', keywords: 'node process manager'},{% endif %}
             {label: '{% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} Logs', url: '/web-logs', keywords: 'error access log nginx caddy'},
             {label: '{% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} Config', url: '/web-config', keywords: 'configuration edit site caddyfile'},
             {label: 'SSL Certificates', url: '/ssl', keywords: 'https lets encrypt renew caddy auto'},
@@ -497,8 +503,8 @@
             {label: 'Services', url: '/services', keywords: 'systemd systemctl restart'},
             {label: 'Processes', url: '/processes', keywords: 'top kill pid cpu memory'},
             {label: 'Network', url: '/network', keywords: 'interfaces ports connections'},
-            {label: 'Databases', url: '/databases', keywords: 'mariadb mysql phpmyadmin'},
-            {label: 'PHP', url: '/php', keywords: 'fpm version restart'},
+            {% if has_mysql %}{label: 'Databases', url: '/databases', keywords: 'mariadb mysql phpmyadmin'},{% endif %}
+            {% if has_php %}{label: 'PHP', url: '/php', keywords: 'fpm version restart'},{% endif %}
             {label: 'Cronjobs', url: '/cronjobs', keywords: 'cron schedule timer'},
             {label: 'Disk Usage', url: '/disk', keywords: 'space storage'},
             {label: 'Files', url: '/files', keywords: 'browser upload download'},
@@ -544,14 +550,18 @@
                 closeCmdPalette();
                 showConfirm('Restart {% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %}', 'Restart the {% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} web server?', function() { apiCall('/services/restart/{% if web_server == "caddy" %}caddy{% else %}nginx{% endif %}', 'POST'); });
             }},
+            {% if has_php %}
             {label: 'Restart PHP-FPM', keywords: 'php fpm reload', type: 'action', action: function() {
                 closeCmdPalette();
                 showConfirm('Restart PHP-FPM', 'Restart PHP-FPM? This may briefly interrupt PHP sites.', function() { apiCall('/services/restart/php8.3-fpm', 'POST'); });
             }},
+            {% endif %}
+            {% if has_mysql %}
             {label: 'Restart MariaDB', keywords: 'mysql database reload', type: 'action', action: function() {
                 closeCmdPalette();
                 showConfirm('Restart MariaDB', 'Restart the MariaDB database server?', function() { apiCall('/services/restart/mariadb', 'POST'); });
             }},
+            {% endif %}
             {label: 'Clear Audit Log', keywords: 'delete history wipe', type: 'action', action: function() {
                 closeCmdPalette();
                 showConfirm('Clear Audit Log', 'Delete all audit log entries?', function() { apiCall('/api/audit/clear', 'POST'); });
