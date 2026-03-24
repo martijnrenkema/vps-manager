@@ -48,6 +48,22 @@ except ImportError:
 
 from config import load_config, save_config
 
+# Load .env file if it exists (before any os.environ.get calls)
+_env_file = Path(__file__).parent / '.env'
+if not _env_file.exists():
+    _env_file = Path(__file__).parent.parent / '.env'  # flat deployment
+if _env_file.exists():
+    try:
+        with open(_env_file) as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith('#') and '=' in _line:
+                    _key, _val = _line.split('=', 1)
+                    if _key.strip() not in os.environ:  # Don't override existing env vars
+                        os.environ[_key.strip()] = _val.strip()
+    except OSError:
+        pass
+
 app = Flask(__name__)
 
 # Secret key: env var > persisted file > generate and persist
@@ -3711,6 +3727,53 @@ def update_check():
 GITHUB_REPO_URL = 'https://github.com/martijnrenkema/vps-manager.git'
 
 
+def _ensure_env_file():
+    """Ensure .env file exists in APP_DIR with current runtime settings.
+    Preserves custom port and credentials across updates."""
+    env_path = os.path.join(APP_DIR, '.env')
+    existing = {}
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#') and '=' in line:
+                        key, val = line.split('=', 1)
+                        existing[key.strip()] = val.strip()
+        except OSError:
+            pass
+
+    # Collect current env vars that should persist
+    env_vars = {
+        'VPS_MANAGER_PORT': os.environ.get('VPS_MANAGER_PORT', ''),
+        'VPS_MANAGER_USER': os.environ.get('VPS_MANAGER_USER', ''),
+        'VPS_MANAGER_PASS': os.environ.get('VPS_MANAGER_PASS', ''),
+        'VPS_MANAGER_DIR': os.environ.get('VPS_MANAGER_DIR', ''),
+        'VPS_MANAGER_SECRET': os.environ.get('VPS_MANAGER_SECRET', ''),
+    }
+
+    # Merge: keep existing values, only add new ones that are set
+    changed = False
+    for key, val in env_vars.items():
+        if val and key not in existing:
+            existing[key] = val
+            changed = True
+
+    if not existing:
+        return  # Nothing to write
+
+    if changed or not os.path.exists(env_path):
+        try:
+            with open(env_path, 'w') as f:
+                f.write('# VPS Manager environment (auto-generated, persists across updates)\n')
+                for key, val in sorted(existing.items()):
+                    if val:
+                        f.write(f'{key}={val}\n')
+            os.chmod(env_path, 0o600)  # Restrict permissions
+        except OSError:
+            pass
+
+
 def _ensure_git_repo():
     """Ensure APP_DIR is a git repository. Initializes if needed.
     Returns (success, message)."""
@@ -3748,6 +3811,9 @@ def update_install():
 
 def _do_update_install():
     current_before = _get_current_version()
+
+    # Preserve runtime settings before update
+    _ensure_env_file()
 
     # Ensure git repo is initialized
     git_ok, git_msg = _ensure_git_repo()
@@ -3854,6 +3920,9 @@ def update_install_stream():
         ]
         current_before = _get_current_version()
         error_occurred = False
+
+        # Preserve runtime settings before update
+        _ensure_env_file()
 
         # Step 1: ensure git repo + fetch
         yield send_event({'step': 1, 'name': steps[0], 'status': 'running', 'output': ''})

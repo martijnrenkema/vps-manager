@@ -325,6 +325,11 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.5.7 - Persistent Environment Settings
+- **Auto .env file** - Runtime settings (port, credentials) are automatically saved to `.env` before each update, preventing config loss
+- **.env loader** - App loads `.env` file at startup (doesn't override existing env vars)
+- **Configurable port** - `VPS_MANAGER_PORT` env var now persists across updates via `.env`
+
 ### v1.5.6 - Configurable Port & UX Improvements
 - **Configurable port** - Set `VPS_MANAGER_PORT` environment variable to run on a custom port (default: 5050). Fixes port reset on update.
 - **Dynamic sidebar** - PM2, PHP, Databases menu items auto-hidden when not installed
