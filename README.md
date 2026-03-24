@@ -325,6 +325,15 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.5.6 - Configurable Port & UX Improvements
+- **Configurable port** - Set `VPS_MANAGER_PORT` environment variable to run on a custom port (default: 5050). Fixes port reset on update.
+- **Dynamic sidebar** - PM2, PHP, Databases menu items auto-hidden when not installed
+- **Services page** - Only shows actually installed services (no more phantom "inactive" entries)
+- **Cronjobs UX** - Better schedule labels (Mon-Fri, 8-18:00), hidden raw cron expressions, no duplicate entries
+- **Auto git init** - Update mechanism initializes git repo automatically on first use
+- **Caddy parser fixes** - Fixed import path doubling, log directives leaking as domains, rollback on invalid config
+- **Security** - Shell injection fixes, terminal bypass prevention, CSRF on SSE, XSS fixes
+
 ### v1.5.0 - Caddy Web Server Support
 - **Caddy support** - Full Caddy web server support alongside Nginx (either/or model, configurable in Settings)
 - **Caddyfile editor** - Config editor with Caddyfile syntax highlighting, validation (`caddy validate`), and site enable/disable

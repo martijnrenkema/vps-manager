@@ -6752,4 +6752,5 @@ if __name__ == '__main__':
     # Start background push notification monitor
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
-    app.run(host='0.0.0.0', port=5050, debug=False)
+    port = int(os.environ.get('VPS_MANAGER_PORT', 5050))
+    app.run(host='0.0.0.0', port=port, debug=False)
