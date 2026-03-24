@@ -5737,7 +5737,8 @@ def _parse_caddyfile(content, sites_dir=None):
             address = line.split('{')[0].strip()
         elif i + 1 < len(lines) and lines[i + 1].strip() == '{':
             address = line
-        elif line and not line.startswith('}') and not any(line.startswith(d) for d in [
+        elif (line and not line.startswith('}') and not line.startswith('/')
+              and not any(line.startswith(d) for d in [
             'import', 'log', 'tls', 'root', 'reverse_proxy', 'file_server',
             'encode', 'header', 'handle', 'handle_path', 'route', 'respond', 'redir',
             'email', 'admin', 'auto_https', 'order', 'storage', 'acme_ca',
@@ -5747,7 +5748,9 @@ def _parse_caddyfile(content, sites_dir=None):
             'try_files', 'rewrite', 'uri', 'method', 'bind', 'abort',
             'error', 'metrics', 'templates', 'push', 'vars', 'map',
             'invoke', 'skip_log', 'request_body',
-        ]):
+            'output', 'file', 'format', 'level', 'include', 'exclude',
+            'roll_size', 'roll_keep', 'roll_keep_for', 'roll_local_time',
+        ])):
             # Likely a site address on its own line
             address = line
 
@@ -5829,13 +5832,20 @@ def _parse_caddyfile(content, sites_dir=None):
         for prefix in ('https://', 'http://'):
             if clean_addr.startswith(prefix):
                 clean_addr = clean_addr[len(prefix):]
-        # Remove port if present
+        # Remove port if present, validate as domain name
         domains = []
         for addr_part in clean_addr.split():
             addr_part = addr_part.strip(',')
             domain = addr_part.split(':')[0] if ':' in addr_part else addr_part
-            if domain and domain not in ('localhost', '*', ':'):
-                domains.append(domain)
+            if not domain or domain in ('localhost', '*', ':'):
+                continue
+            # Must look like a domain (contain a dot) or be a port-only address
+            if '.' not in domain and not domain.startswith(':'):
+                continue
+            # Skip paths and non-domain strings
+            if '/' in domain or domain.startswith('/'):
+                continue
+            domains.append(domain)
 
         if domains:
             sites.append({
