@@ -7,26 +7,31 @@
 {% if entry.countryCode %}<span class="country-flag" title="{{ entry.country }}">{{ entry.countryCode | country_flag }}</span> {% endif %}<code>{{ ip }}</code>
 {% endmacro %}
 
+{% block head_extra %}
+<style>
+    .ssh-overview-grid { display:grid; grid-template-columns:auto 1fr; gap:16px; align-items:start; }
+    @media (max-width: 992px) { .ssh-overview-grid { grid-template-columns:1fr; } }
+</style>
+{% endblock %}
+
 {% block content %}
 <!-- Stats overview -->
-<div class="grid-2col">
-    <div class="card">
+<div class="ssh-overview-grid">
+    <div class="card" style="margin-bottom:0;min-width:200px">
         <div class="card-header">{{ icon('shield') }} SSH Overview</div>
         <div class="card-body">
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-                <div>
-                    <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Failed Attempts</div>
-                    <div style="font-size:28px;font-weight:700;color:{% if data.failed_count > 1000 %}var(--red){% elif data.failed_count > 100 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.failed_count | default(0) }}</div>
-                </div>
-                <div>
-                    <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Accepted Logins</div>
-                    <div style="font-size:28px;font-weight:700;color:var(--green)">{{ data.accepted_count | default(0) }}</div>
-                </div>
+            <div>
+                <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Failed Attempts</div>
+                <div style="font-size:28px;font-weight:700;color:{% if data.failed_count > 1000 %}var(--red){% elif data.failed_count > 100 %}var(--yellow){% else %}var(--green){% endif %};margin-bottom:16px">{{ data.failed_count | default(0) }}</div>
+            </div>
+            <div>
+                <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Accepted Logins</div>
+                <div style="font-size:28px;font-weight:700;color:var(--green)">{{ data.accepted_count | default(0) }}</div>
             </div>
             <div style="margin-top:12px;font-size:12px;color:var(--text-muted)">Counts from current auth.log</div>
         </div>
     </div>
-    <div class="card">
+    <div class="card" style="margin-bottom:0">
         <div class="card-header">{{ icon('shield') }} Top Attacking IPs <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">by failed attempts</span></div>
         <div class="card-body" style="padding:0">
             {% if data.top_attackers %}

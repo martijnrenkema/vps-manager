@@ -325,6 +325,10 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.5.8 - SSH Logs Layout & Persistent Settings
+- **SSH Logs layout** - Compact SSH Overview panel, Top Attacking IPs takes full width, responsive grid
+- **Persistent env settings** - Port, credentials auto-saved to `.env` before updates
+
 ### v1.5.7 - Persistent Environment Settings
 - **Auto .env file** - Runtime settings (port, credentials) are automatically saved to `.env` before each update, preventing config loss
 - **.env loader** - App loads `.env` file at startup (doesn't override existing env vars)
