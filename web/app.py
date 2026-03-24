@@ -3705,6 +3705,32 @@ def update_check():
     })
 
 
+GITHUB_REPO_URL = 'https://github.com/martijnrenkema/vps-manager.git'
+
+
+def _ensure_git_repo():
+    """Ensure APP_DIR is a git repository. Initializes if needed.
+    Returns (success, message)."""
+    git_dir = os.path.join(APP_DIR, '.git')
+    if os.path.isdir(git_dir):
+        # Verify remote exists
+        result = run_cmd(f"git -C {APP_DIR} remote get-url origin 2>/dev/null", timeout=5)
+        if result.returncode == 0:
+            return True, 'Git repo OK'
+        # Remote missing, add it
+        run_cmd(f"git -C {APP_DIR} remote add origin {GITHUB_REPO_URL} 2>/dev/null", timeout=5)
+        return True, 'Added remote origin'
+
+    # No .git directory - initialize
+    init = run_cmd(f"git -C {APP_DIR} init", timeout=10)
+    if init.returncode != 0:
+        return False, f'git init failed: {init.stderr}'
+    remote = run_cmd(f"git -C {APP_DIR} remote add origin {GITHUB_REPO_URL}", timeout=5)
+    if remote.returncode != 0:
+        return False, f'git remote add failed: {remote.stderr}'
+    return True, 'Initialized git repo'
+
+
 @app.route('/api/update/install', methods=['POST'])
 @login_required
 def update_install():
@@ -3719,6 +3745,11 @@ def update_install():
 
 def _do_update_install():
     current_before = _get_current_version()
+
+    # Ensure git repo is initialized
+    git_ok, git_msg = _ensure_git_repo()
+    if not git_ok:
+        return jsonify({'status': 'error', 'message': f'Git setup failed: {git_msg}'}), 500
 
     # Fetch and reset to origin/main
     result = run_cmd(
@@ -3821,8 +3852,15 @@ def update_install_stream():
         current_before = _get_current_version()
         error_occurred = False
 
-        # Step 1: git fetch
+        # Step 1: ensure git repo + fetch
         yield send_event({'step': 1, 'name': steps[0], 'status': 'running', 'output': ''})
+        git_ok, git_msg = _ensure_git_repo()
+        if not git_ok:
+            yield send_event({'step': 1, 'name': steps[0], 'status': 'error', 'output': git_msg})
+            for i in range(2, 6):
+                yield send_event({'step': i, 'name': steps[i - 1], 'status': 'skipped', 'output': ''})
+            yield send_event({'type': 'error', 'message': f'Git setup failed: {git_msg}'})
+            return
         result = run_cmd(f"git -C {APP_DIR} fetch origin main", timeout=60)
         if result.returncode != 0:
             yield send_event({'step': 1, 'name': steps[0], 'status': 'error', 'output': (result.stderr or result.stdout)[-300:]})
