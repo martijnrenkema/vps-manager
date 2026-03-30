@@ -40,7 +40,7 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 ### Security
 - **Firewall & Security** - UFW rules, Fail2ban config, IP banning/unbanning, ban duration tracking, whitelist management
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
-- **2FA Authentication** - TOTP two-factor auth with QR code setup
+- **2FA Authentication** - TOTP authenticator app or email-based 2FA with configurable SMTP
 - **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
 - **Audit Log** - Full audit trail for all actions with user, IP, and timestamp
 - **Terminal Allowlist** - Command allowlist approach with subshell escape blocking, all blocked commands logged
@@ -324,6 +324,14 @@ vps.example.com {
 Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
+
+### v1.6.0 - Email 2FA & SMTP Settings
+- **Email 2FA** - Two-factor authentication via email as alternative to authenticator app (TOTP)
+- **SMTP Settings** - Configure external SMTP server in Settings (host, port, encryption, credentials, from address)
+- **2FA method choice** - Choose between Authenticator App or Email 2FA, switch between methods anytime
+- **Email verification flow** - 6-digit codes with 10-minute expiry, resend button with 60s cooldown, brute-force protection (max 5 attempts)
+- **Test email** - Send a test email directly from Settings to verify SMTP configuration
+- **Security** - Timing-safe code comparison, SMTP connection leak protection, rate limiting on resend, no SMTP errors leaked to login page
 
 ### v1.5.8 - SSH Logs Layout & Persistent Settings
 - **SSH Logs layout** - Compact SSH Overview panel, Top Attacking IPs takes full width, responsive grid

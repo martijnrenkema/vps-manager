@@ -13,14 +13,18 @@ import re
 import io
 import json
 import hmac
+import secrets
 import shlex
 import shutil
+import smtplib
 import stat as stat_module
 import subprocess
 import tempfile
 import threading
 import time
 import logging
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
@@ -982,6 +986,110 @@ def _record_attempt(ip):
         _login_attempts.setdefault(ip, []).append(time.time())
 
 
+# Email 2FA code store (single-user app, one code at a time)
+_email_2fa_code = {}  # {'code': str, 'expires': float, 'attempts': int, 'last_sent': float}
+_email_2fa_lock = threading.Lock()
+_EMAIL_CODE_LIFETIME = 600  # 10 minutes
+_EMAIL_CODE_MAX_ATTEMPTS = 5
+_EMAIL_RESEND_COOLDOWN = 60  # seconds between resends
+
+
+def _generate_email_code():
+    """Generate a 6-digit code and store it with expiry"""
+    code = str(secrets.SystemRandom().randint(100000, 999999))
+    with _email_2fa_lock:
+        _email_2fa_code.clear()
+        _email_2fa_code.update({
+            'code': code,
+            'expires': time.time() + _EMAIL_CODE_LIFETIME,
+            'attempts': 0,
+            'last_sent': time.time(),
+        })
+    return code
+
+
+def _verify_email_code(submitted_code):
+    """Verify email 2FA code. Returns (success, error_message)"""
+    with _email_2fa_lock:
+        if not _email_2fa_code:
+            return False, 'No code pending, request a new one'
+        if time.time() > _email_2fa_code['expires']:
+            _email_2fa_code.clear()
+            return False, 'Code expired, request a new one'
+        _email_2fa_code['attempts'] += 1
+        if _email_2fa_code['attempts'] > _EMAIL_CODE_MAX_ATTEMPTS:
+            _email_2fa_code.clear()
+            return False, 'Too many attempts, request a new code'
+        if hmac.compare_digest(submitted_code, _email_2fa_code['code']):
+            _email_2fa_code.clear()
+            return True, ''
+        return False, 'Invalid code'
+
+
+def send_email(subject, body_text, body_html=None, to=None):
+    """Send email using configured SMTP settings. Returns (success, error_msg)."""
+    smtp_cfg = CONFIG.get('smtp', {})
+    host = smtp_cfg.get('host', '')
+    if not host:
+        return False, 'SMTP not configured'
+
+    port = smtp_cfg.get('port', 587)
+    username = smtp_cfg.get('username', '')
+    password = smtp_cfg.get('password', '')
+    encryption = smtp_cfg.get('encryption', 'starttls')
+    from_addr = smtp_cfg.get('from_address', '')
+    to_addr = to or CONFIG.get('auth', {}).get('tfa_email', '')
+
+    if not from_addr:
+        return False, 'From address not configured'
+    if not to_addr:
+        return False, 'Recipient address not set'
+
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = subject
+    msg['From'] = from_addr
+    msg['To'] = to_addr
+    msg.attach(MIMEText(body_text, 'plain'))
+    if body_html:
+        msg.attach(MIMEText(body_html, 'html'))
+
+    server = None
+    try:
+        if encryption == 'ssl':
+            server = smtplib.SMTP_SSL(host, port, timeout=10)
+        else:
+            server = smtplib.SMTP(host, port, timeout=10)
+            if encryption == 'starttls':
+                server.starttls()
+        if username and password:
+            server.login(username, password)
+        server.sendmail(from_addr, [to_addr], msg.as_string())
+        return True, ''
+    except Exception as e:
+        return False, str(e)
+    finally:
+        if server:
+            try:
+                server.quit()
+            except Exception:
+                pass
+
+
+def _send_2fa_code_email(code):
+    """Send the 2FA verification code via email"""
+    subject = 'VPS Manager - Login Code'
+    body_text = f'Your login verification code is: {code}\n\nThis code expires in 10 minutes.'
+    body_html = f'''<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px">
+<h2 style="color:#e6edf3;margin:0 0 16px">VPS Manager</h2>
+<p style="color:#8b949e;margin:0 0 20px">Your login verification code:</p>
+<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;text-align:center;margin:0 0 20px">
+<span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#58a6ff">{code}</span>
+</div>
+<p style="color:#8b949e;font-size:13px;margin:0">This code expires in 10 minutes.</p>
+</div>'''
+    return send_email(subject, body_text, body_html)
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -998,6 +1106,7 @@ def login_required(f):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     show_2fa = False
+    tfa_method = None
     if request.method == 'POST':
         client_ip = request.remote_addr
 
@@ -1009,37 +1118,72 @@ def login():
         username = request.form.get('username', '')
         password = request.form.get('password', '')
         totp_code = request.form.get('totp_code', '').strip()
+        email_code = request.form.get('email_code', '').strip()
+
+        # Determine active 2FA method (backward compat: totp_secret without tfa_method)
+        active_tfa = CONFIG['auth'].get('tfa_method')
+        if not active_tfa and CONFIG['auth'].get('totp_secret') and HAS_2FA:
+            active_tfa = 'totp'
 
         # If we're in 2FA step, credentials are stored in session
         if session.get('2fa_pending'):
             username = session.get('2fa_username', '')
-            totp_secret = CONFIG['auth'].get('totp_secret')
-            if totp_secret and HAS_2FA and totp_code:
-                totp = pyotp.TOTP(totp_secret)
-                if totp.verify(totp_code, valid_window=1):
-                    session.pop('2fa_pending', None)
-                    session.pop('2fa_username', None)
-                    session.permanent = True
-                    session['logged_in'] = True
-                    session['username'] = username
-                    log_audit('login', {'method': '2fa'})
-                    return redirect(url_for('dashboard'))
-                else:
+            method = session.get('2fa_method', 'totp')
+
+            if method == 'totp':
+                totp_secret = CONFIG['auth'].get('totp_secret')
+                if totp_secret and HAS_2FA and totp_code:
+                    totp = pyotp.TOTP(totp_secret)
+                    if totp.verify(totp_code, valid_window=1):
+                        session.pop('2fa_pending', None)
+                        session.pop('2fa_username', None)
+                        session.pop('2fa_method', None)
+                        session.permanent = True
+                        session['logged_in'] = True
+                        session['username'] = username
+                        log_audit('login', {'method': '2fa_totp'})
+                        return redirect(url_for('dashboard'))
+                _record_attempt(client_ip)
+                flash('Invalid 2FA code', 'danger')
+                return render_template('login.html', show_2fa=True, tfa_method='totp')
+
+            elif method == 'email':
+                if email_code:
+                    ok, err = _verify_email_code(email_code)
+                    if ok:
+                        session.pop('2fa_pending', None)
+                        session.pop('2fa_username', None)
+                        session.pop('2fa_method', None)
+                        session.permanent = True
+                        session['logged_in'] = True
+                        session['username'] = username
+                        log_audit('login', {'method': '2fa_email'})
+                        return redirect(url_for('dashboard'))
                     _record_attempt(client_ip)
-                    flash('Invalid 2FA code', 'danger')
-                    return render_template('login.html', show_2fa=True)
-            _record_attempt(client_ip)
-            flash('Invalid 2FA code', 'danger')
-            return render_template('login.html', show_2fa=True)
+                    flash(err, 'danger')
+                    return render_template('login.html', show_2fa=True, tfa_method='email')
+                _record_attempt(client_ip)
+                flash('Enter the verification code', 'danger')
+                return render_template('login.html', show_2fa=True, tfa_method='email')
 
         if username == USERNAME and check_password_hash(PASSWORD_HASH, password):
-            # Check if 2FA is enabled
-            totp_secret = CONFIG['auth'].get('totp_secret')
-            if totp_secret and HAS_2FA:
-                # Store credentials in session and show 2FA form
+            if active_tfa == 'totp':
                 session['2fa_pending'] = True
                 session['2fa_username'] = username
-                return render_template('login.html', show_2fa=True)
+                session['2fa_method'] = 'totp'
+                return render_template('login.html', show_2fa=True, tfa_method='totp')
+
+            if active_tfa == 'email':
+                code = _generate_email_code()
+                ok, err = _send_2fa_code_email(code)
+                if not ok:
+                    app.logger.error('Email 2FA send failed: %s', err)
+                    flash('Could not send verification email. Check SMTP settings on the server.', 'danger')
+                    return render_template('login.html', show_2fa=False)
+                session['2fa_pending'] = True
+                session['2fa_username'] = username
+                session['2fa_method'] = 'email'
+                return render_template('login.html', show_2fa=True, tfa_method='email')
 
             session.permanent = True
             session['logged_in'] = True
@@ -1049,7 +1193,34 @@ def login():
         _record_attempt(client_ip)
         log_audit('login_failed', {'username': username})
         flash('Invalid username or password', 'danger')
-    return render_template('login.html', show_2fa=show_2fa)
+    return render_template('login.html', show_2fa=show_2fa, tfa_method=tfa_method)
+
+
+@app.route('/settings/2fa/send-code', methods=['POST'])
+def resend_2fa_code():
+    """Resend email 2FA code during login (no login_required, but needs 2fa_pending)"""
+    if not session.get('2fa_pending') or session.get('2fa_method') != 'email':
+        return jsonify({'status': 'error', 'message': 'No email 2FA pending'}), 400
+
+    with _email_2fa_lock:
+        last_sent = _email_2fa_code.get('last_sent', 0)
+        if time.time() - last_sent < _EMAIL_RESEND_COOLDOWN:
+            remaining = int(_EMAIL_RESEND_COOLDOWN - (time.time() - last_sent))
+            return jsonify({'status': 'error', 'message': f'Wait {remaining}s before resending'}), 429
+        # Generate code inside lock to prevent TOCTOU race
+        code = str(secrets.SystemRandom().randint(100000, 999999))
+        _email_2fa_code.clear()
+        _email_2fa_code.update({
+            'code': code,
+            'expires': time.time() + _EMAIL_CODE_LIFETIME,
+            'attempts': 0,
+            'last_sent': time.time(),
+        })
+
+    ok, err = _send_2fa_code_email(code)
+    if not ok:
+        return jsonify({'status': 'error', 'message': 'Could not send email'}), 500
+    return jsonify({'status': 'ok', 'message': 'Code sent'})
 
 
 @app.route('/logout')
@@ -5178,10 +5349,12 @@ def verify_2fa():
 
     # Save to config
     CONFIG['auth']['totp_secret'] = secret
+    CONFIG['auth']['tfa_method'] = 'totp'
+    CONFIG['auth']['tfa_email'] = None
     save_config(CONFIG)
     session.pop('pending_totp_secret', None)
 
-    log_audit('2fa_enable')
+    log_audit('2fa_enable', {'method': 'totp'})
     return jsonify({'status': 'ok', 'message': '2FA enabled successfully'})
 
 
@@ -5195,10 +5368,128 @@ def disable_2fa():
         return jsonify({'status': 'error', 'message': 'Incorrect password'}), 400
 
     CONFIG['auth']['totp_secret'] = None
+    CONFIG['auth']['tfa_method'] = None
+    CONFIG['auth']['tfa_email'] = None
     save_config(CONFIG)
 
     log_audit('2fa_disable')
     return jsonify({'status': 'ok', 'message': '2FA disabled'})
+
+
+@app.route('/settings/2fa/email/enable', methods=['POST'])
+@login_required
+def enable_email_2fa():
+    """Start email 2FA setup: send verification code to provided email"""
+    smtp_host = CONFIG.get('smtp', {}).get('host', '')
+    if not smtp_host:
+        return jsonify({'status': 'error', 'message': 'Configure SMTP settings first'}), 400
+
+    data = request.get_json() or {}
+    email = data.get('email', '').strip()
+    if not email or not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
+        return jsonify({'status': 'error', 'message': 'Invalid email address'}), 400
+
+    code = _generate_email_code()
+    ok, err = send_email(
+        'VPS Manager - Verify Email 2FA',
+        f'Your verification code is: {code}\n\nThis code expires in 10 minutes.',
+        f'''<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px">
+<h2 style="color:#e6edf3;margin:0 0 16px">VPS Manager</h2>
+<p style="color:#8b949e;margin:0 0 20px">Verify your email for 2FA:</p>
+<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:20px;text-align:center;margin:0 0 20px">
+<span style="font-size:32px;font-weight:700;letter-spacing:8px;color:#58a6ff">{code}</span>
+</div>
+<p style="color:#8b949e;font-size:13px;margin:0">This code expires in 10 minutes.</p>
+</div>''',
+        to=email,
+    )
+    if not ok:
+        return jsonify({'status': 'error', 'message': f'Could not send email: {err}'}), 500
+
+    session['pending_tfa_email'] = email
+    return jsonify({'status': 'ok', 'message': f'Verification code sent to {email}'})
+
+
+@app.route('/settings/2fa/email/verify', methods=['POST'])
+@login_required
+def verify_email_2fa():
+    """Verify email 2FA setup code and enable email 2FA"""
+    data = request.get_json() or {}
+    code = data.get('code', '').strip()
+    pending_email = session.get('pending_tfa_email')
+
+    if not pending_email:
+        return jsonify({'status': 'error', 'message': 'No pending email 2FA setup'}), 400
+
+    ok, err = _verify_email_code(code)
+    if not ok:
+        return jsonify({'status': 'error', 'message': err}), 400
+
+    CONFIG['auth']['tfa_method'] = 'email'
+    CONFIG['auth']['tfa_email'] = pending_email
+    CONFIG['auth']['totp_secret'] = None
+    save_config(CONFIG)
+    session.pop('pending_tfa_email', None)
+
+    log_audit('2fa_enable', {'method': 'email', 'email': pending_email})
+    return jsonify({'status': 'ok', 'message': 'Email 2FA enabled successfully'})
+
+
+@app.route('/api/smtp/save', methods=['POST'])
+@login_required
+def save_smtp_settings():
+    """Save SMTP configuration"""
+    data = request.get_json() or {}
+
+    host = str(data.get('host', '')).strip()
+    port = data.get('port', 587)
+    username = str(data.get('username', '')).strip()
+    password = data.get('password', '')
+    encryption = str(data.get('encryption', 'starttls')).strip()
+    from_address = str(data.get('from_address', '')).strip()
+
+    if not isinstance(port, int) or port < 1 or port > 65535:
+        return jsonify({'status': 'error', 'message': 'Port must be between 1-65535'}), 400
+    if encryption not in ('starttls', 'ssl', 'none'):
+        return jsonify({'status': 'error', 'message': 'Invalid encryption type'}), 400
+
+    # Keep existing password if not provided
+    if not password:
+        password = CONFIG.get('smtp', {}).get('password', '')
+
+    CONFIG['smtp'] = {
+        'host': host,
+        'port': port,
+        'username': username,
+        'password': password,
+        'encryption': encryption,
+        'from_address': from_address,
+    }
+    save_config(CONFIG)
+    log_audit('smtp_settings_saved')
+    return jsonify({'status': 'ok', 'message': 'SMTP settings saved'})
+
+
+@app.route('/api/smtp/test', methods=['POST'])
+@login_required
+def test_smtp():
+    """Send a test email to verify SMTP settings"""
+    data = request.get_json() or {}
+    recipient = data.get('recipient', '').strip()
+    if not recipient:
+        recipient = CONFIG.get('smtp', {}).get('from_address', '')
+    if not recipient:
+        return jsonify({'status': 'error', 'message': 'No recipient specified'}), 400
+
+    ok, err = send_email(
+        'VPS Manager - Test Email',
+        'This is a test email from VPS Manager. Your SMTP settings are working correctly.',
+        '<div style="font-family:sans-serif;padding:20px"><h2 style="color:#e6edf3">VPS Manager</h2><p style="color:#8b949e">Your SMTP settings are working correctly.</p></div>',
+        to=recipient,
+    )
+    if ok:
+        return jsonify({'status': 'ok', 'message': f'Test email sent to {recipient}'})
+    return jsonify({'status': 'error', 'message': f'Failed: {err}'}), 500
 
 
 @app.route('/api/backup/webhook', methods=['POST'])

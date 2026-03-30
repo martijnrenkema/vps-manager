@@ -30,22 +30,34 @@
 <div class="card">
     <div class="card-header">{{ icon('shield') }} Two-Factor Authentication</div>
     <div class="card-body">
-        {% if not has_2fa %}
-        <div class="alert alert-danger">
-            <code>pyotp</code> and <code>qrcode</code> are not installed. Install them with: <code>pip install pyotp qrcode[pil]</code>
-        </div>
-        {% else %}
         <div id="tfaContent">
+        {% set tfa_method = config.auth.get('tfa_method') or (config.auth.totp_secret and has_2fa and 'totp') or None %}
+
         <div style="margin-bottom:16px">
-            <span class="badge {% if config.auth.totp_secret %}badge-green{% else %}badge-yellow{% endif %}" style="font-size:13px;padding:6px 12px">
-                2FA is {% if config.auth.totp_secret %}enabled{% else %}disabled{% endif %}
-            </span>
+            {% if tfa_method == 'totp' %}
+            <span class="badge badge-green" style="font-size:13px;padding:6px 12px">2FA active (Authenticator App)</span>
+            {% elif tfa_method == 'email' %}
+            <span class="badge badge-green" style="font-size:13px;padding:6px 12px">2FA active (Email: {{ config.auth.tfa_email }})</span>
+            {% else %}
+            <span class="badge badge-yellow" style="font-size:13px;padding:6px 12px">2FA is disabled</span>
+            {% endif %}
         </div>
 
-        {% if not config.auth.totp_secret %}
-        <button class="btn btn-green" onclick="enable2FA()">Enable 2FA</button>
+        {% if not tfa_method %}
+        <!-- Method selection -->
+        <div id="tfaMethodSelect">
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                {% if has_2fa %}
+                <button class="btn btn-green" onclick="showTotpSetup()">{{ icon('shield') }} Authenticator App</button>
+                {% else %}
+                <button class="btn" disabled title="Install pyotp and qrcode first">{{ icon('shield') }} Authenticator App (not available)</button>
+                {% endif %}
+                <button class="btn btn-green" onclick="showEmailSetup()">{{ icon('mail') }} Email 2FA</button>
+            </div>
+        </div>
 
-        <div id="setup2fa" style="display:none;margin-top:20px">
+        <!-- TOTP setup (hidden) -->
+        <div id="setupTotp" style="display:none;margin-top:20px">
             <p style="color:var(--text-secondary);font-size:14px;margin-bottom:12px">
                 Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)
             </p>
@@ -58,9 +70,33 @@
                 <label for="verify_code">Enter 6-digit code to verify</label>
                 <input type="text" id="verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
             </div>
-            <button class="btn btn-green" onclick="verify2FA()">Verify & Enable</button>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-green" onclick="verify2FA()">Verify & Enable</button>
+                <button class="btn" onclick="cancelTfaSetup()">Cancel</button>
+            </div>
         </div>
+
+        <!-- Email 2FA setup (hidden) -->
+        <div id="setupEmail2fa" style="display:none;margin-top:20px">
+            <div class="form-group" style="max-width:350px">
+                <label for="tfa_email">Email address for verification codes</label>
+                <input type="email" id="tfa_email" class="form-control" placeholder="you@example.com" required>
+            </div>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-green" onclick="enableEmail2FA()">Send Verification Code</button>
+                <button class="btn" onclick="cancelTfaSetup()">Cancel</button>
+            </div>
+            <div id="emailVerifyStep" style="display:none;margin-top:16px">
+                <div class="form-group" style="max-width:200px">
+                    <label for="email_verify_code">Enter 6-digit code from email</label>
+                    <input type="text" id="email_verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+                </div>
+                <button class="btn btn-green" onclick="verifyEmail2FA()">Verify & Enable</button>
+            </div>
+        </div>
+
         {% else %}
+        <!-- 2FA is enabled - show disable -->
         <button class="btn btn-red" onclick="showDisable2FA()">Disable 2FA</button>
         <div id="disable2fa" style="display:none;margin-top:16px">
             <div class="form-group" style="max-width:300px">
@@ -73,11 +109,53 @@
 
         <div style="margin-top:20px;padding:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px">
             <p style="font-size:12px;color:var(--text-muted)">
-                <strong>Recovery:</strong> If you lose access to your authenticator app, remove <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.
+                <strong>Recovery:</strong> If you lose access to your authenticator app or email, remove <code>tfa_method</code> and <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.
             </p>
         </div>
         </div>
-        {% endif %}
+    </div>
+</div>
+
+<!-- SMTP / Email Settings -->
+<div class="card">
+    <div class="card-header">{{ icon('mail') }} Email / SMTP Settings</div>
+    <div class="card-body">
+        <form id="smtpForm" onsubmit="saveSmtp(event)" style="max-width:500px">
+            <div style="display:grid;grid-template-columns:1fr 120px;gap:12px;margin-bottom:12px">
+                <div class="form-group">
+                    <label for="smtp_host">SMTP host</label>
+                    <input type="text" class="form-control" id="smtp_host" value="{{ config.smtp.host }}" placeholder="smtp.gmail.com">
+                </div>
+                <div class="form-group">
+                    <label for="smtp_port">Port</label>
+                    <input type="number" class="form-control" id="smtp_port" value="{{ config.smtp.port }}" min="1" max="65535">
+                </div>
+            </div>
+            <div class="form-group">
+                <label for="smtp_encryption">Encryption</label>
+                <select class="form-control" id="smtp_encryption">
+                    <option value="starttls" {% if config.smtp.encryption == 'starttls' %}selected{% endif %}>STARTTLS (port 587)</option>
+                    <option value="ssl" {% if config.smtp.encryption == 'ssl' %}selected{% endif %}>SSL/TLS (port 465)</option>
+                    <option value="none" {% if config.smtp.encryption == 'none' %}selected{% endif %}>None (port 25)</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="smtp_username">Username</label>
+                <input type="text" class="form-control" id="smtp_username" value="{{ config.smtp.username }}" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="smtp_password">Password</label>
+                <input type="password" class="form-control" id="smtp_password" placeholder="{% if config.smtp.password %}********{% endif %}" autocomplete="off">
+            </div>
+            <div class="form-group">
+                <label for="smtp_from">From address</label>
+                <input type="email" class="form-control" id="smtp_from" value="{{ config.smtp.from_address }}" placeholder="vps@example.com">
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+                <button type="submit" class="btn btn-green">Save SMTP Settings</button>
+                <button type="button" class="btn" onclick="testSmtp()">Send Test Email</button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -316,12 +394,47 @@ async function changePassword(e) {
     }
 }
 
+// --- 2FA Functions ---
+
+function _tfaEnabledHTML(label) {
+    return '<div style="margin-bottom:16px"><span class="badge badge-green" style="font-size:13px;padding:6px 12px">2FA active (' + label + ')</span></div>'
+        + '<button class="btn btn-red" onclick="showDisable2FA()">Disable 2FA</button>'
+        + '<div id="disable2fa" style="display:none;margin-top:16px"><div class="form-group" style="max-width:300px"><label for="disable_password">Enter your password to confirm</label><input type="password" id="disable_password" class="form-control" required></div><button class="btn btn-red" onclick="disable2FA()">Confirm Disable</button></div>'
+        + '<div style="margin-top:20px;padding:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px"><p style="font-size:12px;color:var(--text-muted)"><strong>Recovery:</strong> Remove <code>tfa_method</code> and <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.</p></div>';
+}
+
+function cancelTfaSetup() {
+    var el = document.getElementById('setupTotp');
+    if (el) el.style.display = 'none';
+    el = document.getElementById('setupEmail2fa');
+    if (el) el.style.display = 'none';
+    el = document.getElementById('tfaMethodSelect');
+    if (el) el.style.display = '';
+}
+
+function showTotpSetup() {
+    document.getElementById('tfaMethodSelect').style.display = 'none';
+    document.getElementById('setupTotp').style.display = 'block';
+    // Trigger QR code generation
+    enable2FA();
+}
+
+function showEmailSetup() {
+    var smtpHost = document.getElementById('smtp_host');
+    if (!smtpHost || !smtpHost.value.trim()) {
+        showToast('Configure SMTP settings first', 'error');
+        return;
+    }
+    document.getElementById('tfaMethodSelect').style.display = 'none';
+    document.getElementById('setupEmail2fa').style.display = 'block';
+    document.getElementById('emailVerifyStep').style.display = 'none';
+}
+
 async function enable2FA() {
     try {
         const res = await fetch('/settings/2fa/enable', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
         const data = await res.json();
         if (res.ok) {
-            document.getElementById('setup2fa').style.display = 'block';
             document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr_code}" alt="QR Code" style="border-radius:8px">`;
             document.getElementById('totpSecret').textContent = data.secret;
         } else {
@@ -334,10 +447,7 @@ async function enable2FA() {
 
 async function verify2FA() {
     const code = document.getElementById('verify_code').value.trim();
-    if (code.length !== 6) {
-        showToast('Enter a 6-digit code', 'error');
-        return;
-    }
+    if (code.length !== 6) { showToast('Enter a 6-digit code', 'error'); return; }
     try {
         const res = await fetch('/settings/2fa/verify', {
             method: 'POST',
@@ -347,20 +457,55 @@ async function verify2FA() {
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, 'success');
-            // Update UI in-place: show enabled state
+            var tfaContent = document.getElementById('tfaContent');
+            if (tfaContent) tfaContent.innerHTML = _tfaEnabledHTML('Authenticator App');
+        } else {
+            showToast(data.message, 'error');
+        }
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function enableEmail2FA() {
+    const email = document.getElementById('tfa_email').value.trim();
+    if (!email || !email.includes('@')) { showToast('Enter a valid email address', 'error'); return; }
+    try {
+        const res = await fetch('/settings/2fa/email/enable', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            document.getElementById('emailVerifyStep').style.display = 'block';
+        } else {
+            showToast(data.message, 'error');
+        }
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+async function verifyEmail2FA() {
+    const code = document.getElementById('email_verify_code').value.trim();
+    if (code.length !== 6) { showToast('Enter a 6-digit code', 'error'); return; }
+    try {
+        const res = await fetch('/settings/2fa/email/verify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({ code }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            showToast(data.message, 'success');
+            const email = document.getElementById('tfa_email').value.trim();
             var tfaContent = document.getElementById('tfaContent');
             if (tfaContent) {
-                tfaContent.innerHTML = '<div style="margin-bottom:16px"><span class="badge badge-green" style="font-size:13px;padding:6px 12px">2FA is enabled</span></div>'
-                    + '<button class="btn btn-red" onclick="showDisable2FA()">Disable 2FA</button>'
-                    + '<div id="disable2fa" style="display:none;margin-top:16px"><div class="form-group" style="max-width:300px"><label for="disable_password">Enter your password to confirm</label><input type="password" id="disable_password" class="form-control" required></div><button class="btn btn-red" onclick="disable2FA()">Confirm Disable</button></div>'
-                    + '<div style="margin-top:20px;padding:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px"><p style="font-size:12px;color:var(--text-muted)"><strong>Recovery:</strong> If you lose access to your authenticator app, remove <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.</p></div>';
+                const safe = email.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                tfaContent.innerHTML = _tfaEnabledHTML('Email: ' + safe);
             }
         } else {
             showToast(data.message, 'error');
         }
-    } catch(e) {
-        showToast('Error: ' + e.message, 'error');
-    }
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
 }
 
 function showDisable2FA() {
@@ -378,20 +523,54 @@ async function disable2FA() {
         const data = await res.json();
         if (res.ok) {
             showToast(data.message, 'success');
-            // Update UI in-place: show disabled state
-            var tfaContent = document.getElementById('tfaContent');
-            if (tfaContent) {
-                tfaContent.innerHTML = '<div style="margin-bottom:16px"><span class="badge badge-yellow" style="font-size:13px;padding:6px 12px">2FA is disabled</span></div>'
-                    + '<button class="btn btn-green" onclick="enable2FA()">Enable 2FA</button>'
-                    + '<div id="setup2fa" style="display:none;margin-top:20px"><p style="color:var(--text-secondary);font-size:14px;margin-bottom:12px">Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</p><div id="qrCodeContainer" style="margin-bottom:16px"></div><div style="margin-bottom:16px"><label style="font-size:12px;color:var(--text-muted)">Manual key:</label><code id="totpSecret" style="display:block;margin-top:4px;font-size:14px;word-break:break-all"></code></div><div class="form-group" style="max-width:200px"><label for="verify_code">Enter 6-digit code to verify</label><input type="text" id="verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required></div><button class="btn btn-green" onclick="verify2FA()">Verify &amp; Enable</button></div>'
-                    + '<div style="margin-top:20px;padding:12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px"><p style="font-size:12px;color:var(--text-muted)"><strong>Recovery:</strong> If you lose access to your authenticator app, remove <code>totp_secret</code> from <code>data/config.json</code> on the server and restart the app.</p></div>';
-            }
+            location.reload();
         } else {
             showToast(data.message, 'error');
         }
-    } catch(e) {
-        showToast('Error: ' + e.message, 'error');
-    }
+    } catch(e) { showToast('Error: ' + e.message, 'error'); }
+}
+
+// --- SMTP Functions ---
+
+async function saveSmtp(e) {
+    e.preventDefault();
+    const data = {
+        host: document.getElementById('smtp_host').value.trim(),
+        port: parseInt(document.getElementById('smtp_port').value) || 587,
+        encryption: document.getElementById('smtp_encryption').value,
+        username: document.getElementById('smtp_username').value.trim(),
+        password: document.getElementById('smtp_password').value,
+        from_address: document.getElementById('smtp_from').value.trim(),
+    };
+    try {
+        const res = await fetch('/api/smtp/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify(data),
+        });
+        const result = await res.json();
+        if (res.ok) {
+            showToast(result.message, 'success');
+            document.getElementById('smtp_password').value = '';
+            document.getElementById('smtp_password').placeholder = '********';
+        } else {
+            showToast(result.message, 'error');
+        }
+    } catch(e) { showToast('Connection error', 'error'); }
+}
+
+async function testSmtp() {
+    const recipient = document.getElementById('smtp_from').value.trim();
+    if (!recipient) { showToast('Set a from address first', 'error'); return; }
+    try {
+        const res = await fetch('/api/smtp/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({ recipient }),
+        });
+        const data = await res.json();
+        showToast(data.message, res.ok ? 'success' : 'error');
+    } catch(e) { showToast('Connection error', 'error'); }
 }
 
 async function detectServices() {

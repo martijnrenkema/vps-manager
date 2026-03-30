@@ -24,7 +24,17 @@ def get_default_config():
             "username": "admin",
             "password_hash": None,
             "totp_secret": None,
+            "tfa_method": None,
+            "tfa_email": None,
             "session_lifetime_hours": 24,
+        },
+        "smtp": {
+            "host": "",
+            "port": 587,
+            "username": "",
+            "password": "",
+            "encryption": "starttls",
+            "from_address": "",
         },
         "services": ["nginx", "php8.3-fpm", "mariadb", "fail2ban"],
         "thresholds": {
