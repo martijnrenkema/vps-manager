@@ -325,6 +325,11 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.6.1 - Banned IPs Pagination
+- **Pagination** - Banned IPs list now paginated with 25/50/100 items per page selector
+- **Search filter** - Search banned IPs by IP address, jail, country, or reason
+- **Reason column** - Human-readable ban reasons (e.g. "SSH brute force", "Bot/scanner detected", "Repeat offender") based on jail type
+
 ### v1.6.0 - Email 2FA & SMTP Settings
 - **Email 2FA** - Two-factor authentication via email as alternative to authenticator app (TOTP)
 - **SMTP Settings** - Configure external SMTP server in Settings (host, port, encryption, credentials, from address)

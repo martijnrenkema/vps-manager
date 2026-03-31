@@ -258,13 +258,22 @@
 <!-- Currently Banned IPs (structured) -->
 <div class="card" style="margin-top:16px">
     <div class="card-header">
-        {{ icon('shield') }} Currently Banned IPs
-        <button class="btn btn-sm" onclick="loadBannedIps()" style="margin-left:auto">{{ icon('refresh') }} Refresh</button>
+        {{ icon('shield') }} Currently Banned IPs <span id="bannedCount" style="color:var(--text-muted);font-weight:normal"></span>
+        <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
+            <input type="text" id="bannedSearch" class="form-control" placeholder="Search IP, jail, country..." style="width:180px;height:30px;font-size:12px" oninput="bannedPage=1;renderBannedIps()">
+            <select id="bannedPerPageSelect" class="form-control" style="width:auto;height:30px;font-size:12px;padding:2px 8px" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
+                <option value="25">25</option>
+                <option value="50">50</option>
+                <option value="100">100</option>
+            </select>
+            <button class="btn btn-sm" onclick="loadBannedIps()">{{ icon('refresh') }}</button>
+        </div>
     </div>
     <div class="card-body">
         <div id="bannedIpsContainer">
             <div class="empty-state">Loading...</div>
         </div>
+        <div style="display:flex;justify-content:center;gap:8px;margin-top:16px" id="bannedPagination"></div>
     </div>
 </div>
 
@@ -420,6 +429,22 @@
     }
 
     let bannedIpsInterval = null;
+    let allBannedIps = [];
+    let bannedPage = 1;
+    let bannedPerPage = 25;
+
+    const jailReasons = {
+        'sshd': 'SSH brute force',
+        'nginx-botsearch': 'Bot/scanner detected',
+        'nginx-http-auth': 'HTTP auth failure',
+        'nginx-limit-req': 'Rate limit exceeded',
+        'nginx-bad-request': 'Malformed request',
+        'recidive': 'Repeat offender',
+        'postfix-sasl': 'SMTP auth failure',
+        'dovecot': 'IMAP/POP3 auth failure',
+        'apache-auth': 'Apache auth failure',
+        'apache-botsearch': 'Bot/scanner detected',
+    };
 
     async function loadBannedIps() {
         const container = document.getElementById('bannedIpsContainer');
@@ -427,45 +452,99 @@
             const res = await fetch('/firewall/banned-ips');
             const jails = await res.json();
 
-            let totalBanned = 0;
-            jails.forEach(j => totalBanned += j.ips.length);
-
-            if (totalBanned === 0) {
-                container.innerHTML = '<span class="badge badge-green">No banned IPs</span>';
-                if (bannedIpsInterval) { clearInterval(bannedIpsInterval); bannedIpsInterval = null; }
-                return;
-            }
-
-            let html = '<div class="table-wrap"><table><thead><tr><th>IP Address</th><th>Jail</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
+            // Flatten to single array
+            allBannedIps = [];
             jails.forEach(j => {
                 j.ips.forEach(entry => {
-                    const ip = typeof entry === 'string' ? entry : entry.ip;
-                    const bannedAt = entry.banned_at || '-';
-                    const duration = entry.duration != null ? formatBanDuration(entry.duration) : '-';
-                    const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
-                    const bancount = entry.bancount || 1;
-                    const countBadge = bancount > 1 ? ` <span class="badge badge-red" title="Banned ${bancount} times" style="font-size:10px">${bancount}x</span>` : '';
-                    const flag = entry.countryCode ? countryFlag(entry.countryCode) + ' ' : '';
-                    const countryTitle = entry.country ? ` title="${escHtml(entry.country)}"` : '';
-                    html += `<tr>
-                        <td><span${countryTitle}>${flag}</span><code>${escHtml(ip)}</code>${countBadge}</td>
-                        <td><span class="badge badge-yellow">${escHtml(j.jail)}</span></td>
-                        <td style="font-size:12px;color:var(--text-muted)">${escHtml(bannedAt)}</td>
-                        <td style="font-size:12px">${duration}</td>
-                        <td>${remaining}</td>
-                        <td><button class="btn btn-sm btn-green" onclick="unbanIp('${escHtml(ip)}', '${escHtml(j.jail)}')">Unban</button></td>
-                    </tr>`;
+                    allBannedIps.push({
+                        ip: typeof entry === 'string' ? entry : entry.ip,
+                        jail: j.jail,
+                        banned_at: entry.banned_at || '-',
+                        duration: entry.duration,
+                        remaining: entry.remaining,
+                        bancount: entry.bancount || 1,
+                        country: entry.country || '',
+                        countryCode: entry.countryCode || '',
+                    });
                 });
             });
-            html += '</tbody></table></div>';
-            container.innerHTML = html;
 
-            // Auto-refresh every 30s while bans are active
-            if (!bannedIpsInterval) {
+            renderBannedIps();
+
+            if (allBannedIps.length > 0 && !bannedIpsInterval) {
                 bannedIpsInterval = setInterval(loadBannedIps, 30000);
+            } else if (allBannedIps.length === 0 && bannedIpsInterval) {
+                clearInterval(bannedIpsInterval);
+                bannedIpsInterval = null;
             }
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Failed to load banned IPs</div>';
+            document.getElementById('bannedPagination').innerHTML = '';
+            document.getElementById('bannedCount').textContent = '';
+        }
+    }
+
+    function renderBannedIps() {
+        const container = document.getElementById('bannedIpsContainer');
+        const pagDiv = document.getElementById('bannedPagination');
+        const countEl = document.getElementById('bannedCount');
+        const search = (document.getElementById('bannedSearch').value || '').toLowerCase();
+
+        let filtered = allBannedIps;
+        if (search) {
+            filtered = filtered.filter(e =>
+                e.ip.toLowerCase().includes(search) ||
+                e.jail.toLowerCase().includes(search) ||
+                e.country.toLowerCase().includes(search) ||
+                (jailReasons[e.jail] || '').toLowerCase().includes(search)
+            );
+        }
+
+        countEl.textContent = `(${filtered.length})`;
+
+        if (filtered.length === 0) {
+            container.innerHTML = allBannedIps.length === 0
+                ? '<span class="badge badge-green">No banned IPs</span>'
+                : '<div class="empty-state">No matching IPs found</div>';
+            pagDiv.innerHTML = '';
+            return;
+        }
+
+        const totalPages = Math.max(1, Math.ceil(filtered.length / bannedPerPage));
+        if (bannedPage > totalPages) bannedPage = totalPages;
+        const start = (bannedPage - 1) * bannedPerPage;
+        const pageItems = filtered.slice(start, start + bannedPerPage);
+
+        let html = '<div class="table-wrap"><table><thead><tr><th>IP Address</th><th>Jail</th><th>Reason</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
+        pageItems.forEach(entry => {
+            const duration = entry.duration != null ? formatBanDuration(entry.duration) : '-';
+            const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
+            const countBadge = entry.bancount > 1 ? ` <span class="badge badge-red" title="Banned ${entry.bancount} times" style="font-size:10px">${entry.bancount}x</span>` : '';
+            const flag = entry.countryCode ? countryFlag(entry.countryCode) + ' ' : '';
+            const countryTitle = entry.country ? ` title="${escHtml(entry.country)}"` : '';
+            const reason = jailReasons[entry.jail] || entry.jail;
+            html += `<tr>
+                <td><span${countryTitle}>${flag}</span><code>${escHtml(entry.ip)}</code>${countBadge}</td>
+                <td><span class="badge badge-yellow" style="font-size:10px">${escHtml(entry.jail)}</span></td>
+                <td style="font-size:12px;color:var(--text-muted)">${escHtml(reason)}</td>
+                <td style="font-size:12px;color:var(--text-muted)">${escHtml(entry.banned_at)}</td>
+                <td style="font-size:12px">${duration}</td>
+                <td>${remaining}</td>
+                <td><button class="btn btn-sm btn-green" onclick="unbanIp('${escHtml(entry.ip)}', '${escHtml(entry.jail)}')">Unban</button></td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+
+        // Pagination
+        if (totalPages <= 1) {
+            pagDiv.innerHTML = `<span style="color:var(--text-muted);font-size:12px">${filtered.length} IPs</span>`;
+        } else {
+            let phtml = '';
+            if (bannedPage > 1) phtml += `<button class="btn btn-sm" onclick="bannedPage--;renderBannedIps()">Prev</button>`;
+            phtml += `<span style="color:var(--text-secondary);font-size:12px;padding:4px 8px">Page ${bannedPage}/${totalPages} (${filtered.length} IPs)</span>`;
+            if (bannedPage < totalPages) phtml += `<button class="btn btn-sm" onclick="bannedPage++;renderBannedIps()">Next</button>`;
+            pagDiv.innerHTML = phtml;
         }
     }
 
