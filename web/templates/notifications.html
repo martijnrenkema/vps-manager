@@ -191,30 +191,40 @@
         return browser + ' ' + mode;
     }
 
+    function initEmailUI() {
+        document.querySelectorAll('[id^="pref-email-"]').forEach(cb => { cb.disabled = !smtpConfigured; });
+        document.getElementById('email-smtp-warning').style.display = smtpConfigured ? 'none' : 'block';
+        loadEmailPreferences();
+        loadAllSubscriptions();
+    }
+
     async function init() {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
             document.getElementById('push-unsupported').style.display = 'block';
             document.getElementById('push-status-text').textContent = 'Push notifications not supported.';
-            // Still load email preferences and disable push checkboxes
             document.querySelectorAll('[id^="pref-push-"]').forEach(cb => { cb.disabled = true; });
-            document.querySelectorAll('[id^="pref-email-"]').forEach(cb => { cb.disabled = !smtpConfigured; });
-            document.getElementById('email-smtp-warning').style.display = smtpConfigured ? 'none' : 'block';
-            loadEmailPreferences();
-            loadAllSubscriptions();
+            initEmailUI();
             return;
         }
 
         document.getElementById('push-controls').style.display = 'block';
 
+        // Load email preferences immediately, don't wait for push
+        initEmailUI();
+
         try {
-            swRegistration = await navigator.serviceWorker.ready;
+            // Timeout after 3s so email-only users aren't stuck waiting
+            swRegistration = await Promise.race([
+                navigator.serviceWorker.ready,
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+            ]);
             currentSubscription = await swRegistration.pushManager.getSubscription();
             updateUI();
         } catch (e) {
-            document.getElementById('push-status-text').textContent = 'Error initializing: ' + e.message;
+            // Push unavailable (no SW active or timeout) — email still works
+            document.getElementById('push-status-text').textContent = 'Push notifications unavailable (no service worker active). Email notifications work independently.';
+            document.querySelectorAll('[id^="pref-push-"]').forEach(cb => { cb.disabled = true; });
         }
-
-        loadAllSubscriptions();
     }
 
     const smtpConfigured = {{ 'true' if smtp_configured else 'false' }};
