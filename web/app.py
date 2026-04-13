@@ -590,6 +590,7 @@ def _monitor_loop():
     time.sleep(30)
     logger.info("Push notification monitor started")
 
+    first_cycle = True
     while True:
         cycle_start = time.time()
         try:
@@ -640,6 +641,28 @@ def _monitor_loop():
 
             if alerts:
                 cooldown = CONFIG.get('notification_cooldown', 3600)
+
+                # On first cycle after (re)start, seed the notification
+                # log with all current alerts so we don't spam every
+                # existing alert as if it's new.
+                if first_cycle and not notif_log:
+                    for alert in alerts:
+                        category = _classify_alert(alert)
+                        alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
+                        current_alert_keys.add(alert_key)
+                        entry = {'ts': now, 'message': alert['message']}
+                        notif_log[alert_key] = entry
+                        email_prefs = CONFIG.get('email_notifications', {})
+                        if email_prefs.get(category, False):
+                            notif_log[f"email:{alert_key}"] = entry
+                    log_changed = True
+                    logger.info(f"First cycle: seeded {len(current_alert_keys)} alerts into notification log (no notifications sent)")
+                    first_cycle = False
+                    # Skip to save and sleep — don't send anything this cycle
+                    if log_changed:
+                        _save_notification_log(notif_log)
+                    time.sleep(max(0, MONITOR_INTERVAL - (time.time() - cycle_start)))
+                    continue
 
                 for alert in alerts:
                     category = _classify_alert(alert)
@@ -761,6 +784,7 @@ def _monitor_loop():
         except Exception:
             logger.warning("Monitor error", exc_info=True)
 
+        first_cycle = False
         gc.collect()
         elapsed = time.time() - cycle_start
         remaining = max(10, MONITOR_INTERVAL - elapsed)
