@@ -732,13 +732,19 @@ def _monitor_loop():
                             else:
                                 logger.warning(f"Email notification failed: {err}")
 
-            # Remove log entries for alerts that have resolved, so they
-            # trigger a new notification if they come back later
+            # Remove log entries for alerts that have resolved AND whose
+            # cooldown has expired.  Keeping resolved entries until the
+            # cooldown window passes prevents flapping alerts (values
+            # oscillating around a threshold) from bypassing the dedup
+            # and sending duplicate notifications every few minutes.
             resolved_keys = []
             for k in notif_log:
                 check_key = k[6:] if k.startswith('email:') else k
                 if check_key not in current_alert_keys:
-                    resolved_keys.append(k)
+                    entry = notif_log[k]
+                    ts = entry.get('ts', 0) if isinstance(entry, dict) else entry
+                    if now - ts >= cooldown:
+                        resolved_keys.append(k)
             for k in resolved_keys:
                 del notif_log[k]
                 log_changed = True
