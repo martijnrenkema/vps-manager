@@ -325,9 +325,12 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
-### v1.7.1 - 2FA Email Code Copy Support
+### v1.7.1 - Notification Fixes & 2FA Email Improvements
 - **Code in subject line** - Verificatiecode nu zichtbaar in email subject voor snelle herkenning op telefoon
 - **Smart copy support** - Aangepast tekst-patroon zodat Samsung/Android/iOS de code automatisch detecteren en een "Kopieer" knop tonen in notificatie-popups
+- **Fix: notifications page hanging** - Pagina bleef hangen op "Checking notification support..." zonder actieve PWA/service worker; email preferences laden nu direct onafhankelijk van push status
+- **Fix: Enable Push crash** - Knop wordt nu verborgen als push niet beschikbaar is (was klikbaar maar crashte)
+- **Fix: app_update ontbrak in defaults** - Push subscribe en preferences fallback bevatten nu alle categorieën
 
 ### v1.7.0 - Email Notifications & SMTP Sender Name
 - **Email notifications** - Per-category email alerts alongside push notifications (matrix UI with Push/Email columns)

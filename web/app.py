@@ -4874,6 +4874,7 @@ def push_subscribe():
             'security': True,
             'ddos': True,
             'backup': True,
+            'app_update': True,
         },
         'created': datetime.now().isoformat(),
     })
@@ -4939,10 +4940,10 @@ def push_preferences():
         subs = _load_subscriptions()
         sub = next((s for s in subs if s.get('endpoint') == endpoint), None)
         if not sub:
-            return jsonify({'critical': True, 'warnings': True, 'updates': False, 'security': True, 'ddos': True, 'backup': True})
+            return jsonify({'critical': True, 'warnings': True, 'updates': False, 'security': True, 'ddos': True, 'backup': True, 'app_update': True})
 
         return jsonify(sub.get('preferences', {
-            'critical': True, 'warnings': True, 'updates': False, 'security': True, 'ddos': True, 'backup': True,
+            'critical': True, 'warnings': True, 'updates': False, 'security': True, 'ddos': True, 'backup': True, 'app_update': True,
         }))
 
     # POST

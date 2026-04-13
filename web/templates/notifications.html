@@ -198,16 +198,19 @@
         loadAllSubscriptions();
     }
 
+    function disablePushUI(message) {
+        document.getElementById('push-status-text').textContent = message;
+        document.getElementById('push-controls').style.display = 'none';
+        document.querySelectorAll('[id^="pref-push-"]').forEach(cb => { cb.disabled = true; });
+    }
+
     async function init() {
         if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
             document.getElementById('push-unsupported').style.display = 'block';
-            document.getElementById('push-status-text').textContent = 'Push notifications not supported.';
-            document.querySelectorAll('[id^="pref-push-"]').forEach(cb => { cb.disabled = true; });
+            disablePushUI('Push notifications not supported.');
             initEmailUI();
             return;
         }
-
-        document.getElementById('push-controls').style.display = 'block';
 
         // Load email preferences immediately, don't wait for push
         initEmailUI();
@@ -219,11 +222,11 @@
                 new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
             ]);
             currentSubscription = await swRegistration.pushManager.getSubscription();
+            document.getElementById('push-controls').style.display = 'block';
             updateUI();
         } catch (e) {
             // Push unavailable (no SW active or timeout) — email still works
-            document.getElementById('push-status-text').textContent = 'Push notifications unavailable (no service worker active). Email notifications work independently.';
-            document.querySelectorAll('[id^="pref-push-"]').forEach(cb => { cb.disabled = true; });
+            disablePushUI('Push notifications unavailable. Install the PWA for push support. Email notifications work independently.');
         }
     }
 
@@ -260,14 +263,6 @@
         document.querySelectorAll('[id^="pref-push-"]').forEach(cb => {
             cb.disabled = !currentSubscription;
         });
-
-        // Email checkboxes: disable when SMTP not configured
-        document.querySelectorAll('[id^="pref-email-"]').forEach(cb => {
-            cb.disabled = !smtpConfigured;
-        });
-        document.getElementById('email-smtp-warning').style.display = smtpConfigured ? 'none' : 'block';
-
-        loadEmailPreferences();
     }
 
     async function enablePush() {
