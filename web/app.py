@@ -7,6 +7,7 @@ Runs locally on the VPS itself (subprocess.run instead of SSH).
 
 import gc
 import grp
+import html as html_mod
 import os
 import pwd
 import re
@@ -25,6 +26,7 @@ import time
 import logging
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.utils import formataddr
 from pathlib import Path
 from datetime import datetime, timedelta
 from functools import wraps
@@ -604,7 +606,8 @@ def _monitor_loop():
                 logger.warning(f"Uptime check error: {e}")
 
             subs = _load_subscriptions()
-            if not subs:
+            email_prefs_any = any(CONFIG.get('email_notifications', {}).values())
+            if not subs and not email_prefs_any:
                 time.sleep(MONITOR_INTERVAL)
                 continue
 
@@ -625,7 +628,9 @@ def _monitor_loop():
             # Add app update alert
             alerts.extend(check_app_update_alert())
 
-            _, private_key_pem = _get_vapid_keys()
+            private_key_pem = None
+            if subs:
+                _, private_key_pem = _get_vapid_keys()
             notif_log = _load_notification_log()
             now = time.time()
             log_changed = False
@@ -634,75 +639,106 @@ def _monitor_loop():
             current_alert_keys = set()
 
             if alerts:
+                cooldown = CONFIG.get('notification_cooldown', 3600)
+
                 for alert in alerts:
                     category = _classify_alert(alert)
                     alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
                     current_alert_keys.add(alert_key)
 
+                    # --- Push notifications ---
                     log_entry = notif_log.get(alert_key)
+                    should_push = bool(subs and private_key_pem)
 
-                    # State-based dedup: skip if already notified with the same message
-                    # Only re-send if the message content changed (e.g. "2 updates" -> "5 updates")
                     if isinstance(log_entry, dict):
                         if log_entry.get('message') == alert['message']:
-                            continue
-                        # Time-based cooldown: don't re-notify too frequently even if message changed
-                        cooldown = CONFIG.get('notification_cooldown', 3600)
-                        if now - log_entry.get('ts', 0) < cooldown:
-                            continue
+                            should_push = False
+                        elif now - log_entry.get('ts', 0) < cooldown:
+                            should_push = False
                     elif isinstance(log_entry, (int, float)):
-                        # Legacy cooldown format: migrate to new format, skip this cycle
                         notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
                         log_changed = True
-                        continue
+                        should_push = False
 
-                    payload = {
-                        'title': 'VPS Manager',
-                        'body': alert['message'],
-                        'tag': category,
-                        'url': alert.get('link') or '/',
-                    }
-
-                    # Send to matching subscribers
-                    expired = []
-                    sent_count = 0
-                    for i, sub in enumerate(subs):
-                        prefs = sub.get('preferences', {})
-                        if not prefs.get(category, category != 'updates'):
-                            continue
-
-                        sub_info = {
-                            'endpoint': sub['endpoint'],
-                            'keys': sub['keys'],
+                    if should_push:
+                        payload = {
+                            'title': 'VPS Manager',
+                            'body': alert['message'],
+                            'tag': category,
+                            'url': alert.get('link') or '/',
                         }
-                        result = _send_push(sub_info, payload, private_key_pem)
-                        if result is False:
-                            expired.append(i)
-                        elif result is True:
-                            sent_count += 1
 
-                    # Remove expired subscriptions
-                    if expired:
-                        subs = [s for i, s in enumerate(subs) if i not in expired]
-                        _save_subscriptions(subs)
+                        expired = []
+                        sent_count = 0
+                        for i, sub in enumerate(subs):
+                            prefs = sub.get('preferences', {})
+                            if not prefs.get(category, category != 'updates'):
+                                continue
 
-                    if sent_count > 0:
-                        notif_log[alert_key] = {'ts': now, 'message': alert['message']}
-                        log_changed = True
-                        logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
+                            sub_info = {
+                                'endpoint': sub['endpoint'],
+                                'keys': sub['keys'],
+                            }
+                            result = _send_push(sub_info, payload, private_key_pem)
+                            if result is False:
+                                expired.append(i)
+                            elif result is True:
+                                sent_count += 1
 
-                        # Save to notification history
-                        _add_notification_history(
-                            payload['title'],
-                            payload['body'],
-                            category,
-                        )
-                    else:
-                        logger.warning(f"Push skipped (no matching subscribers): {alert['message']} [category={category}]")
+                        if expired:
+                            subs = [s for i, s in enumerate(subs) if i not in expired]
+                            _save_subscriptions(subs)
+
+                        if sent_count > 0:
+                            notif_log[alert_key] = {'ts': now, 'message': alert['message']}
+                            log_changed = True
+                            logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
+
+                            _add_notification_history(
+                                payload['title'],
+                                payload['body'],
+                                category,
+                            )
+
+                    # --- Email notifications ---
+                    email_prefs = CONFIG.get('email_notifications', {})
+                    if email_prefs.get(category, False):
+                        email_key = f"email:{alert_key}"
+                        email_entry = notif_log.get(email_key)
+                        should_email = True
+
+                        if isinstance(email_entry, dict):
+                            if email_entry.get('message') == alert['message']:
+                                should_email = False
+                            elif now - email_entry.get('ts', 0) < cooldown:
+                                should_email = False
+                        elif isinstance(email_entry, (int, float)):
+                            notif_log[email_key] = {'ts': email_entry, 'message': alert['message']}
+                            log_changed = True
+                            should_email = False
+
+                        if should_email:
+                            ok, err = send_notification_email(category, alert)
+                            if ok:
+                                notif_log[email_key] = {'ts': now, 'message': alert['message']}
+                                log_changed = True
+                                logger.info(f"Email notification sent: {alert['message']}")
+
+                                _add_notification_history(
+                                    'VPS Manager (email)',
+                                    alert['message'],
+                                    category,
+                                )
+                            else:
+                                logger.warning(f"Email notification failed: {err}")
 
             # Remove log entries for alerts that have resolved, so they
             # trigger a new notification if they come back later
-            resolved_keys = [k for k in notif_log if k not in current_alert_keys]
+            resolved_keys = []
+            for k in notif_log:
+                check_key = k[6:] if k.startswith('email:') else k
+                if check_key not in current_alert_keys:
+                    resolved_keys.append(k)
             for k in resolved_keys:
                 del notif_log[k]
                 log_changed = True
@@ -1045,9 +1081,11 @@ def send_email(subject, body_text, body_html=None, to=None):
     if not to_addr:
         return False, 'Recipient address not set'
 
+    from_name = smtp_cfg.get('from_name', '')
+
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
-    msg['From'] = from_addr
+    msg['From'] = formataddr((from_name, from_addr)) if from_name else from_addr
     msg['To'] = to_addr
     msg.attach(MIMEText(body_text, 'plain'))
     if body_html:
@@ -1088,6 +1126,54 @@ def _send_2fa_code_email(code):
 <p style="color:#8b949e;font-size:13px;margin:0">This code expires in 10 minutes.</p>
 </div>'''
     return send_email(subject, body_text, body_html)
+
+
+def _get_notification_email():
+    """Resolve the target email address for notification emails."""
+    addr = CONFIG.get('notification_email', '')
+    if addr:
+        return addr
+    addr = CONFIG.get('auth', {}).get('tfa_email', '')
+    if addr:
+        return addr
+    return CONFIG.get('smtp', {}).get('from_address', '')
+
+
+def send_notification_email(category, alert):
+    """Send an HTML notification email for a server alert."""
+    to_addr = _get_notification_email()
+    if not to_addr:
+        return False, 'No notification email configured'
+
+    category_names = {
+        'critical': 'Critical Error',
+        'warnings': 'Warning',
+        'updates': 'System Updates',
+        'security': 'Security',
+        'ddos': 'DDoS Detection',
+        'backup': 'Backup',
+        'app_update': 'App Update',
+    }
+    cat_label = category_names.get(category, category.title())
+    severity = alert.get('severity', 'warning')
+    message = alert.get('message', '')
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    subject = f'VPS Manager - {cat_label}: {message[:80]}'
+    body_text = f'{cat_label}\n\n{message}\n\nTime: {timestamp}'
+
+    safe_msg = html_mod.escape(message)
+    severity_color = '#f85149' if severity == 'error' else '#d29922'
+    body_html = f'''<div style="font-family:sans-serif;max-width:500px;margin:0 auto;padding:20px">
+<h2 style="color:#e6edf3;margin:0 0 16px">VPS Manager</h2>
+<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;margin:0 0 16px">
+<div style="font-size:12px;color:{severity_color};text-transform:uppercase;font-weight:600;margin:0 0 8px">{cat_label}</div>
+<div style="font-size:15px;color:#e6edf3;margin:0 0 12px">{safe_msg}</div>
+<div style="font-size:12px;color:#8b949e">{timestamp}</div>
+</div>
+</div>'''
+
+    return send_email(subject, body_text, body_html, to=to_addr)
 
 
 def login_required(f):
@@ -4750,7 +4836,8 @@ def files_users():
 @app.route('/notifications')
 @login_required
 def notifications():
-    return render_template('notifications.html')
+    smtp_configured = bool(CONFIG.get('smtp', {}).get('host', ''))
+    return render_template('notifications.html', smtp_configured=smtp_configured)
 
 
 @app.route('/api/push/vapid-key')
@@ -5036,6 +5123,33 @@ def notification_dismiss():
         _save_notification_history(history)
         return jsonify({'status': 'ok', 'message': 'Notification dismissed'})
     return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
+
+
+@app.route('/api/notifications/email-preferences', methods=['GET', 'POST'])
+@login_required
+def email_notification_preferences():
+    """Get or save email notification preferences (global, not per-device)."""
+    if request.method == 'GET':
+        prefs = CONFIG.get('email_notifications', {})
+        smtp_configured = bool(CONFIG.get('smtp', {}).get('host', ''))
+        return jsonify({
+            'preferences': prefs,
+            'smtp_configured': smtp_configured,
+            'notification_email': _get_notification_email(),
+        })
+
+    data = request.get_json() or {}
+    categories = ['critical', 'warnings', 'updates', 'security', 'ddos', 'backup', 'app_update']
+    prefs = {}
+    for cat in categories:
+        prefs[cat] = bool(data.get(cat, False))
+
+    CONFIG['email_notifications'] = prefs
+    if 'notification_email' in data:
+        CONFIG['notification_email'] = str(data['notification_email']).strip()
+    save_config(CONFIG)
+    log_audit('email_notification_prefs_saved')
+    return jsonify({'status': 'ok', 'message': 'Email notification preferences saved'})
 
 
 @app.route('/settings')
@@ -5446,6 +5560,7 @@ def save_smtp_settings():
     username = str(data.get('username', '')).strip()
     password = data.get('password', '')
     encryption = str(data.get('encryption', 'starttls')).strip()
+    from_name = str(data.get('from_name', '')).strip()
     from_address = str(data.get('from_address', '')).strip()
 
     if not isinstance(port, int) or port < 1 or port > 65535:
@@ -5463,8 +5578,14 @@ def save_smtp_settings():
         'username': username,
         'password': password,
         'encryption': encryption,
+        'from_name': from_name,
         'from_address': from_address,
     }
+
+    # Save notification recipient if provided
+    if 'notification_email' in data:
+        CONFIG['notification_email'] = str(data['notification_email']).strip()
+
     save_config(CONFIG)
     log_audit('smtp_settings_saved')
     return jsonify({'status': 'ok', 'message': 'SMTP settings saved'})

@@ -34,6 +34,7 @@ def get_default_config():
             "username": "",
             "password": "",
             "encryption": "starttls",
+            "from_name": "",
             "from_address": "",
         },
         "services": ["nginx", "php8.3-fpm", "mariadb", "fail2ban"],
@@ -78,6 +79,16 @@ def get_default_config():
             "data_dir": "/var/lib/caddy/.local/share/caddy/",
         },
         "phpmyadmin_path": "/phpmyadmin/",
+        "notification_email": "",
+        "email_notifications": {
+            "critical": False,
+            "warnings": False,
+            "updates": False,
+            "security": False,
+            "ddos": False,
+            "backup": False,
+            "app_update": False,
+        },
         "dismissed_alerts": [],
     }
 

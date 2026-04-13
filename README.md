@@ -325,6 +325,13 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.7.0 - Email Notifications & SMTP Sender Name
+- **Email notifications** - Per-category email alerts alongside push notifications (matrix UI with Push/Email columns)
+- **SMTP sender name** - Configurable "From name" for outgoing emails (e.g. "VPS Manager")
+- **Notification recipient** - Separate email address for alert notifications (defaults to from address)
+- **Independent dedup** - Push and email notifications use separate cooldown tracking
+- **Always-visible categories** - Notification categories card visible without active push subscription
+
 ### v1.6.1 - Banned IPs Pagination
 - **Pagination** - Banned IPs list now paginated with 25/50/100 items per page selector
 - **Search filter** - Search banned IPs by IP address, jail, country, or reason

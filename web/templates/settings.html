@@ -148,8 +148,16 @@
                 <input type="password" class="form-control" id="smtp_password" placeholder="{% if config.smtp.password %}********{% endif %}" autocomplete="off">
             </div>
             <div class="form-group">
+                <label for="smtp_from_name">From name <span style="color:var(--text-muted);font-weight:400">(optional)</span></label>
+                <input type="text" class="form-control" id="smtp_from_name" value="{{ config.smtp.from_name }}" placeholder="VPS Manager">
+            </div>
+            <div class="form-group">
                 <label for="smtp_from">From address</label>
                 <input type="email" class="form-control" id="smtp_from" value="{{ config.smtp.from_address }}" placeholder="vps@example.com">
+            </div>
+            <div class="form-group" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color);">
+                <label for="notification_email">Notification recipient <span style="color:var(--text-muted);font-weight:400">(optional, defaults to from address)</span></label>
+                <input type="email" class="form-control" id="notification_email" value="{{ config.notification_email }}" placeholder="alerts@example.com">
             </div>
             <div style="display:flex;gap:8px;margin-top:12px">
                 <button type="submit" class="btn btn-green">Save SMTP Settings</button>
@@ -540,7 +548,9 @@ async function saveSmtp(e) {
         encryption: document.getElementById('smtp_encryption').value,
         username: document.getElementById('smtp_username').value.trim(),
         password: document.getElementById('smtp_password').value,
+        from_name: document.getElementById('smtp_from_name').value.trim(),
         from_address: document.getElementById('smtp_from').value.trim(),
+        notification_email: document.getElementById('notification_email').value.trim(),
     };
     try {
         const res = await fetch('/api/smtp/save', {
