@@ -1115,8 +1115,8 @@ def send_email(subject, body_text, body_html=None, to=None):
 
 def _send_2fa_code_email(code):
     """Send the 2FA verification code via email"""
-    subject = 'VPS Manager - Login Code'
-    body_text = f'Your login verification code is: {code}\n\nThis code expires in 10 minutes.'
+    subject = f'VPS Manager - Login Code: {code}'
+    body_text = f'Your VPS Manager verification code is {code}\n\nThis code expires in 10 minutes.'
     body_html = f'''<div style="font-family:sans-serif;max-width:400px;margin:0 auto;padding:20px">
 <h2 style="color:#e6edf3;margin:0 0 16px">VPS Manager</h2>
 <p style="color:#8b949e;margin:0 0 20px">Your login verification code:</p>
