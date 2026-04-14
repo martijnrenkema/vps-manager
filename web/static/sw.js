@@ -1,4 +1,4 @@
-const CACHE_NAME = 'vps-manager-v2';
+const CACHE_NAME = 'vps-manager-v3';
 const STATIC_ASSETS = [
     '/static/logo.png',
     '/static/icon-192.png',

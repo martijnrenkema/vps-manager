@@ -325,6 +325,12 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.7.3 - Uptime False Positives & PWA Install Fixes
+- **Fix: false "site is down" alerts na reboot** - Uptime alert vereist nu twee opeenvolgende mislukte checks voordat een site als offline wordt gemarkeerd; voorkomt critical emails voor sites die na een VPS-reboot nog aan het opstarten zijn
+- **Fix: PWA niet installeerbaar op Android** - Service worker werd geregistreerd met `scope: '/'` vanuit `/static/sw.js`, maar Flask's static handler stuurt geen `Service-Worker-Allowed` header, waardoor Chrome de registratie stil afwijst en de install prompt niet verschijnt. SW en manifest worden nu vanuit de app root geserveerd met de juiste headers
+- **Manifest verbeterd** - `scope`, `id` en maskable icon toegevoegd voor betere Android install-ervaring
+- **Fix: dubbele notification emails in dezelfde minuut** - Extra dedup op `(category, message)` binnen één monitor cycle zodat twee alerts met verschillende `key`-velden maar identieke tekst niet allebei een mail produceren; notification log wordt nu ook direct na elke succesvolle email gepersisteerd zodat een tweede app-proces (bijv. duplicate PM2) de send kan zien en niet nogmaals mailt
+
 ### v1.7.2 - Email Notification Dedup Fixes
 - **Fix: duplicate emails bij flapping alerts** - Waarden die rond een threshold schommelen (RAM, disk, load) konden elke 5 min opnieuw mailen doordat de cooldown entry te vroeg gewist werd; resolved alerts houden nu hun cooldown
 - **Fix: notification burst na restart** - Eerste monitor cycle na (her)start seed nu de notification log met bestaande alerts zonder te versturen, voorkomt dat alle actieve alerts tegelijk gemaild worden

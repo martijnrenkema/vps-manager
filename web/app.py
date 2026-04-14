@@ -33,7 +33,8 @@ from functools import wraps
 
 from flask import (
     Flask, render_template, request, redirect, url_for,
-    session, flash, jsonify, send_file, after_this_request, Response
+    session, flash, jsonify, send_file, send_from_directory,
+    after_this_request, Response
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
@@ -638,6 +639,11 @@ def _monitor_loop():
 
             # Build set of current alert keys so we can detect resolved alerts
             current_alert_keys = set()
+            # Safety net: dedupe by (category, message) within this cycle so
+            # two alerts that resolve to identical text — e.g. via different
+            # `key` fields — can never produce two identical notifications.
+            sent_push_msgs = set()
+            sent_email_msgs = set()
 
             if alerts:
                 cooldown = CONFIG.get('notification_cooldown', 3600)
@@ -668,6 +674,7 @@ def _monitor_loop():
                     category = _classify_alert(alert)
                     alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
                     current_alert_keys.add(alert_key)
+                    msg_dedup = (category, alert['message'])
 
                     # --- Push notifications ---
                     log_entry = notif_log.get(alert_key)
@@ -681,6 +688,9 @@ def _monitor_loop():
                     elif isinstance(log_entry, (int, float)):
                         notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
                         log_changed = True
+                        should_push = False
+
+                    if should_push and msg_dedup in sent_push_msgs:
                         should_push = False
 
                     if should_push:
@@ -715,6 +725,7 @@ def _monitor_loop():
                         if sent_count > 0:
                             notif_log[alert_key] = {'ts': now, 'message': alert['message']}
                             log_changed = True
+                            sent_push_msgs.add(msg_dedup)
                             logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
 
                             _add_notification_history(
@@ -740,11 +751,23 @@ def _monitor_loop():
                             log_changed = True
                             should_email = False
 
+                        if should_email and msg_dedup in sent_email_msgs:
+                            should_email = False
+
                         if should_email:
                             ok, err = send_notification_email(category, alert)
                             if ok:
                                 notif_log[email_key] = {'ts': now, 'message': alert['message']}
                                 log_changed = True
+                                sent_email_msgs.add(msg_dedup)
+                                # Flush to disk immediately so a second process
+                                # (e.g. duplicate PM2 app, stale thread) reading
+                                # notif_log on its own cycle sees this send and
+                                # won't also send the same email.
+                                try:
+                                    _save_notification_log(notif_log)
+                                except Exception:
+                                    logger.warning("Failed to flush notification log after email send", exc_info=True)
                                 logger.info(f"Email notification sent: {alert['message']}")
 
                                 _add_notification_history(
@@ -2693,13 +2716,16 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         elif days < ssl_warning:
             alerts.append({'severity': 'warning', 'message': f"SSL certificate '{domain}' expires in {days} days", 'link': '/ssl', 'key': f"ssl_warning_{domain}"})
 
-    # Uptime: check for sites that are down
+    # Uptime: require two consecutive failed checks before alerting so
+    # slow-starting sites after a VPS reboot don't fire false positives.
     try:
         uptime_history = json.loads(UPTIME_HISTORY_PATH.read_text()) if UPTIME_HISTORY_PATH.exists() else {}
         for domain, entries in uptime_history.items():
-            if entries:
-                last = entries[-1]
-                if last.get('status', 0) == 0 or last.get('status', 200) >= 500:
+            if len(entries) >= 2:
+                def _is_down(e):
+                    s = e.get('status', 0)
+                    return s == 0 or s >= 500
+                if _is_down(entries[-1]) and _is_down(entries[-2]):
                     alerts.append({'severity': 'error', 'message': f"Site '{domain}' is down", 'link': '/uptime', 'key': f"site_down_{domain}"})
     except (json.JSONDecodeError, OSError):
         pass
@@ -3119,6 +3145,27 @@ def format_file_size(size_bytes):
         return f"{size_bytes / (1024 * 1024):.1f} MB"
     else:
         return f"{size_bytes / (1024 * 1024 * 1024):.1f} GB"
+
+
+# ---------------------------------------------------------------------------
+# PWA: serve service worker + manifest from root so the SW can claim scope '/'.
+# Flask's static handler doesn't set Service-Worker-Allowed, which caused
+# Chrome to silently reject the registration and blocked PWA install on Android.
+# ---------------------------------------------------------------------------
+
+@app.route('/sw.js')
+def service_worker():
+    response = send_from_directory(app.static_folder, 'sw.js', mimetype='application/javascript')
+    response.headers['Service-Worker-Allowed'] = '/'
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
+
+
+@app.route('/manifest.json')
+def pwa_manifest():
+    response = send_from_directory(app.static_folder, 'manifest.json', mimetype='application/manifest+json')
+    response.headers['Cache-Control'] = 'no-cache'
+    return response
 
 
 # ---------------------------------------------------------------------------
