@@ -109,6 +109,7 @@ web/
 ├── config.py           # Configuration loader with defaults
 ├── VERSION             # Current version number
 ├── vps-backup.sh       # VPS backup script
+├── nas-pull-backup.sh  # Synology/NAS pull + verify + snapshot script
 ├── requirements.txt    # Python dependencies
 ├── static/
 │   ├── style.css       # Dark theme stylesheet
@@ -229,56 +230,64 @@ The dashboard tracks backup status via a webhook endpoint (`POST /api/backup/web
 
 ### VPS Backup Script
 
-Add webhook calls to your backup script on the VPS:
+Install the VPS-side script as root:
 
 ```bash
-WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
-
-# Load webhook secret from env file (set in Settings > Backup)
-source /var/www/vps.dmmusic.nl/data/.backup_env 2>/dev/null
-WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-
-# Trap errors for failure reporting
-report_failure() {
-    [ -n "$WEBHOOK_SECRET" ] && curl -s -X POST "$WEBHOOK_URL" \
-        -H "Content-Type: application/json" \
-        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-        -d "{\"status\": \"failure\", \"details\": \"$1\"}" > /dev/null 2>&1
-}
-trap 'report_failure "Backup failed at line $LINENO"' ERR
-set -e
-
-# ... your backup commands ...
-
-# Report success at the end
-[ -n "$WEBHOOK_SECRET" ] && curl -s -X POST "$WEBHOOK_URL" \
-    -H "Content-Type: application/json" \
-    -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-    -d '{"status": "success", "details": "Backup completed"}' > /dev/null 2>&1
+sudo install -m 750 web/vps-backup.sh /usr/local/bin/vps-backup.sh
+sudo install -m 640 /dev/null /var/www/vps.dmmusic.nl/data/.backup_env
+sudo sh -c 'printf "WEBHOOK_SECRET=%s\n" "your-webhook-secret" > /var/www/vps.dmmusic.nl/data/.backup_env'
+echo '0 3 * * * root /usr/local/bin/vps-backup.sh' | sudo tee /etc/cron.d/vps-backup
 ```
+
+What it backs up:
+- MariaDB dumps for all non-system databases, plus SQLite `.db` files under included sites.
+- Site data from `/var/www`, excluding `html` and `vps.dmmusic.nl` by default.
+- WordPress `wp-content` uploads/themes/plugins and custom root files, without WordPress core.
+- Node/Python/static site files without rebuildable dependencies such as `node_modules`, `.next`, `venv`, `.git`, caches, logs and bytecode.
+- Nginx/Caddy, Let's Encrypt, cron/systemd/PHP/MySQL/fail2ban/UFW/SSH metadata, plus selected site `.env` and `wp-config.php` files.
+- A daily checksum manifest covering current-day DB/config files and all mirrored site files.
 
 ### Remote Pull Script (NAS / offsite)
 
-For a remote machine that pulls backups via SSH and rsync:
+Install the NAS-side script on Synology:
 
 ```bash
-WEBHOOK_URL="https://your-vps-dashboard.example.com/api/backup/webhook"
-WEBHOOK_SECRET="your-webhook-secret"
-
-rsync -avz --delete -e "ssh" user@vps:/var/backups/ /local/backups/
-
-if [ $? -eq 0 ]; then
-    curl -s -X POST "$WEBHOOK_URL" \
-        -H "Content-Type: application/json" \
-        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-        -d '{"status": "success", "details": "Pull completed"}'
-else
-    curl -s -X POST "$WEBHOOK_URL" \
-        -H "Content-Type: application/json" \
-        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-        -d '{"status": "failure", "details": "Pull failed"}'
-fi
+mkdir -p /volume1/Backup/vps
+install -m 750 web/nas-pull-backup.sh /volume1/Backup/vps/pull-backup.sh
+install -m 600 /dev/null /volume1/Backup/vps/.backup_env
+printf "WEBHOOK_SECRET=%s\n" "your-webhook-secret" > /volume1/Backup/vps/.backup_env
 ```
+
+Configure Synology Task Scheduler to run:
+
+```bash
+/bin/bash /volume1/Backup/vps/pull-backup.sh
+```
+
+The NAS script:
+- Pulls `/var/backups/vps/` to `/volume1/Backup/vps/data/`.
+- Uses a lock file to prevent overlapping runs.
+- Verifies the latest checksum manifest and reports failure if any checksum fails.
+- Creates daily hard-link snapshots in `/volume1/Backup/vps/snapshots/YYYYMMDD`.
+- Keeps snapshots for 14 days by default (`RETENTION_DAYS=14`).
+
+### Restore Checklist
+
+Use the matching dated NAS snapshot when restoring site files:
+
+```bash
+cd /volume1/Backup/vps/snapshots/YYYYMMDD
+sha256sum -c checksums_YYYYMMDD.sha256
+```
+
+Restore order:
+1. Reinstall base OS packages, Nginx/Caddy, MariaDB/PHP/Node/Python as needed.
+2. Restore `/etc` web/system config from `configs/*_YYYYMMDD.tar.gz`.
+3. Restore site files from `sites/<site>/`.
+4. Restore `.env` / `wp-config.php` from `configs/`.
+5. Restore MariaDB with `gunzip -c databases/<db>_YYYYMMDD.sql.gz | mysql`.
+6. Restore SQLite `.db` files to their original paths and fix ownership.
+7. Restart services/PM2 and verify HTTP, database login and SSL.
 
 ## Dependencies
 

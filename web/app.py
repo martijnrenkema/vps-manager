@@ -4173,7 +4173,7 @@ def _do_update_install():
     if os.path.isdir(web_src):
         copy_result = run_cmd(
             f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
-            f"{web_src}/requirements.txt {web_src}/vps-backup.sh {APP_DIR}/ 2>&1 && "
+            f"{web_src}/requirements.txt {web_src}/vps-backup.sh {web_src}/nas-pull-backup.sh {APP_DIR}/ 2>&1 && "
             f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 && "
             f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
             timeout=15
@@ -4288,7 +4288,7 @@ def update_install_stream():
             if os.path.isdir(web_src):
                 copy_result = run_cmd(
                     f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
-                    f"{web_src}/requirements.txt {web_src}/vps-backup.sh {APP_DIR}/ 2>&1 && "
+                    f"{web_src}/requirements.txt {web_src}/vps-backup.sh {web_src}/nas-pull-backup.sh {APP_DIR}/ 2>&1 && "
                     f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 && "
                     f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
                     timeout=15
