@@ -1,9 +1,8 @@
-const CACHE_NAME = 'vps-manager-v3';
+const CACHE_NAME = 'vps-manager-v4';
 const STATIC_ASSETS = [
     '/static/logo.png',
     '/static/icon-192.png',
     '/static/icon-512.png',
-    '/static/manifest.json',
 ];
 
 // Install: pre-cache static assets

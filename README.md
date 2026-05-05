@@ -334,6 +334,11 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.7.4 - PWA Icon Update Loop Fix
+- **Fix: Android prompt steeds "icon updaten" bij elke open** - De maskable icon variant in het manifest verwees naar dezelfde 512px PNG als de "any" purpose, terwijl het VPS-logo te dicht bij de randen ligt voor een correcte maskable safe zone (centrale 80%). Hierdoor bleef Chrome op Android de WebAPK queue'en voor updates. Maskable purpose verwijderd zodat Android het standaard icon gebruikt zonder masking
+- **Service worker pre-cache opgeschoond** - Stale `/static/manifest.json` referentie verwijderd uit de pre-cache lijst (manifest wordt sinds v1.7.3 vanuit `/manifest.json` geserveerd); SW cache bumped naar v4 zodat bestaande installs het oppakken
+- **Note voor gebruikers:** als de "icon update" prompt op Android blijft komen na deze update, verwijder de PWA en installeer hem opnieuw — dat reset Chrome's WebAPK identity
+
 ### v1.7.3 - Uptime False Positives & PWA Install Fixes
 - **Fix: false "site is down" alerts na reboot** - Uptime alert vereist nu twee opeenvolgende mislukte checks voordat een site als offline wordt gemarkeerd; voorkomt critical emails voor sites die na een VPS-reboot nog aan het opstarten zijn
 - **Fix: PWA niet installeerbaar op Android** - Service worker werd geregistreerd met `scope: '/'` vanuit `/static/sw.js`, maar Flask's static handler stuurt geen `Service-Worker-Allowed` header, waardoor Chrome de registratie stil afwijst en de install prompt niet verschijnt. SW en manifest worden nu vanuit de app root geserveerd met de juiste headers
