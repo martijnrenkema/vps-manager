@@ -648,19 +648,61 @@ def _monitor_loop():
             if alerts:
                 cooldown = CONFIG.get('notification_cooldown', 3600)
 
+                # Update categories ('updates', 'app_update') are gated to fire
+                # at most once per day, after a configured time-of-day. This
+                # avoids being woken up at 03:00 when apt or GitHub publishes
+                # a new package, and prevents new updates trickling in
+                # throughout the day from each producing their own notification.
+                updates_time_str = CONFIG.get('updates_notification_time', '08:00')
+                try:
+                    _uh, _um = updates_time_str.split(':')
+                    updates_hour, updates_min = int(_uh), int(_um)
+                except (ValueError, AttributeError):
+                    updates_hour, updates_min = 8, 0
+                now_dt = datetime.now()
+                today_str = now_dt.strftime('%Y-%m-%d')
+                updates_window_open = (now_dt.hour, now_dt.minute) >= (updates_hour, updates_min)
+
+                def _is_update_cat(cat):
+                    return cat in ('updates', 'app_update')
+
                 # On first cycle after (re)start, seed the notification
                 # log with all current alerts so we don't spam every
                 # existing alert as if it's new.
+                # Migration safety: on first cycle after restart, if any
+                # update-category alert is already known to notif_log (i.e.
+                # the user has been notified about it before) but no daily
+                # marker exists yet, stamp the marker so we don't re-fire
+                # right after an upgrade to a version that introduced the gate.
+                if first_cycle and notif_log:
+                    for alert in alerts:
+                        category = _classify_alert(alert)
+                        if not _is_update_cat(category):
+                            continue
+                        alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
+                        if alert_key in notif_log and f"_daily_push:{category}" not in notif_log:
+                            notif_log[f"_daily_push:{category}"] = today_str
+                            log_changed = True
+                        if f"email:{alert_key}" in notif_log and f"_daily_email:{category}" not in notif_log:
+                            notif_log[f"_daily_email:{category}"] = today_str
+                            log_changed = True
+
                 if first_cycle and not notif_log:
+                    email_prefs = CONFIG.get('email_notifications', {})
                     for alert in alerts:
                         category = _classify_alert(alert)
                         alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
                         current_alert_keys.add(alert_key)
                         entry = {'ts': now, 'message': alert['message']}
                         notif_log[alert_key] = entry
-                        email_prefs = CONFIG.get('email_notifications', {})
                         if email_prefs.get(category, False):
                             notif_log[f"email:{alert_key}"] = entry
+                        # Also seed daily markers so a mid-day restart doesn't
+                        # re-trigger an update notification once the window opens.
+                        if _is_update_cat(category):
+                            notif_log[f"_daily_push:{category}"] = today_str
+                            if email_prefs.get(category, False):
+                                notif_log[f"_daily_email:{category}"] = today_str
                     log_changed = True
                     logger.info(f"First cycle: seeded {len(current_alert_keys)} alerts into notification log (no notifications sent)")
                     first_cycle = False
@@ -680,15 +722,24 @@ def _monitor_loop():
                     log_entry = notif_log.get(alert_key)
                     should_push = bool(subs and private_key_pem)
 
-                    if isinstance(log_entry, dict):
-                        if log_entry.get('message') == alert['message']:
+                    if _is_update_cat(category):
+                        # Daily gate: skip until configured time, and at most
+                        # one push per category per day. Multiple update alerts
+                        # in the same day collapse into a single morning ping.
+                        daily_push_key = f"_daily_push:{category}"
+                        last_push_date = notif_log.get(daily_push_key)
+                        if not updates_window_open or last_push_date == today_str:
                             should_push = False
-                        elif now - log_entry.get('ts', 0) < cooldown:
+                    else:
+                        if isinstance(log_entry, dict):
+                            if log_entry.get('message') == alert['message']:
+                                should_push = False
+                            elif now - log_entry.get('ts', 0) < cooldown:
+                                should_push = False
+                        elif isinstance(log_entry, (int, float)):
+                            notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
+                            log_changed = True
                             should_push = False
-                    elif isinstance(log_entry, (int, float)):
-                        notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
-                        log_changed = True
-                        should_push = False
 
                     if should_push and msg_dedup in sent_push_msgs:
                         should_push = False
@@ -724,6 +775,17 @@ def _monitor_loop():
 
                         if sent_count > 0:
                             notif_log[alert_key] = {'ts': now, 'message': alert['message']}
+                            if _is_update_cat(category):
+                                # Re-evaluate the date at stamp time so a cycle
+                                # that crosses midnight stamps the correct day.
+                                notif_log[f"_daily_push:{category}"] = datetime.now().strftime('%Y-%m-%d')
+                                # Flush the marker immediately so a crash or
+                                # parallel cycle (duplicate PM2 app) can't
+                                # re-trigger today's update push.
+                                try:
+                                    _save_notification_log(notif_log)
+                                except Exception:
+                                    logger.warning("Failed to flush notification log after update push", exc_info=True)
                             log_changed = True
                             sent_push_msgs.add(msg_dedup)
                             logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
@@ -741,15 +803,21 @@ def _monitor_loop():
                         email_entry = notif_log.get(email_key)
                         should_email = True
 
-                        if isinstance(email_entry, dict):
-                            if email_entry.get('message') == alert['message']:
+                        if _is_update_cat(category):
+                            daily_email_key = f"_daily_email:{category}"
+                            last_email_date = notif_log.get(daily_email_key)
+                            if not updates_window_open or last_email_date == today_str:
                                 should_email = False
-                            elif now - email_entry.get('ts', 0) < cooldown:
+                        else:
+                            if isinstance(email_entry, dict):
+                                if email_entry.get('message') == alert['message']:
+                                    should_email = False
+                                elif now - email_entry.get('ts', 0) < cooldown:
+                                    should_email = False
+                            elif isinstance(email_entry, (int, float)):
+                                notif_log[email_key] = {'ts': email_entry, 'message': alert['message']}
+                                log_changed = True
                                 should_email = False
-                        elif isinstance(email_entry, (int, float)):
-                            notif_log[email_key] = {'ts': email_entry, 'message': alert['message']}
-                            log_changed = True
-                            should_email = False
 
                         if should_email and msg_dedup in sent_email_msgs:
                             should_email = False
@@ -758,6 +826,8 @@ def _monitor_loop():
                             ok, err = send_notification_email(category, alert)
                             if ok:
                                 notif_log[email_key] = {'ts': now, 'message': alert['message']}
+                                if _is_update_cat(category):
+                                    notif_log[f"_daily_email:{category}"] = datetime.now().strftime('%Y-%m-%d')
                                 log_changed = True
                                 sent_email_msgs.add(msg_dedup)
                                 # Flush to disk immediately so a second process
@@ -785,6 +855,11 @@ def _monitor_loop():
             # and sending duplicate notifications every few minutes.
             resolved_keys = []
             for k in notif_log:
+                # Daily marker keys are not tied to a specific alert; they
+                # carry a date string (YYYY-MM-DD) instead of a ts dict and
+                # are managed separately below.
+                if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
+                    continue
                 check_key = k[6:] if k.startswith('email:') else k
                 if check_key not in current_alert_keys:
                     entry = notif_log[k]
@@ -795,9 +870,14 @@ def _monitor_loop():
                 del notif_log[k]
                 log_changed = True
 
-            # Clean entries older than 7 days as a safety net
+            # Clean entries older than 7 days as a safety net. Daily markers
+            # are kept regardless (they're tiny strings) so a stamp from
+            # yesterday still gates today's send if the gate hasn't fired yet.
             cleaned = {}
             for k, v in notif_log.items():
+                if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
+                    cleaned[k] = v
+                    continue
                 ts = v.get('ts', 0) if isinstance(v, dict) else v
                 if now - ts < 604800:
                     cleaned[k] = v
@@ -5309,6 +5389,11 @@ def validate_config(data):
     if 'notification_cooldown' in data:
         if not isinstance(data['notification_cooldown'], int) or data['notification_cooldown'] < 60:
             errors.append('notification_cooldown must be at least 60 seconds')
+
+    if 'updates_notification_time' in data:
+        v = data['updates_notification_time']
+        if not isinstance(v, str) or not re.match(r'\A([01]\d|2[0-3]):[0-5]\d\Z', v):
+            errors.append('updates_notification_time must be in HH:MM format (24h)')
 
     if 'services' in data:
         if not isinstance(data['services'], list):

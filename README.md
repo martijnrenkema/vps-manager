@@ -334,6 +334,11 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.7.5 - Daily Update Notification Window
+- **Fix: dubbele/nachtelijke update notificaties** - System en app update meldingen worden nu gebatcht en maximaal één keer per dag verstuurd, na een instelbaar tijdstip (default 08:00). Voorheen werd je 's nachts wakker gemaakt als er een nieuw apt package of GitHub release verscheen, en bij elke wijziging van het aantal updates (5 → 6 available) kwam er weer een melding bovenop
+- **Nieuwe setting "Updates notification time"** - Configureerbaar in Settings → Monitor & Notifications; ook eerdere updates wachten netjes tot dit tijdstip voordat ze gepusht/gemaild worden
+- **Geldt voor push én email** - Beide kanalen gebruiken dezelfde dagelijkse gate (aparte markers per kanaal), dashboard alerts blijven realtime zichtbaar
+
 ### v1.7.4 - PWA Icon Update Loop Fix
 - **Fix: Android prompt steeds "icon updaten" bij elke open** - De maskable icon variant in het manifest verwees naar dezelfde 512px PNG als de "any" purpose, terwijl het VPS-logo te dicht bij de randen ligt voor een correcte maskable safe zone (centrale 80%). Hierdoor bleef Chrome op Android de WebAPK queue'en voor updates. Maskable purpose verwijderd zodat Android het standaard icon gebruikt zonder masking
 - **Service worker pre-cache opgeschoond** - Stale `/static/manifest.json` referentie verwijderd uit de pre-cache lijst (manifest wordt sinds v1.7.3 vanuit `/manifest.json` geserveerd); SW cache bumped naar v4 zodat bestaande installs het oppakken

@@ -210,6 +210,10 @@
                     <label>Notification cooldown (sec) <span class="tooltip-icon" data-bs-toggle="tooltip" title="Minimum time between repeated notifications for the same alert. Prevents notification spam." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
                     <input type="number" class="form-control" id="cfg_notification_cooldown" value="{{ config.notification_cooldown }}" min="60" max="86400">
                 </div>
+                <div class="form-group">
+                    <label>Updates notification time <span class="tooltip-icon" data-bs-toggle="tooltip" title="System and app update notifications are batched and sent once per day, after this local time. Prevents being woken up at night when new packages or releases appear." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
+                    <input type="time" class="form-control" id="cfg_updates_notification_time" value="{{ config.updates_notification_time or '08:00' }}">
+                </div>
             </div>
 
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">Session</h4>
@@ -688,6 +692,7 @@ async function saveConfig(e) {
         },
         monitor_interval: parseInt(document.getElementById('cfg_monitor_interval').value),
         notification_cooldown: parseInt(document.getElementById('cfg_notification_cooldown').value),
+        updates_notification_time: document.getElementById('cfg_updates_notification_time').value,
         auth: {
             session_lifetime_hours: parseInt(document.getElementById('cfg_session_lifetime').value),
         },

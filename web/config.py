@@ -48,6 +48,7 @@ def get_default_config():
         },
         "monitor_interval": 300,
         "notification_cooldown": 3600,
+        "updates_notification_time": "08:00",
         "vapid_mailto": "mailto:admin@localhost",
         "file_browser": {
             "default_path": "/var/www",
