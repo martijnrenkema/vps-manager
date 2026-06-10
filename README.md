@@ -334,6 +334,20 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.8.0 - Security & Robustness Hardening
+- **Web terminal dichtgezet** - Interpreters die zelf commando's of bestanden kunnen spawnen (awk, sed, find, xargs, php, git, tar, mysql) uit de allowlist gehaald, sudo-flags (`sudo -u …`) geweigerd, en command-substitution/process-substitution/newlines geblokkeerd. Voorheen kon een ingelogde gebruiker via bv. `sudo awk 'BEGIN{system("id")}'` een root-shell krijgen
+- **Root-cronjobs met bevestiging** - Toevoegen/uitvoeren van een cronjob die als root draait vraagt nu een expliciete bevestiging in de UI, en alle cron-acties worden in het audit-log vastgelegd
+- **Fix: DDoS-detectie werkte niet** - `ss` met state-filter laat de State-kolom weg, dus de connectie-per-IP telling las de verkeerde kolom (`$5` i.p.v. `$4`) en de "Possible DDoS"-alert kon nooit afgaan
+- **Fix: Caddy log-blok werd omgekeerd ingevoegd** - Hierdoor faalde `caddy validate` en herschreef de app in Caddy-modus bij elke cache-expiry alle configs, faalde, en draaide terug
+- **Fix: monitor-crash zonder alerts** - `cooldown` werd alleen binnen `if alerts:` toegekend maar onvoorwaardelijk gebruikt in de cleanup; bij een herstart met stale entries crashte elke cyclus stil
+- **Concurrency-races verholpen** - Gedeelde locks rond read-modify-write van `subscriptions.json` / `notification_log.json` / `notification_history.json` en alle config-writers (wachtwoord, 2FA, SMTP, notificatie-voorkeuren, dismiss alert), zodat monitor-thread en webrequests elkaar niet meer overschrijven
+- **Self-update robuuster** - Breekt nu af vóór de herstart als git reset, bestandskopie of pip install faalt (geen half-toegepaste update meer), draait altijd `pip install`, en herstart via een vertraagde thread zodat de respons eerst verzonden wordt
+- **Push-notificaties** - Bredere foutafvang zodat één kapotte subscription de loop niet breekt, en de cooldown-state wordt direct na elke succesvolle push weggeschreven (geen dubbele meldingen meer na een netwerkfout)
+- **IP-geolocatie versneld** - Lookups worden nu per IP gecachet (24u) en parallel opgehaald met een harde tijdslimiet i.p.v. tot 100 sequentiële calls die de SSH-logs-pagina minuten konden blokkeren
+- **CLI-tool** - Deploy stopt nu bij een gefaalde `npm install`/`build` (geen kapotte build die live gaat), alle SSH/lokale calls hebben een timeout, `rsync --delete` wordt voorafgegaan door een bron-check (voorkomt wissen van de remote bij een lege/niet-gemounte bron), en bronpaden worden per-OS opgelost (Linux vs macOS)
+- **Stored XSS gedicht** - `escHtml()`/`escapeHtml()` escapen nu ook quotes, zodat een kwaadaardig land-antwoord van de externe geo-API niet uit een `title="…"`-attribuut kan breken
+- **Security headers** - Content-Security-Policy, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` en `Referrer-Policy` toegevoegd; ProxyFix zodat rate limiting en audit-logs de echte client-IP zien; dev-server bindt standaard op loopback; timing-safe username-vergelijking; logout via CSRF-beschermde POST; Caddy SSL-expiry in UTC; auth.log-parser begrijpt nu ook het ISO8601-formaat van Ubuntu 24.04
+
 ### v1.7.5 - Daily Update Notification Window
 - **Fix: dubbele/nachtelijke update notificaties** - System en app update meldingen worden nu gebatcht en maximaal één keer per dag verstuurd, na een instelbaar tijdstip (default 08:00). Voorheen werd je 's nachts wakker gemaakt als er een nieuw apt package of GitHub release verscheen, en bij elke wijziging van het aantal updates (5 → 6 available) kwam er weer een melding bovenop
 - **Nieuwe setting "Updates notification time"** - Configureerbaar in Settings → Monitor & Notifications; ook eerdere updates wachten netjes tot dit tijdstip voordat ze gepusht/gemaild worden

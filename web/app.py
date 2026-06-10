@@ -5,6 +5,7 @@ Flask-based web dashboard for managing a VPS.
 Runs locally on the VPS itself (subprocess.run instead of SSH).
 """
 
+import concurrent.futures
 import gc
 import grp
 import html as html_mod
@@ -28,7 +29,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formataddr
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from functools import wraps
 
 from flask import (
@@ -38,6 +39,7 @@ from flask import (
 )
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
+from werkzeug.middleware.proxy_fix import ProxyFix
 from flask_wtf.csrf import CSRFProtect
 from pywebpush import webpush, WebPushException
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -101,6 +103,33 @@ app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 csrf = CSRFProtect(app)
+
+# App draait achter nginx op dezelfde host: vertrouw één proxy-hop zodat
+# request.remote_addr de echte client-IP is (rate limiting + audit logs).
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
+# Content-Security-Policy: allowlist alleen de CDN/fonts die de templates echt
+# gebruiken. 'unsafe-inline' is nodig omdat de templates inline scripts/styles
+# bevatten; de CSP is een tweede verdedigingslaag bovenop escHtml().
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
+    "font-src 'self' https://fonts.gstatic.com; "
+    "img-src 'self' data:; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'"
+)
+
+
+@app.after_request
+def _set_security_headers(resp):
+    resp.headers.setdefault('Content-Security-Policy', _CSP)
+    resp.headers.setdefault('X-Frame-Options', 'DENY')
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('Referrer-Policy', 'same-origin')
+    return resp
 
 # Load configuration
 CONFIG = load_config()
@@ -170,14 +199,17 @@ def _atomic_write_json(path, data):
 # Terminal: Allowed commands (allowlist approach)
 # ---------------------------------------------------------------------------
 
+# NB: commando's die zelf subprocessen kunnen starten of bestanden kunnen
+# schrijven (awk/sed/find/xargs/tee/php/git/tar/zip/mysql) horen hier NIET in:
+# in combinatie met sudo geven die een volledige root-shell.
 TERMINAL_ALLOWED_COMMANDS = {
     # File system
     'ls', 'cat', 'head', 'tail', 'less', 'more', 'wc', 'file', 'stat',
-    'find', 'locate', 'du', 'df', 'tree', 'readlink', 'realpath', 'basename',
+    'locate', 'du', 'df', 'tree', 'readlink', 'realpath', 'basename',
     'dirname', 'pwd', 'cd', 'touch',
     # Text processing
-    'grep', 'egrep', 'fgrep', 'sed', 'awk', 'sort', 'uniq', 'cut', 'tr',
-    'diff', 'comm', 'tee', 'xargs',
+    'grep', 'egrep', 'fgrep', 'sort', 'uniq', 'cut', 'tr',
+    'diff', 'comm',
     # System info
     'uname', 'hostname', 'uptime', 'whoami', 'id', 'w', 'who', 'last',
     'free', 'vmstat', 'iostat', 'top', 'htop', 'ps', 'pgrep', 'lscpu',
@@ -190,20 +222,18 @@ TERMINAL_ALLOWED_COMMANDS = {
     # Service management
     'systemctl', 'journalctl', 'service',
     # Web server
-    'nginx', 'caddy', 'php', 'php8.3-fpm',
+    'nginx', 'caddy', 'php8.3-fpm',
     # PM2
     'pm2',
     # Certificates
     'certbot',
     # Firewall
     'ufw', 'fail2ban-client',
-    # Git
-    'git',
     # Database
-    'mysql', 'mysqldump', 'mariadb',
+    'mysqldump',
     # Misc tools
     'date', 'cal', 'echo', 'printf', 'true', 'false', 'test',
-    'tar', 'gzip', 'gunzip', 'zip', 'unzip', 'zcat',
+    'gzip', 'gunzip', 'unzip', 'zcat',
     'md5sum', 'sha256sum', 'openssl',
     'crontab',
 }
@@ -273,6 +303,10 @@ def log_audit(action, details=None):
 _cache_store = {}
 _cache_lock = threading.Lock()
 _config_runtime_lock = threading.Lock()
+# Beschermt read-modify-write van subscriptions.json / notification_log.json /
+# notification_history.json tegen races tussen monitor-thread en webrequests.
+# RLock: de monitor roept binnen één cyclus meerdere helpers genest aan.
+_notif_lock = threading.RLock()
 
 
 def _ttl_cache(seconds):
@@ -280,7 +314,14 @@ def _ttl_cache(seconds):
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
-            key = func.__name__
+            # Key op functienaam én argumenten: anders zou een gedecoreerde
+            # functie met verschillende args hetzelfde (verkeerde) resultaat
+            # uit de cache krijgen.
+            try:
+                key = (func.__name__, args, tuple(sorted(kwargs.items())))
+            except TypeError:
+                # Niet-hashbare args: cache deze aanroep niet
+                return func(*args, **kwargs)
             now = time.time()
             with _cache_lock:
                 if key in _cache_store:
@@ -296,10 +337,15 @@ def _ttl_cache(seconds):
 
 
 def _invalidate_cache(*func_names):
-    """Invalidate cached results for given function names"""
+    """Invalidate cached results for given function names.
+
+    Keys zijn tuples (func_name, args, kwargs), dus verwijder elke entry
+    waarvan het eerste element matcht.
+    """
+    names = set(func_names)
     with _cache_lock:
-        for name in func_names:
-            _cache_store.pop(name, None)
+        for key in [k for k in _cache_store if isinstance(k, tuple) and k[0] in names]:
+            _cache_store.pop(key, None)
 
 
 _metrics_lock = threading.Lock()
@@ -387,25 +433,26 @@ def _add_notification_history(title, body, category):
     If an unread entry with the same category and body already exists,
     update its timestamp instead of creating a duplicate.
     """
-    history = _load_notification_history()
+    with _notif_lock:
+        history = _load_notification_history()
 
-    # Check for existing unread entry with same category + body
-    for item in history:
-        if not item.get('read') and item.get('category') == category and item.get('body') == body:
-            item['timestamp'] = datetime.now().isoformat()
-            item['count'] = item.get('count', 1) + 1
-            _save_notification_history(history)
-            return
+        # Check for existing unread entry with same category + body
+        for item in history:
+            if not item.get('read') and item.get('category') == category and item.get('body') == body:
+                item['timestamp'] = datetime.now().isoformat()
+                item['count'] = item.get('count', 1) + 1
+                _save_notification_history(history)
+                return
 
-    history.append({
-        'timestamp': datetime.now().isoformat(),
-        'title': title,
-        'body': body,
-        'category': category,
-        'read': False,
-        'count': 1,
-    })
-    _save_notification_history(history)
+        history.append({
+            'timestamp': datetime.now().isoformat(),
+            'title': title,
+            'body': body,
+            'category': category,
+            'read': False,
+            'count': 1,
+        })
+        _save_notification_history(history)
 
 
 def _send_push(subscription_info, payload, private_key_pem):
@@ -425,6 +472,11 @@ def _send_push(subscription_info, payload, private_key_pem):
             return False  # Subscription expired, should be removed
         logger.warning(f"Push failed: {e}")
         return None  # Transient error, keep subscription
+    except Exception as e:
+        # Connection errors, timeouts, DNS failures etc. must not break the
+        # whole monitor loop or leave one broken subscription blocking the rest.
+        logger.warning(f"Push failed (transient): {e}")
+        return None
 
 
 def _classify_alert(alert):
@@ -633,256 +685,263 @@ def _monitor_loop():
             private_key_pem = None
             if subs:
                 _, private_key_pem = _get_vapid_keys()
-            notif_log = _load_notification_log()
-            now = time.time()
-            log_changed = False
+            with _notif_lock:
+                notif_log = _load_notification_log()
+                now = time.time()
+                log_changed = False
 
-            # Build set of current alert keys so we can detect resolved alerts
-            current_alert_keys = set()
-            # Safety net: dedupe by (category, message) within this cycle so
-            # two alerts that resolve to identical text — e.g. via different
-            # `key` fields — can never produce two identical notifications.
-            sent_push_msgs = set()
-            sent_email_msgs = set()
+                # Build set of current alert keys so we can detect resolved alerts
+                current_alert_keys = set()
+                # Safety net: dedupe by (category, message) within this cycle so
+                # two alerts that resolve to identical text — e.g. via different
+                # `key` fields — can never produce two identical notifications.
+                sent_push_msgs = set()
+                sent_email_msgs = set()
 
-            if alerts:
+                # cooldown wordt ook in de resolved-cleanup verderop gebruikt, dus
+                # vóór `if alerts:` toekennen — anders crasht een alert-loze cyclus.
                 cooldown = CONFIG.get('notification_cooldown', 3600)
 
-                # Update categories ('updates', 'app_update') are gated to fire
-                # at most once per day, after a configured time-of-day. This
-                # avoids being woken up at 03:00 when apt or GitHub publishes
-                # a new package, and prevents new updates trickling in
-                # throughout the day from each producing their own notification.
-                updates_time_str = CONFIG.get('updates_notification_time', '08:00')
-                try:
-                    _uh, _um = updates_time_str.split(':')
-                    updates_hour, updates_min = int(_uh), int(_um)
-                except (ValueError, AttributeError):
-                    updates_hour, updates_min = 8, 0
-                now_dt = datetime.now()
-                today_str = now_dt.strftime('%Y-%m-%d')
-                updates_window_open = (now_dt.hour, now_dt.minute) >= (updates_hour, updates_min)
+                if alerts:
 
-                def _is_update_cat(cat):
-                    return cat in ('updates', 'app_update')
+                    # Update categories ('updates', 'app_update') are gated to fire
+                    # at most once per day, after a configured time-of-day. This
+                    # avoids being woken up at 03:00 when apt or GitHub publishes
+                    # a new package, and prevents new updates trickling in
+                    # throughout the day from each producing their own notification.
+                    updates_time_str = CONFIG.get('updates_notification_time', '08:00')
+                    try:
+                        _uh, _um = updates_time_str.split(':')
+                        updates_hour, updates_min = int(_uh), int(_um)
+                    except (ValueError, AttributeError):
+                        updates_hour, updates_min = 8, 0
+                    now_dt = datetime.now()
+                    today_str = now_dt.strftime('%Y-%m-%d')
+                    updates_window_open = (now_dt.hour, now_dt.minute) >= (updates_hour, updates_min)
 
-                # On first cycle after (re)start, seed the notification
-                # log with all current alerts so we don't spam every
-                # existing alert as if it's new.
-                # Migration safety: on first cycle after restart, if any
-                # update-category alert is already known to notif_log (i.e.
-                # the user has been notified about it before) but no daily
-                # marker exists yet, stamp the marker so we don't re-fire
-                # right after an upgrade to a version that introduced the gate.
-                if first_cycle and notif_log:
-                    for alert in alerts:
-                        category = _classify_alert(alert)
-                        if not _is_update_cat(category):
-                            continue
-                        alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
-                        if alert_key in notif_log and f"_daily_push:{category}" not in notif_log:
-                            notif_log[f"_daily_push:{category}"] = today_str
-                            log_changed = True
-                        if f"email:{alert_key}" in notif_log and f"_daily_email:{category}" not in notif_log:
-                            notif_log[f"_daily_email:{category}"] = today_str
-                            log_changed = True
+                    def _is_update_cat(cat):
+                        return cat in ('updates', 'app_update')
 
-                if first_cycle and not notif_log:
-                    email_prefs = CONFIG.get('email_notifications', {})
+                    # On first cycle after (re)start, seed the notification
+                    # log with all current alerts so we don't spam every
+                    # existing alert as if it's new.
+                    # Migration safety: on first cycle after restart, if any
+                    # update-category alert is already known to notif_log (i.e.
+                    # the user has been notified about it before) but no daily
+                    # marker exists yet, stamp the marker so we don't re-fire
+                    # right after an upgrade to a version that introduced the gate.
+                    if first_cycle and notif_log:
+                        for alert in alerts:
+                            category = _classify_alert(alert)
+                            if not _is_update_cat(category):
+                                continue
+                            alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
+                            if alert_key in notif_log and f"_daily_push:{category}" not in notif_log:
+                                notif_log[f"_daily_push:{category}"] = today_str
+                                log_changed = True
+                            if f"email:{alert_key}" in notif_log and f"_daily_email:{category}" not in notif_log:
+                                notif_log[f"_daily_email:{category}"] = today_str
+                                log_changed = True
+
+                    if first_cycle and not notif_log:
+                        email_prefs = CONFIG.get('email_notifications', {})
+                        for alert in alerts:
+                            category = _classify_alert(alert)
+                            alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
+                            current_alert_keys.add(alert_key)
+                            entry = {'ts': now, 'message': alert['message']}
+                            notif_log[alert_key] = entry
+                            if email_prefs.get(category, False):
+                                notif_log[f"email:{alert_key}"] = entry
+                            # Also seed daily markers so a mid-day restart doesn't
+                            # re-trigger an update notification once the window opens.
+                            if _is_update_cat(category):
+                                notif_log[f"_daily_push:{category}"] = today_str
+                                if email_prefs.get(category, False):
+                                    notif_log[f"_daily_email:{category}"] = today_str
+                        log_changed = True
+                        logger.info(f"First cycle: seeded {len(current_alert_keys)} alerts into notification log (no notifications sent)")
+                        first_cycle = False
+                        # Sla op en sla deze cyclus verder over (niets versturen).
+                        # Géén time.sleep hier: dat zou onder _notif_lock vallen en
+                        # webrequests minutenlang blokkeren. `continue` geeft de lock
+                        # vrij; de volgende cyclus paceert zichzelf via de sleep
+                        # onderaan de loop.
+                        if log_changed:
+                            _save_notification_log(notif_log)
+                        continue
+
                     for alert in alerts:
                         category = _classify_alert(alert)
                         alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
                         current_alert_keys.add(alert_key)
-                        entry = {'ts': now, 'message': alert['message']}
-                        notif_log[alert_key] = entry
-                        if email_prefs.get(category, False):
-                            notif_log[f"email:{alert_key}"] = entry
-                        # Also seed daily markers so a mid-day restart doesn't
-                        # re-trigger an update notification once the window opens.
-                        if _is_update_cat(category):
-                            notif_log[f"_daily_push:{category}"] = today_str
-                            if email_prefs.get(category, False):
-                                notif_log[f"_daily_email:{category}"] = today_str
-                    log_changed = True
-                    logger.info(f"First cycle: seeded {len(current_alert_keys)} alerts into notification log (no notifications sent)")
-                    first_cycle = False
-                    # Skip to save and sleep — don't send anything this cycle
-                    if log_changed:
-                        _save_notification_log(notif_log)
-                    time.sleep(max(0, MONITOR_INTERVAL - (time.time() - cycle_start)))
-                    continue
+                        msg_dedup = (category, alert['message'])
 
-                for alert in alerts:
-                    category = _classify_alert(alert)
-                    alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
-                    current_alert_keys.add(alert_key)
-                    msg_dedup = (category, alert['message'])
-
-                    # --- Push notifications ---
-                    log_entry = notif_log.get(alert_key)
-                    should_push = bool(subs and private_key_pem)
-
-                    if _is_update_cat(category):
-                        # Daily gate: skip until configured time, and at most
-                        # one push per category per day. Multiple update alerts
-                        # in the same day collapse into a single morning ping.
-                        daily_push_key = f"_daily_push:{category}"
-                        last_push_date = notif_log.get(daily_push_key)
-                        if not updates_window_open or last_push_date == today_str:
-                            should_push = False
-                    else:
-                        if isinstance(log_entry, dict):
-                            if log_entry.get('message') == alert['message']:
-                                should_push = False
-                            elif now - log_entry.get('ts', 0) < cooldown:
-                                should_push = False
-                        elif isinstance(log_entry, (int, float)):
-                            notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
-                            log_changed = True
-                            should_push = False
-
-                    if should_push and msg_dedup in sent_push_msgs:
-                        should_push = False
-
-                    if should_push:
-                        payload = {
-                            'title': 'VPS Manager',
-                            'body': alert['message'],
-                            'tag': category,
-                            'url': alert.get('link') or '/',
-                        }
-
-                        expired = []
-                        sent_count = 0
-                        for i, sub in enumerate(subs):
-                            prefs = sub.get('preferences', {})
-                            if not prefs.get(category, category != 'updates'):
-                                continue
-
-                            sub_info = {
-                                'endpoint': sub['endpoint'],
-                                'keys': sub['keys'],
-                            }
-                            result = _send_push(sub_info, payload, private_key_pem)
-                            if result is False:
-                                expired.append(i)
-                            elif result is True:
-                                sent_count += 1
-
-                        if expired:
-                            subs = [s for i, s in enumerate(subs) if i not in expired]
-                            _save_subscriptions(subs)
-
-                        if sent_count > 0:
-                            notif_log[alert_key] = {'ts': now, 'message': alert['message']}
-                            if _is_update_cat(category):
-                                # Re-evaluate the date at stamp time so a cycle
-                                # that crosses midnight stamps the correct day.
-                                notif_log[f"_daily_push:{category}"] = datetime.now().strftime('%Y-%m-%d')
-                                # Flush the marker immediately so a crash or
-                                # parallel cycle (duplicate PM2 app) can't
-                                # re-trigger today's update push.
-                                try:
-                                    _save_notification_log(notif_log)
-                                except Exception:
-                                    logger.warning("Failed to flush notification log after update push", exc_info=True)
-                            log_changed = True
-                            sent_push_msgs.add(msg_dedup)
-                            logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
-
-                            _add_notification_history(
-                                payload['title'],
-                                payload['body'],
-                                category,
-                            )
-
-                    # --- Email notifications ---
-                    email_prefs = CONFIG.get('email_notifications', {})
-                    if email_prefs.get(category, False):
-                        email_key = f"email:{alert_key}"
-                        email_entry = notif_log.get(email_key)
-                        should_email = True
+                        # --- Push notifications ---
+                        log_entry = notif_log.get(alert_key)
+                        should_push = bool(subs and private_key_pem)
 
                         if _is_update_cat(category):
-                            daily_email_key = f"_daily_email:{category}"
-                            last_email_date = notif_log.get(daily_email_key)
-                            if not updates_window_open or last_email_date == today_str:
-                                should_email = False
+                            # Daily gate: skip until configured time, and at most
+                            # one push per category per day. Multiple update alerts
+                            # in the same day collapse into a single morning ping.
+                            daily_push_key = f"_daily_push:{category}"
+                            last_push_date = notif_log.get(daily_push_key)
+                            if not updates_window_open or last_push_date == today_str:
+                                should_push = False
                         else:
-                            if isinstance(email_entry, dict):
-                                if email_entry.get('message') == alert['message']:
-                                    should_email = False
-                                elif now - email_entry.get('ts', 0) < cooldown:
-                                    should_email = False
-                            elif isinstance(email_entry, (int, float)):
-                                notif_log[email_key] = {'ts': email_entry, 'message': alert['message']}
+                            if isinstance(log_entry, dict):
+                                if log_entry.get('message') == alert['message']:
+                                    should_push = False
+                                elif now - log_entry.get('ts', 0) < cooldown:
+                                    should_push = False
+                            elif isinstance(log_entry, (int, float)):
+                                notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
                                 log_changed = True
-                                should_email = False
+                                should_push = False
 
-                        if should_email and msg_dedup in sent_email_msgs:
-                            should_email = False
+                        if should_push and msg_dedup in sent_push_msgs:
+                            should_push = False
 
-                        if should_email:
-                            ok, err = send_notification_email(category, alert)
-                            if ok:
-                                notif_log[email_key] = {'ts': now, 'message': alert['message']}
+                        if should_push:
+                            payload = {
+                                'title': 'VPS Manager',
+                                'body': alert['message'],
+                                'tag': category,
+                                'url': alert.get('link') or '/',
+                            }
+
+                            expired = []
+                            sent_count = 0
+                            for i, sub in enumerate(subs):
+                                prefs = sub.get('preferences', {})
+                                if not prefs.get(category, category != 'updates'):
+                                    continue
+
+                                sub_info = {
+                                    'endpoint': sub['endpoint'],
+                                    'keys': sub['keys'],
+                                }
+                                result = _send_push(sub_info, payload, private_key_pem)
+                                if result is False:
+                                    expired.append(i)
+                                elif result is True:
+                                    sent_count += 1
+
+                            if expired:
+                                subs = [s for i, s in enumerate(subs) if i not in expired]
+                                _save_subscriptions(subs)
+
+                            if sent_count > 0:
+                                notif_log[alert_key] = {'ts': now, 'message': alert['message']}
                                 if _is_update_cat(category):
-                                    notif_log[f"_daily_email:{category}"] = datetime.now().strftime('%Y-%m-%d')
+                                    # Re-evaluate the date at stamp time so a cycle
+                                    # that crosses midnight stamps the correct day.
+                                    notif_log[f"_daily_push:{category}"] = datetime.now().strftime('%Y-%m-%d')
                                 log_changed = True
-                                sent_email_msgs.add(msg_dedup)
-                                # Flush to disk immediately so a second process
-                                # (e.g. duplicate PM2 app, stale thread) reading
-                                # notif_log on its own cycle sees this send and
-                                # won't also send the same email.
+                                sent_push_msgs.add(msg_dedup)
+                                # Flush immediately after every successful push so a
+                                # later transient error in the same cycle can't cause
+                                # this alert to be re-pushed next cycle.
                                 try:
                                     _save_notification_log(notif_log)
                                 except Exception:
-                                    logger.warning("Failed to flush notification log after email send", exc_info=True)
-                                logger.info(f"Email notification sent: {alert['message']}")
+                                    logger.warning("Failed to flush notification log after push", exc_info=True)
+                                logger.info(f"Push sent: {alert['message']} → {sent_count} subscriber(s)")
 
                                 _add_notification_history(
-                                    'VPS Manager (email)',
-                                    alert['message'],
+                                    payload['title'],
+                                    payload['body'],
                                     category,
                                 )
+
+                        # --- Email notifications ---
+                        email_prefs = CONFIG.get('email_notifications', {})
+                        if email_prefs.get(category, False):
+                            email_key = f"email:{alert_key}"
+                            email_entry = notif_log.get(email_key)
+                            should_email = True
+
+                            if _is_update_cat(category):
+                                daily_email_key = f"_daily_email:{category}"
+                                last_email_date = notif_log.get(daily_email_key)
+                                if not updates_window_open or last_email_date == today_str:
+                                    should_email = False
                             else:
-                                logger.warning(f"Email notification failed: {err}")
+                                if isinstance(email_entry, dict):
+                                    if email_entry.get('message') == alert['message']:
+                                        should_email = False
+                                    elif now - email_entry.get('ts', 0) < cooldown:
+                                        should_email = False
+                                elif isinstance(email_entry, (int, float)):
+                                    notif_log[email_key] = {'ts': email_entry, 'message': alert['message']}
+                                    log_changed = True
+                                    should_email = False
 
-            # Remove log entries for alerts that have resolved AND whose
-            # cooldown has expired.  Keeping resolved entries until the
-            # cooldown window passes prevents flapping alerts (values
-            # oscillating around a threshold) from bypassing the dedup
-            # and sending duplicate notifications every few minutes.
-            resolved_keys = []
-            for k in notif_log:
-                # Daily marker keys are not tied to a specific alert; they
-                # carry a date string (YYYY-MM-DD) instead of a ts dict and
-                # are managed separately below.
-                if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
-                    continue
-                check_key = k[6:] if k.startswith('email:') else k
-                if check_key not in current_alert_keys:
-                    entry = notif_log[k]
-                    ts = entry.get('ts', 0) if isinstance(entry, dict) else entry
-                    if now - ts >= cooldown:
-                        resolved_keys.append(k)
-            for k in resolved_keys:
-                del notif_log[k]
-                log_changed = True
+                            if should_email and msg_dedup in sent_email_msgs:
+                                should_email = False
 
-            # Clean entries older than 7 days as a safety net. Daily markers
-            # are kept regardless (they're tiny strings) so a stamp from
-            # yesterday still gates today's send if the gate hasn't fired yet.
-            cleaned = {}
-            for k, v in notif_log.items():
-                if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
-                    cleaned[k] = v
-                    continue
-                ts = v.get('ts', 0) if isinstance(v, dict) else v
-                if now - ts < 604800:
-                    cleaned[k] = v
-            if len(cleaned) != len(notif_log) or log_changed:
-                _save_notification_log(cleaned)
+                            if should_email:
+                                ok, err = send_notification_email(category, alert)
+                                if ok:
+                                    notif_log[email_key] = {'ts': now, 'message': alert['message']}
+                                    if _is_update_cat(category):
+                                        notif_log[f"_daily_email:{category}"] = datetime.now().strftime('%Y-%m-%d')
+                                    log_changed = True
+                                    sent_email_msgs.add(msg_dedup)
+                                    # Flush to disk immediately so a second process
+                                    # (e.g. duplicate PM2 app, stale thread) reading
+                                    # notif_log on its own cycle sees this send and
+                                    # won't also send the same email.
+                                    try:
+                                        _save_notification_log(notif_log)
+                                    except Exception:
+                                        logger.warning("Failed to flush notification log after email send", exc_info=True)
+                                    logger.info(f"Email notification sent: {alert['message']}")
+
+                                    _add_notification_history(
+                                        'VPS Manager (email)',
+                                        alert['message'],
+                                        category,
+                                    )
+                                else:
+                                    logger.warning(f"Email notification failed: {err}")
+
+                # Remove log entries for alerts that have resolved AND whose
+                # cooldown has expired.  Keeping resolved entries until the
+                # cooldown window passes prevents flapping alerts (values
+                # oscillating around a threshold) from bypassing the dedup
+                # and sending duplicate notifications every few minutes.
+                resolved_keys = []
+                for k in notif_log:
+                    # Daily marker keys are not tied to a specific alert; they
+                    # carry a date string (YYYY-MM-DD) instead of a ts dict and
+                    # are managed separately below.
+                    if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
+                        continue
+                    check_key = k[6:] if k.startswith('email:') else k
+                    if check_key not in current_alert_keys:
+                        entry = notif_log[k]
+                        ts = entry.get('ts', 0) if isinstance(entry, dict) else entry
+                        if now - ts >= cooldown:
+                            resolved_keys.append(k)
+                for k in resolved_keys:
+                    del notif_log[k]
+                    log_changed = True
+
+                # Clean entries older than 7 days as a safety net. Daily markers
+                # are kept regardless (they're tiny strings) so a stamp from
+                # yesterday still gates today's send if the gate hasn't fired yet.
+                cleaned = {}
+                for k, v in notif_log.items():
+                    if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
+                        cleaned[k] = v
+                        continue
+                    ts = v.get('ts', 0) if isinstance(v, dict) else v
+                    if now - ts < 604800:
+                        cleaned[k] = v
+                if len(cleaned) != len(notif_log) or log_changed:
+                    _save_notification_log(cleaned)
 
         except Exception:
             logger.warning("Monitor error", exc_info=True)
@@ -1385,7 +1444,12 @@ def login():
                 flash('Enter the verification code', 'danger')
                 return render_template('login.html', show_2fa=True, tfa_method='email')
 
-        if username == USERNAME and check_password_hash(PASSWORD_HASH, password):
+        # Beide checks altijd uitvoeren (geen short-circuit) zodat de
+        # responstijd niet verraadt of de username bestond. Vergelijk op bytes:
+        # compare_digest gooit een TypeError op str met niet-ASCII tekens.
+        user_ok = hmac.compare_digest(username.encode('utf-8'), USERNAME.encode('utf-8'))
+        pass_ok = check_password_hash(PASSWORD_HASH, password)
+        if user_ok and pass_ok:
             if active_tfa == 'totp':
                 session['2fa_pending'] = True
                 session['2fa_username'] = username
@@ -1442,8 +1506,9 @@ def resend_2fa_code():
     return jsonify({'status': 'ok', 'message': 'Code sent'})
 
 
-@app.route('/logout')
+@app.route('/logout', methods=['POST'])
 def logout():
+    # POST + CSRF zodat een force-logout via <img src> / cross-site GET niet werkt.
     log_audit('logout')
     session.clear()
     return redirect(url_for('login'))
@@ -2276,11 +2341,19 @@ def get_ssh_logs():
 
 def _parse_auth_log_line(line):
     """Parse an auth.log line into structured data"""
-    # Format: Mar 10 12:34:56 hostname sshd[1234]: message
+    # Twee formaten:
+    #  - legacy BSD syslog:  Mar 10 12:34:56 hostname sshd[1234]: message
+    #  - rsyslog ISO8601 (Ubuntu 24.04 default):
+    #      2026-03-10T12:34:56.789012+00:00 hostname sshd[1234]: message
     match = re.match(
         r'(\w+\s+\d+\s+\d{2}:\d{2}:\d{2})\s+\S+\s+\S+:\s+(.*)',
         line
     )
+    if not match:
+        match = re.match(
+            r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\S*)\s+\S+\s+\S+:\s+(.*)',
+            line
+        )
     if match:
         timestamp = match.group(1)
         message = match.group(2)
@@ -2869,8 +2942,10 @@ def check_ddos_indicators():
             pass
 
     # Connections per IP (top offender)
+    # NB: met een state-filter laat `ss` de State-kolom weg, dus de peer-address
+    # staat in $4 (niet $5); NR>1 slaat de header-regel over.
     result = run_cmd(
-        "ss -t state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -rn | head -1"
+        "ss -tn state established 2>/dev/null | awk 'NR>1 {print $4}' | sed 's/:[^:]*$//' | sort | uniq -c | sort -rn | head -1"
     )
     if result.returncode == 0 and result.stdout.strip():
         parts = result.stdout.strip().split()
@@ -2910,7 +2985,7 @@ def get_ddos_stats():
             pass
 
     result = run_cmd(
-        "ss -t state established 2>/dev/null | awk '{print $5}' | cut -d: -f1 | sort | uniq -c | sort -rn | head -5"
+        "ss -tn state established 2>/dev/null | awk 'NR>1 {print $4}' | sed 's/:[^:]*$//' | sort | uniq -c | sort -rn | head -5"
     )
     if result.returncode == 0 and result.stdout.strip():
         for line in result.stdout.strip().split('\n'):
@@ -3277,11 +3352,12 @@ def dismiss_alert():
     key = data.get('key', '')
     if not key:
         return jsonify({'status': 'error', 'message': 'No alert key'}), 400
-    dismissed = CONFIG.get('dismissed_alerts', [])
-    if key not in dismissed:
-        dismissed.append(key)
-    CONFIG['dismissed_alerts'] = dismissed
-    save_config(CONFIG)
+    with _config_runtime_lock:
+        dismissed = CONFIG.get('dismissed_alerts', [])
+        if key not in dismissed:
+            dismissed.append(key)
+        CONFIG['dismissed_alerts'] = dismissed
+        save_config(CONFIG)
     return jsonify({'status': 'ok'})
 
 
@@ -3860,29 +3936,75 @@ def firewall_ufw_delete():
     return jsonify({'status': 'error', 'message': result.stderr.strip() or result.stdout.strip() or 'Failed to delete rule'}), 500
 
 
-def lookup_ip_countries(ip_list):
-    """Batch lookup country info for a list of IPs via ipwho.is (HTTPS)"""
-    import urllib.request
+# IP→country cache: geo data is effectively static, so cache for a day to
+# avoid re-querying the external API on every firewall/SSH-logs page load.
+_ip_country_cache = {}
+_ip_country_cache_lock = threading.Lock()
+_IP_COUNTRY_TTL = 86400  # 24h
 
+
+def _lookup_single_ip_country(ip):
+    """Look up one IP via ipwho.is. Returns (ip, info_or_None)."""
+    try:
+        req = urllib.request.Request(
+            f'https://ipwho.is/{ip}?fields=ip,country,country_code',
+            headers={'User-Agent': 'VPS-Manager'},
+        )
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode())
+        if data.get('country_code'):
+            return ip, {
+                'country': data.get('country', ''),
+                'countryCode': data.get('country_code', ''),
+            }
+    except Exception:
+        logger.debug('IP geo lookup failed for %s', ip, exc_info=True)
+    return ip, None
+
+
+def lookup_ip_countries(ip_list):
+    """Batch lookup country info for a list of IPs via ipwho.is (HTTPS).
+
+    Cached per IP (24h) and parallelised with a hard overall deadline so a
+    busy attack day can't turn this into a multi-minute blocking call.
+    """
     if not ip_list:
         return {}
 
     results = {}
-    for ip in ip_list[:100]:  # Limit to 100 lookups
-        try:
-            req = urllib.request.Request(
-                f'https://ipwho.is/{ip}?fields=ip,country,country_code',
-                headers={'User-Agent': 'VPS-Manager'},
-            )
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                data = json.loads(resp.read().decode())
-            if data.get('country_code'):
-                results[ip] = {
-                    'country': data.get('country', ''),
-                    'countryCode': data.get('country_code', ''),
-                }
-        except Exception:
-            logger.debug('IP geo lookup failed for %s', ip, exc_info=True)
+    now = time.time()
+    to_fetch = []
+    with _ip_country_cache_lock:
+        for ip in dict.fromkeys(ip_list):  # de-dupe, preserve order
+            cached = _ip_country_cache.get(ip)
+            if cached and now - cached[1] < _IP_COUNTRY_TTL:
+                if cached[0]:
+                    results[ip] = cached[0]
+            else:
+                to_fetch.append(ip)
+
+    if not to_fetch:
+        return results
+
+    to_fetch = to_fetch[:100]  # hard cap on outbound lookups
+    ex = concurrent.futures.ThreadPoolExecutor(max_workers=10)
+    try:
+        futures = [ex.submit(_lookup_single_ip_country, ip) for ip in to_fetch]
+        for fut in concurrent.futures.as_completed(futures, timeout=10):
+            try:
+                ip, info = fut.result()
+            except Exception:
+                continue
+            with _ip_country_cache_lock:
+                _ip_country_cache[ip] = (info, time.time())
+            if info:
+                results[ip] = info
+    except concurrent.futures.TimeoutError:
+        logger.debug('IP geo lookup deadline reached; returning partial results')
+    finally:
+        # Cancel nog niet gestarte taken zodat de deadline echt hard is en we
+        # niet alsnog op trage urllib-calls wachten bij shutdown.
+        ex.shutdown(wait=False, cancel_futures=True)
 
     return results
 
@@ -4223,6 +4345,47 @@ def update_install():
         _apt_lock.release()
 
 
+def _copy_update_files():
+    """Copy freshly pulled web/ files into the app root.
+
+    Each step runs independently so a single missing/failed file doesn't
+    silently skip the templates/static copies (which an &&-chain would).
+    Returns (ok, output_string).
+    """
+    web_src = os.path.join(APP_DIR, 'web')
+    if not os.path.isdir(web_src):
+        return True, 'No web/ subfolder, skipped copy'
+
+    failures = []
+    outputs = []
+    top_files = ['app.py', 'config.py', 'VERSION', 'requirements.txt',
+                 'vps-backup.sh', 'nas-pull-backup.sh']
+    for fname in top_files:
+        src = os.path.join(web_src, fname)
+        if not os.path.exists(src):
+            continue
+        r = run_cmd(f"cp {shlex.quote(src)} {shlex.quote(APP_DIR + '/')} 2>&1", timeout=15)
+        if r.returncode != 0:
+            failures.append(fname)
+            outputs.append((r.stderr or r.stdout).strip())
+
+    for subdir in ('templates', 'static'):
+        src_dir = os.path.join(web_src, subdir)
+        if not os.path.isdir(src_dir):
+            continue
+        r = run_cmd(
+            f"cp -r {shlex.quote(src_dir)}/. {shlex.quote(os.path.join(APP_DIR, subdir))}/ 2>&1",
+            timeout=15
+        )
+        if r.returncode != 0:
+            failures.append(subdir + '/')
+            outputs.append((r.stderr or r.stdout).strip())
+
+    if failures:
+        return False, 'Failed to copy: ' + ', '.join(failures) + '\n' + '\n'.join(outputs)
+    return True, 'Files copied'
+
+
 def _do_update_install():
     current_before = _get_current_version()
 
@@ -4247,42 +4410,45 @@ def _do_update_install():
         }), 500
 
     # Copy web/ files to app root (repo has files in web/ subfolder,
-    # but PM2 runs from the repo root directory)
-    copy_ok = True
-    web_src = os.path.join(APP_DIR, 'web')
-    if os.path.isdir(web_src):
-        copy_result = run_cmd(
-            f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
-            f"{web_src}/requirements.txt {web_src}/vps-backup.sh {web_src}/nas-pull-backup.sh {APP_DIR}/ 2>&1 && "
-            f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 && "
-            f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
-            timeout=15
-        )
-        if copy_result.returncode != 0:
-            copy_ok = False
+    # but PM2 runs from the repo root directory). Abort BEFORE restarting
+    # if the copy failed — never restart on a half-applied update.
+    copy_ok, copy_msg = _copy_update_files()
+    if not copy_ok:
+        return jsonify({
+            'status': 'error',
+            'message': 'Update aborted: file copy failed (not restarted)',
+            'output': copy_msg[-500:],
+        }), 500
+
+    # Install dependencies (requirements may have changed)
+    pip_result = run_cmd(
+        f"cd {APP_DIR} && venv/bin/pip install -r requirements.txt --quiet 2>&1",
+        timeout=120
+    )
+    if pip_result.returncode != 0:
+        return jsonify({
+            'status': 'error',
+            'message': 'Update aborted: pip install failed (not restarted)',
+            'output': (pip_result.stderr or pip_result.stdout)[-500:],
+        }), 500
 
     # Read the new version from the freshly copied VERSION file
     new_version = _get_current_version()
 
-    # Restart PM2 process
-    pm2_result = run_cmd_safe(["pm2", "restart", "vps-manager"], timeout=15)
-    restart_ok = pm2_result.returncode == 0
-
-    warnings = []
-    if not copy_ok:
-        warnings.append('file copy failed')
-    if not restart_ok:
-        warnings.append('restart pending')
-
     log_audit('self_update', {'from': current_before, 'to': new_version})
     _invalidate_cache('check_app_update_alert', 'get_pm2_processes')
+
+    # Restart via a delayed thread so this response can flush before the
+    # PM2 process (this very app) is killed and respawned.
+    threading.Thread(target=_delayed_restart, daemon=True).start()
+
     return jsonify({
-        'status': 'ok' if copy_ok else 'warning',
-        'message': 'Update installed' + (f' ({", ".join(warnings)})' if warnings else ''),
+        'status': 'ok',
+        'message': 'Update installed, restarting',
         'previous_version': current_before,
         'new_version': new_version,
-        'restart': 'ok' if restart_ok else 'failed',
-        'copy': 'ok' if copy_ok else 'failed',
+        'restart': 'pending',
+        'copy': 'ok',
         'output': result.stdout[-500:],
     })
 
@@ -4363,24 +4529,21 @@ def update_install_stream():
             yield send_event({'step': 2, 'name': steps[1], 'status': 'error', 'output': (reset.stderr or reset.stdout)[-300:]})
             error_occurred = True
         else:
-            copy_output = ''
-            web_src = os.path.join(APP_DIR, 'web')
-            if os.path.isdir(web_src):
-                copy_result = run_cmd(
-                    f"cp -r {web_src}/app.py {web_src}/config.py {web_src}/VERSION "
-                    f"{web_src}/requirements.txt {web_src}/vps-backup.sh {web_src}/nas-pull-backup.sh {APP_DIR}/ 2>&1 && "
-                    f"cp -r {web_src}/templates/* {APP_DIR}/templates/ 2>&1 && "
-                    f"cp -r {web_src}/static/* {APP_DIR}/static/ 2>&1",
-                    timeout=15
-                )
-                if copy_result.returncode != 0:
-                    error_occurred = True
-                    copy_output = copy_result.stderr or copy_result.stdout
-                    yield send_event({'step': 2, 'name': steps[1], 'status': 'error', 'output': copy_output[-200:]})
-                else:
-                    yield send_event({'step': 2, 'name': steps[1], 'status': 'done', 'output': 'Files copied'})
+            copy_ok, copy_msg = _copy_update_files()
+            if not copy_ok:
+                error_occurred = True
+                yield send_event({'step': 2, 'name': steps[1], 'status': 'error', 'output': copy_msg[-200:]})
             else:
-                yield send_event({'step': 2, 'name': steps[1], 'status': 'done', 'output': 'No web/ subfolder, skipped copy'})
+                yield send_event({'step': 2, 'name': steps[1], 'status': 'done', 'output': copy_msg})
+
+        # Abort before touching dependencies or restarting: a failed reset/copy
+        # means a half-applied update, so we must not restart on top of it.
+        if error_occurred:
+            for i in range(3, 6):
+                yield send_event({'step': i, 'name': steps[i - 1], 'status': 'skipped', 'output': ''})
+            _save_update_history('self-update', 'error', 'Update aborted before restart')
+            yield send_event({'type': 'error', 'message': 'Update aborted: install step failed (not restarted)'})
+            return
 
         # Step 3: pip install (check if requirements changed)
         yield send_event({'step': 3, 'name': steps[2], 'status': 'running', 'output': ''})
@@ -4390,6 +4553,11 @@ def update_install_stream():
         )
         if pip_result.returncode != 0:
             yield send_event({'step': 3, 'name': steps[2], 'status': 'error', 'output': (pip_result.stderr or pip_result.stdout)[-200:]})
+            for i in range(4, 6):
+                yield send_event({'step': i, 'name': steps[i - 1], 'status': 'skipped', 'output': ''})
+            _save_update_history('self-update', 'error', 'pip install failed before restart')
+            yield send_event({'type': 'error', 'message': 'Update aborted: pip install failed (not restarted). New code may need its dependencies.'})
+            return
         else:
             output = pip_result.stdout.strip()
             yield send_event({'step': 3, 'name': steps[2], 'status': 'done', 'output': output[-200:] if output else 'All dependencies satisfied'})
@@ -4571,18 +4739,23 @@ def terminal_exec():
         real_cwd = '/'
 
     # --- Allowlist: check every segment's first command ---
-    # Block subshell escapes: backticks, $(...), $(( patterns
-    if '`' in cmd or '$(' in cmd:
+    # Block subshell escapes: backticks, $(...), process substitution <(...)
+    if '`' in cmd or '$(' in cmd or '<(' in cmd:
         log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'subshell escape'})
         return jsonify({'stdout': '', 'stderr': 'Blocked: subshell expressions not allowed', 'cwd': real_cwd})
+
+    # Block newlines: alleen het eerste segment zou anders gecheckt worden
+    if '\n' in cmd or '\r' in cmd:
+        log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'newline'})
+        return jsonify({'stdout': '', 'stderr': 'Blocked: multi-line commands not allowed', 'cwd': real_cwd})
 
     # Block all output redirection (>, >>) to prevent arbitrary file writes
     if '>' in cmd:
         log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'output redirection'})
         return jsonify({'stdout': '', 'stderr': 'Blocked: output redirection not allowed. Use the File Editor to write files.', 'cwd': real_cwd})
 
-    # Split on all shell operators: |, &&, ||, ;
-    pipe_segments = re.split(r'\|{1,2}|&&|;', cmd)
+    # Split on all shell operators: |, ||, &, &&, ;
+    pipe_segments = re.split(r'\|{1,2}|&{1,2}|;', cmd)
     for segment in pipe_segments:
         segment = segment.strip()
         if not segment:
@@ -4591,6 +4764,11 @@ def terminal_exec():
         check = segment
         if check.startswith('sudo '):
             check = check[5:].strip()
+            # Geen sudo-flags (-u, -i, -s, ...): direct na sudo moet het
+            # commando zelf staan, anders is de allowlist-check omzeilbaar
+            if check.startswith('-'):
+                log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'sudo flags'})
+                return jsonify({'stdout': '', 'stderr': 'Blocked: sudo flags not allowed', 'cwd': real_cwd})
         try:
             tokens = shlex.split(check)
         except ValueError:
@@ -5011,31 +5189,32 @@ def push_subscribe():
     if 'endpoint' not in data or 'keys' not in data:
         return jsonify({'status': 'error', 'message': 'Invalid subscription data'}), 400
 
-    subs = _load_subscriptions()
+    with _notif_lock:
+        subs = _load_subscriptions()
 
-    # Preserve existing preferences/label when re-subscribing same endpoint
-    existing = next((s for s in subs if s.get('endpoint') == data['endpoint']), None)
-    old_prefs = existing.get('preferences') if existing else None
-    old_label = existing.get('label', '') if existing else ''
+        # Preserve existing preferences/label when re-subscribing same endpoint
+        existing = next((s for s in subs if s.get('endpoint') == data['endpoint']), None)
+        old_prefs = existing.get('preferences') if existing else None
+        old_label = existing.get('label', '') if existing else ''
 
-    subs = [s for s in subs if s.get('endpoint') != data['endpoint']]
-    subs.append({
-        'endpoint': data['endpoint'],
-        'keys': data['keys'],
-        'label': data.get('label') or old_label or '',
-        'user_agent': request.headers.get('User-Agent', ''),
-        'preferences': old_prefs or {
-            'critical': True,
-            'warnings': True,
-            'updates': False,
-            'security': True,
-            'ddos': True,
-            'backup': True,
-            'app_update': True,
-        },
-        'created': datetime.now().isoformat(),
-    })
-    _save_subscriptions(subs)
+        subs = [s for s in subs if s.get('endpoint') != data['endpoint']]
+        subs.append({
+            'endpoint': data['endpoint'],
+            'keys': data['keys'],
+            'label': data.get('label') or old_label or '',
+            'user_agent': request.headers.get('User-Agent', ''),
+            'preferences': old_prefs or {
+                'critical': True,
+                'warnings': True,
+                'updates': False,
+                'security': True,
+                'ddos': True,
+                'backup': True,
+                'app_update': True,
+            },
+            'created': datetime.now().isoformat(),
+        })
+        _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Subscription registered'})
 
 
@@ -5047,9 +5226,10 @@ def push_unsubscribe():
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
-    subs = _load_subscriptions()
-    subs = [s for s in subs if s.get('endpoint') != endpoint]
-    _save_subscriptions(subs)
+    with _notif_lock:
+        subs = _load_subscriptions()
+        subs = [s for s in subs if s.get('endpoint') != endpoint]
+        _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Unsubscribed'})
 
 
@@ -5076,8 +5256,9 @@ def push_test():
 
     result = _send_push({'endpoint': sub['endpoint'], 'keys': sub['keys']}, payload, private_key_pem)
     if result is False:
-        subs = [s for s in subs if s.get('endpoint') != endpoint]
-        _save_subscriptions(subs)
+        with _notif_lock:
+            subs = [s for s in _load_subscriptions() if s.get('endpoint') != endpoint]
+            _save_subscriptions(subs)
         return jsonify({'status': 'error', 'message': 'Subscription expired'}), 410
     if result is None:
         return jsonify({'status': 'error', 'message': 'Push failed (transient error)'}), 502
@@ -5109,20 +5290,21 @@ def push_preferences():
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
-    subs = _load_subscriptions()
-    for sub in subs:
-        if sub.get('endpoint') == endpoint:
-            sub['preferences'] = {
-                'critical': bool(data.get('critical', True)),
-                'warnings': bool(data.get('warnings', True)),
-                'updates': bool(data.get('updates', False)),
-                'security': bool(data.get('security', True)),
-                'ddos': bool(data.get('ddos', True)),
-                'backup': bool(data.get('backup', True)),
-                'app_update': bool(data.get('app_update', True)),
-            }
-            break
-    _save_subscriptions(subs)
+    with _notif_lock:
+        subs = _load_subscriptions()
+        for sub in subs:
+            if sub.get('endpoint') == endpoint:
+                sub['preferences'] = {
+                    'critical': bool(data.get('critical', True)),
+                    'warnings': bool(data.get('warnings', True)),
+                    'updates': bool(data.get('updates', False)),
+                    'security': bool(data.get('security', True)),
+                    'ddos': bool(data.get('ddos', True)),
+                    'backup': bool(data.get('backup', True)),
+                    'app_update': bool(data.get('app_update', True)),
+                }
+                break
+        _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Preferences saved'})
 
 
@@ -5168,14 +5350,15 @@ def push_subscription_label():
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
-    subs = _load_subscriptions()
-    for sub in subs:
-        if sub.get('endpoint') == endpoint:
-            sub['label'] = label[:50]
-            break
-    else:
-        return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
-    _save_subscriptions(subs)
+    with _notif_lock:
+        subs = _load_subscriptions()
+        for sub in subs:
+            if sub.get('endpoint') == endpoint:
+                sub['label'] = label[:50]
+                break
+        else:
+            return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
+        _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Label updated'})
 
 
@@ -5188,11 +5371,12 @@ def push_subscription_delete():
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
-    subs = _load_subscriptions()
-    new_subs = [s for s in subs if s.get('endpoint') != endpoint]
-    if len(new_subs) == len(subs):
-        return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
-    _save_subscriptions(new_subs)
+    with _notif_lock:
+        subs = _load_subscriptions()
+        new_subs = [s for s in subs if s.get('endpoint') != endpoint]
+        if len(new_subs) == len(subs):
+            return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
+        _save_subscriptions(new_subs)
     return jsonify({'status': 'ok', 'message': 'Subscription deleted'})
 
 
@@ -5205,22 +5389,23 @@ def push_subscription_preferences():
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
-    subs = _load_subscriptions()
-    for sub in subs:
-        if sub.get('endpoint') == endpoint:
-            sub['preferences'] = {
-                'critical': bool(data.get('critical', True)),
-                'warnings': bool(data.get('warnings', True)),
-                'updates': bool(data.get('updates', False)),
-                'security': bool(data.get('security', True)),
-                'ddos': bool(data.get('ddos', True)),
-                'backup': bool(data.get('backup', True)),
-                'app_update': bool(data.get('app_update', True)),
-            }
-            break
-    else:
-        return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
-    _save_subscriptions(subs)
+    with _notif_lock:
+        subs = _load_subscriptions()
+        for sub in subs:
+            if sub.get('endpoint') == endpoint:
+                sub['preferences'] = {
+                    'critical': bool(data.get('critical', True)),
+                    'warnings': bool(data.get('warnings', True)),
+                    'updates': bool(data.get('updates', False)),
+                    'security': bool(data.get('security', True)),
+                    'ddos': bool(data.get('ddos', True)),
+                    'backup': bool(data.get('backup', True)),
+                    'app_update': bool(data.get('app_update', True)),
+                }
+                break
+        else:
+            return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
+        _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Preferences saved'})
 
 
@@ -5239,10 +5424,11 @@ def notification_history():
 @app.route('/api/notifications/read', methods=['POST'])
 @login_required
 def notification_read():
-    history = _load_notification_history()
-    for item in history:
-        item['read'] = True
-    _save_notification_history(history)
+    with _notif_lock:
+        history = _load_notification_history()
+        for item in history:
+            item['read'] = True
+        _save_notification_history(history)
     return jsonify({'status': 'ok', 'message': 'All notifications marked as read'})
 
 
@@ -5253,8 +5439,9 @@ def notification_clear():
 
     This allows alerts to be sent again if they are still active.
     """
-    _save_notification_history([])
-    _save_notification_log({})
+    with _notif_lock:
+        _save_notification_history([])
+        _save_notification_log({})
     return jsonify({'status': 'ok', 'message': 'Notifications cleared'})
 
 
@@ -5272,14 +5459,15 @@ def notification_dismiss():
     except (ValueError, TypeError):
         return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
 
-    history = _load_notification_history()
-    # History is stored oldest-first; the API returns newest-first,
-    # so the front-end index maps to reversed order.
-    reversed_idx = len(history) - 1 - index
-    if 0 <= reversed_idx < len(history):
-        history.pop(reversed_idx)
-        _save_notification_history(history)
-        return jsonify({'status': 'ok', 'message': 'Notification dismissed'})
+    with _notif_lock:
+        history = _load_notification_history()
+        # History is stored oldest-first; the API returns newest-first,
+        # so the front-end index maps to reversed order.
+        reversed_idx = len(history) - 1 - index
+        if 0 <= reversed_idx < len(history):
+            history.pop(reversed_idx)
+            _save_notification_history(history)
+            return jsonify({'status': 'ok', 'message': 'Notification dismissed'})
     return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
 
 
@@ -5302,10 +5490,11 @@ def email_notification_preferences():
     for cat in categories:
         prefs[cat] = bool(data.get(cat, False))
 
-    CONFIG['email_notifications'] = prefs
-    if 'notification_email' in data:
-        CONFIG['notification_email'] = str(data['notification_email']).strip()
-    save_config(CONFIG)
+    with _config_runtime_lock:
+        CONFIG['email_notifications'] = prefs
+        if 'notification_email' in data:
+            CONFIG['notification_email'] = str(data['notification_email']).strip()
+        save_config(CONFIG)
     log_audit('email_notification_prefs_saved')
     return jsonify({'status': 'ok', 'message': 'Email notification preferences saved'})
 
@@ -5563,9 +5752,10 @@ def change_password():
     if new_pass != confirm:
         return jsonify({'status': 'error', 'message': 'Passwords do not match'}), 400
 
-    PASSWORD_HASH = generate_password_hash(new_pass)
-    CONFIG['auth']['password_hash'] = PASSWORD_HASH
-    save_config(CONFIG)
+    with _config_runtime_lock:
+        PASSWORD_HASH = generate_password_hash(new_pass)
+        CONFIG['auth']['password_hash'] = PASSWORD_HASH
+        save_config(CONFIG)
 
     # Remove generated password file if it exists
     _pw_file = DATA_DIR / '.generated_password'
@@ -5625,10 +5815,11 @@ def verify_2fa():
         return jsonify({'status': 'error', 'message': 'Invalid code, try again'}), 400
 
     # Save to config
-    CONFIG['auth']['totp_secret'] = secret
-    CONFIG['auth']['tfa_method'] = 'totp'
-    CONFIG['auth']['tfa_email'] = None
-    save_config(CONFIG)
+    with _config_runtime_lock:
+        CONFIG['auth']['totp_secret'] = secret
+        CONFIG['auth']['tfa_method'] = 'totp'
+        CONFIG['auth']['tfa_email'] = None
+        save_config(CONFIG)
     session.pop('pending_totp_secret', None)
 
     log_audit('2fa_enable', {'method': 'totp'})
@@ -5644,10 +5835,11 @@ def disable_2fa():
     if not check_password_hash(PASSWORD_HASH, password):
         return jsonify({'status': 'error', 'message': 'Incorrect password'}), 400
 
-    CONFIG['auth']['totp_secret'] = None
-    CONFIG['auth']['tfa_method'] = None
-    CONFIG['auth']['tfa_email'] = None
-    save_config(CONFIG)
+    with _config_runtime_lock:
+        CONFIG['auth']['totp_secret'] = None
+        CONFIG['auth']['tfa_method'] = None
+        CONFIG['auth']['tfa_email'] = None
+        save_config(CONFIG)
 
     log_audit('2fa_disable')
     return jsonify({'status': 'ok', 'message': '2FA disabled'})
@@ -5702,10 +5894,11 @@ def verify_email_2fa():
     if not ok:
         return jsonify({'status': 'error', 'message': err}), 400
 
-    CONFIG['auth']['tfa_method'] = 'email'
-    CONFIG['auth']['tfa_email'] = pending_email
-    CONFIG['auth']['totp_secret'] = None
-    save_config(CONFIG)
+    with _config_runtime_lock:
+        CONFIG['auth']['tfa_method'] = 'email'
+        CONFIG['auth']['tfa_email'] = pending_email
+        CONFIG['auth']['totp_secret'] = None
+        save_config(CONFIG)
     session.pop('pending_tfa_email', None)
 
     log_audit('2fa_enable', {'method': 'email', 'email': pending_email})
@@ -5735,21 +5928,22 @@ def save_smtp_settings():
     if not password:
         password = CONFIG.get('smtp', {}).get('password', '')
 
-    CONFIG['smtp'] = {
-        'host': host,
-        'port': port,
-        'username': username,
-        'password': password,
-        'encryption': encryption,
-        'from_name': from_name,
-        'from_address': from_address,
-    }
+    with _config_runtime_lock:
+        CONFIG['smtp'] = {
+            'host': host,
+            'port': port,
+            'username': username,
+            'password': password,
+            'encryption': encryption,
+            'from_name': from_name,
+            'from_address': from_address,
+        }
 
-    # Save notification recipient if provided
-    if 'notification_email' in data:
-        CONFIG['notification_email'] = str(data['notification_email']).strip()
+        # Save notification recipient if provided
+        if 'notification_email' in data:
+            CONFIG['notification_email'] = str(data['notification_email']).strip()
 
-    save_config(CONFIG)
+        save_config(CONFIG)
     log_audit('smtp_settings_saved')
     return jsonify({'status': 'ok', 'message': 'SMTP settings saved'})
 
@@ -6646,7 +6840,7 @@ def _ensure_caddy_site_logs(config_file):
             '    }',
         ]
         for offset, log_line in enumerate(log_block):
-            new_lines.insert(insert_idx, log_line)
+            new_lines.insert(insert_idx + offset, log_line)
 
     new_content = '\n'.join(new_lines)
 
@@ -6965,19 +7159,22 @@ def get_caddy_certificates():
         if expiry_result.returncode != 0:
             continue
 
-        # Parse: notAfter=Mar 15 12:00:00 2027 GMT
+        # Parse: notAfter=Mar 15 12:00:00 2027 GMT. openssl geeft altijd GMT/UTC;
+        # behandel de tijd expliciet als UTC en vergelijk met now(UTC) zodat een
+        # naive/lokale-tijd-mismatch de dag-grens niet kan laten omklappen.
         expiry_str = expiry_result.stdout.strip().replace('notAfter=', '')
-        try:
-            expiry_dt = datetime.strptime(expiry_str, '%b %d %H:%M:%S %Y %Z')
-            days_left = (expiry_dt - datetime.now()).days
-            expiry_date = expiry_dt.strftime('%Y-%m-%d')
-        except ValueError:
+        expiry_str = re.sub(r'\s+(GMT|UTC)$', '', expiry_str).strip()
+        expiry_dt = None
+        for fmt in ('%b %d %H:%M:%S %Y', '%b  %d %H:%M:%S %Y'):
             try:
-                expiry_dt = datetime.strptime(expiry_str, '%b  %d %H:%M:%S %Y %Z')
-                days_left = (expiry_dt - datetime.now()).days
-                expiry_date = expiry_dt.strftime('%Y-%m-%d')
+                expiry_dt = datetime.strptime(expiry_str, fmt).replace(tzinfo=timezone.utc)
+                break
             except ValueError:
                 continue
+        if expiry_dt is None:
+            continue
+        days_left = (expiry_dt - datetime.now(timezone.utc)).days
+        expiry_date = expiry_dt.strftime('%Y-%m-%d')
 
         certs.append({
             'domain': domain,
@@ -7397,4 +7594,8 @@ if __name__ == '__main__':
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
     port = int(os.environ.get('VPS_MANAGER_PORT', 5050))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # Bind standaard op loopback: nginx proxyt lokaal naar deze poort, dus de
+    # Werkzeug dev-server hoeft niet extern bereikbaar te zijn. Override met
+    # VPS_MANAGER_HOST=0.0.0.0 alleen als je bewust direct wilt exposen.
+    host = os.environ.get('VPS_MANAGER_HOST', '127.0.0.1')
+    app.run(host=host, port=port, debug=False)

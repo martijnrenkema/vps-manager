@@ -326,21 +326,29 @@ async function saveCronJob() {
 
     closeCronDialog();
 
-    try {
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify(body)
-        });
-        const data = await res.json();
-        if (res.ok) {
-            showToast(data.message, 'success');
-            loadCronjobs();
-        } else {
-            showToast(data.message || 'Error', 'error');
+    const doSave = async () => {
+        try {
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            if (res.ok) {
+                showToast(data.message, 'success');
+                loadCronjobs();
+            } else {
+                showToast(data.message || 'Error', 'error');
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
         }
-    } catch (e) {
-        showToast('Connection error', 'error');
+    };
+
+    if (type === 'root') {
+        showConfirm('Root Cronjob', `This command will run as root on schedule "${schedule}":\n${command.substring(0, 200)}\n\nSave it?`, doSave);
+    } else {
+        doSave();
     }
 }
 
@@ -349,7 +357,8 @@ function runCronJob(type, index) {
     if (index >= jobs.length) return;
     const cmd = jobs[index].command;
 
-    showConfirm('Run Cronjob', `Run this command now?\n${cmd.substring(0, 120)}`, async () => {
+    const runLabel = type === 'root' ? 'Run this command now as root?' : 'Run this command now?';
+    showConfirm('Run Cronjob', `${runLabel}\n${cmd.substring(0, 120)}`, async () => {
         showToast('Running cronjob...', 'info');
         try {
             const res = await fetch('/api/cronjobs/run', {
