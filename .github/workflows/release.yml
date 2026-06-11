@@ -1,11 +1,18 @@
 name: Release
 
-# Automatically creates a GitHub release when a v* tag is pushed.
+# Automatically creates a GitHub release when a v* tag is pushed, or via
+# manual dispatch with a tag name (the tag is then created on the fly).
 # The release notes are taken from RELEASE.md (update it before tagging).
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.9.0); created if it does not exist'
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -19,4 +26,5 @@ jobs:
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
           body_path: RELEASE.md
