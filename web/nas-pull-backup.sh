@@ -9,13 +9,15 @@
 set -Eeuo pipefail
 umask 027
 
-VPS="${VPS:-martijn@212.227.135.150}"
-SSH_PORT="${SSH_PORT:-2222}"
+# Connection/location settings: configure these in $BACKUP_ENV (see README)
+# so the script itself stays generic.
+VPS="${VPS:-backup@your-vps-hostname}"
+SSH_PORT="${SSH_PORT:-22}"
 LOCAL_DIR="${LOCAL_DIR:-/volume1/Backup/vps}"
 DATA_DIR="$LOCAL_DIR/data"
 SNAPSHOT_DIR="$LOCAL_DIR/snapshots"
 LOG="${LOG:-$LOCAL_DIR/backup.log}"
-WEBHOOK_URL="${WEBHOOK_URL:-https://vps.dmmusic.nl/api/backup/webhook}"
+WEBHOOK_URL="${WEBHOOK_URL:-https://your-dashboard-domain/api/backup/webhook}"
 BACKUP_ENV="${BACKUP_ENV:-$LOCAL_DIR/.backup_env}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 LOCK_FILE="$LOCAL_DIR/.pull-backup.lock"
@@ -37,9 +39,9 @@ if ! flock -n 9; then
 fi
 
 json_escape() {
-    # Ook newlines/tabs/CR escapen: multi-line details (bijv. rsync-output bij
-    # een fout) braken anders de JSON, waardoor juist fout-meldingen verloren
-    # gingen. awk i.p.v. python: Synology heeft niet standaard python3.
+    # Also escape newlines/tabs/CR: multi-line details (e.g. rsync output on
+    # failure) would otherwise break the JSON, losing exactly the error
+    # reports that matter most. awk instead of python: Synology lacks python3.
     printf '%s' "$1" | awk '
         {
             line = $0

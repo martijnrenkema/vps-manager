@@ -5189,7 +5189,7 @@ def files_chown():
     """Change ownership of a file or directory"""
     data = request.get_json() or {}
     path = data.get('path', '')
-    owner = data.get('owner', 'martijn')
+    owner = data.get('owner', 'www-data')
     group = data.get('group', '')
     recursive = data.get('recursive', False)
 
@@ -5249,22 +5249,24 @@ def files_chmod():
 @app.route('/files/users')
 @login_required
 def files_users():
-    """Get list of system users and groups relevant for web files"""
-    users = []
-    for name in ['martijn', 'www-data', 'root', 'nobody']:
-        try:
-            pwd.getpwnam(name)
-            users.append(name)
-        except KeyError:
-            pass
-    groups = []
-    for name in ['martijn', 'www-data', 'root', 'nogroup']:
-        try:
-            grp.getgrnam(name)
-            groups.append(name)
-        except KeyError:
-            pass
-    return jsonify({'users': users, 'groups': groups})
+    """Get list of system users and groups relevant for web files.
+
+    Dynamisch i.p.v. hardcoded namen: root, de web-user en alle reguliere
+    accounts (uid/gid 1000-65533) plus nobody/nogroup.
+    """
+    users = set()
+    groups = set()
+    try:
+        for p in pwd.getpwall():
+            if p.pw_uid == 0 or p.pw_name in ('www-data', 'nobody') or 1000 <= p.pw_uid < 65534:
+                users.add(p.pw_name)
+        for g in grp.getgrall():
+            if g.gr_gid == 0 or g.gr_name in ('www-data', 'nogroup') or 1000 <= g.gr_gid < 65534:
+                groups.add(g.gr_name)
+    except OSError:
+        users.update(['www-data', 'root'])
+        groups.update(['www-data', 'root'])
+    return jsonify({'users': sorted(users), 'groups': sorted(groups)})
 
 
 # ---------------------------------------------------------------------------
