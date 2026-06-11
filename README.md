@@ -87,8 +87,13 @@ pm2 start "cd /var/www/vps-manager && venv/bin/python app.py" \
 pm2 save
 ```
 
-The app exposes an unauthenticated `GET /health` endpoint for uptime
-monitoring, PM2 health checks, or reverse proxy checks.
+The app serves via [Waitress](https://docs.pylonsproject.org/projects/waitress/)
+(production WSGI server) and exposes an unauthenticated `GET /health` endpoint
+for uptime monitoring, PM2 health checks, or reverse proxy checks.
+
+Self-updates installed via the Updates page are guarded by a watchdog: if the
+freshly restarted app fails its health check, the update is automatically
+rolled back to the previous version and a notification is recorded.
 
 ## Updating
 
@@ -303,6 +308,7 @@ Restore order:
 ## Dependencies
 
 - [Flask](https://flask.palletsprojects.com/) - Web framework
+- [Waitress](https://docs.pylonsproject.org/projects/waitress/) - Production WSGI server
 - [Flask-WTF](https://flask-wtf.readthedocs.io/) - CSRF protection
 - [pywebpush](https://github.com/web-push-libs/pywebpush) - Web Push notifications
 - [cryptography](https://cryptography.io/) - VAPID key generation

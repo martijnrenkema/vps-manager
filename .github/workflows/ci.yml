@@ -27,4 +27,4 @@ jobs:
         run: flake8 --select=E9,F63,F7,F82 web/
 
       - name: Shell script check
-        run: bash -n web/vps-backup.sh web/nas-pull-backup.sh
+        run: bash -n web/vps-backup.sh web/nas-pull-backup.sh web/update-watchdog.sh
