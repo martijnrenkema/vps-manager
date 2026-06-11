@@ -4,6 +4,7 @@ Loads, saves and provides defaults for all configurable values.
 """
 
 import json
+import logging
 import os
 import tempfile
 import threading
@@ -113,8 +114,22 @@ def load_config():
             with open(CONFIG_PATH, 'r') as f:
                 user_config = json.load(f)
             return _deep_merge(defaults, user_config)
-        except (json.JSONDecodeError, OSError):
-            pass
+        except json.JSONDecodeError as e:
+            # Stil terugvallen op defaults zou alle instellingen (incl. 2FA en
+            # wachtwoord-hash) onaangekondigd "wissen". Bewaar het kapotte
+            # bestand zodat het handmatig te herstellen is — de eerstvolgende
+            # save_config() overschrijft config.json anders met defaults.
+            corrupt_path = CONFIG_PATH.with_name(CONFIG_PATH.name + '.corrupt')
+            try:
+                os.replace(CONFIG_PATH, corrupt_path)
+            except OSError:
+                corrupt_path = CONFIG_PATH
+            logging.getLogger('vps-manager').error(
+                "config.json is corrupt (%s); falling back to defaults. "
+                "The unreadable file is kept at %s", e, corrupt_path)
+        except OSError as e:
+            logging.getLogger('vps-manager').error(
+                "Could not read %s (%s); falling back to defaults", CONFIG_PATH, e)
     return defaults
 
 

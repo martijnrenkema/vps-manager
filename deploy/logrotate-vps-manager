@@ -1,0 +1,11 @@
+# Logrotatie voor de VPS Manager backup-log (groeit anders onbegrensd).
+# Installeren: sudo cp deploy/logrotate-vps-manager /etc/logrotate.d/vps-manager
+/var/log/vps-backup.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root adm
+}

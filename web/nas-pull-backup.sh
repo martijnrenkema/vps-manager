@@ -37,7 +37,20 @@ if ! flock -n 9; then
 fi
 
 json_escape() {
-    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+    # Ook newlines/tabs/CR escapen: multi-line details (bijv. rsync-output bij
+    # een fout) braken anders de JSON, waardoor juist fout-meldingen verloren
+    # gingen. awk i.p.v. python: Synology heeft niet standaard python3.
+    printf '%s' "$1" | awk '
+        {
+            line = $0
+            gsub(/\\/, "\\\\", line)
+            gsub(/"/, "\\\"", line)
+            gsub(/\t/, "\\t", line)
+            gsub(/\r/, "\\r", line)
+            out = out (NR > 1 ? "\\n" : "") line
+        }
+        END { printf "%s", out }
+    '
 }
 
 report_status() {

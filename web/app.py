@@ -15,6 +15,7 @@ import re
 import io
 import json
 import hmac
+import ipaddress
 import secrets
 import shlex
 import shutil
@@ -129,7 +130,17 @@ def _set_security_headers(resp):
     resp.headers.setdefault('X-Frame-Options', 'DENY')
     resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
     resp.headers.setdefault('Referrer-Policy', 'same-origin')
+    # Alleen zinvol over HTTPS (browsers negeren hem over HTTP); geen
+    # includeSubDomains omdat andere subdomeinen niet door deze app beheerd worden.
+    resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000')
     return resp
+
+
+@app.route('/health')
+def health():
+    """Unauthenticated liveness check for PM2/reverse proxy/uptime monitoring."""
+    return jsonify({'status': 'ok'})
+
 
 # Load configuration
 CONFIG = load_config()
@@ -346,6 +357,24 @@ def _invalidate_cache(*func_names):
     with _cache_lock:
         for key in [k for k in _cache_store if isinstance(k, tuple) and k[0] in names]:
             _cache_store.pop(key, None)
+
+
+def _sweep_caches():
+    """Drop expired cache entries so long-lived caches don't grow unbounded.
+
+    _ttl_cache en _ip_country_cache verwijderen verlopen entries alleen bij
+    een nieuwe hit op dezelfde key; keys die nooit terugkomen (bijv. unieke
+    IP's uit SSH-logs) blijven anders voor altijd staan.
+    """
+    now = time.time()
+    with _cache_lock:
+        # Geen enkele _ttl_cache TTL is langer dan een uur
+        for key in [k for k, (_, ts) in _cache_store.items() if now - ts > 3600]:
+            _cache_store.pop(key, None)
+    with _ip_country_cache_lock:
+        for ip in [ip for ip, (_, ts) in _ip_country_cache.items()
+                   if now - ts > _IP_COUNTRY_TTL]:
+            _ip_country_cache.pop(ip, None)
 
 
 _metrics_lock = threading.Lock()
@@ -652,6 +681,12 @@ def _monitor_loop():
                 collect_metrics()
             except Exception as e:
                 logger.warning(f"Metrics collection error: {e}")
+
+            # Ruim verlopen cache-entries op (begrenst geheugengebruik)
+            try:
+                _sweep_caches()
+            except Exception as e:
+                logger.warning(f"Cache sweep error: {e}")
 
             # Check uptime for all sites and save history
             try:
@@ -1214,6 +1249,33 @@ def _record_attempt(ip):
         _login_attempts.setdefault(ip, []).append(time.time())
 
 
+# TOTP replay protection: accept each time step at most once, so an
+# intercepted/observed code cannot be reused within its validity window.
+# In-memory is sufficient: after a restart the window has almost always
+# passed, and the trade-off avoids disk writes on every login.
+_totp_last_counter = 0
+_totp_counter_lock = threading.Lock()
+
+
+def _verify_totp(secret, code):
+    """Verify a TOTP code with valid_window=1, rejecting reused time steps."""
+    global _totp_last_counter
+    if not code:
+        return False
+    totp = pyotp.TOTP(secret)
+    now = time.time()
+    for offset in (0, -1, 1):
+        step_time = now + offset * totp.interval
+        if hmac.compare_digest(totp.at(step_time), code):
+            counter = int(step_time) // totp.interval
+            with _totp_counter_lock:
+                if counter <= _totp_last_counter:
+                    return False  # code (or an older one) was already used
+                _totp_last_counter = counter
+            return True
+    return False
+
+
 # Email 2FA code store (single-user app, one code at a time)
 _email_2fa_code = {}  # {'code': str, 'expires': float, 'attempts': int, 'last_sent': float}
 _email_2fa_lock = threading.Lock()
@@ -1411,11 +1473,9 @@ def login():
             if method == 'totp':
                 totp_secret = CONFIG['auth'].get('totp_secret')
                 if totp_secret and HAS_2FA and totp_code:
-                    totp = pyotp.TOTP(totp_secret)
-                    if totp.verify(totp_code, valid_window=1):
-                        session.pop('2fa_pending', None)
-                        session.pop('2fa_username', None)
-                        session.pop('2fa_method', None)
+                    if _verify_totp(totp_secret, totp_code):
+                        # Verse sessie tegen session fixation
+                        session.clear()
                         session.permanent = True
                         session['logged_in'] = True
                         session['username'] = username
@@ -1429,9 +1489,8 @@ def login():
                 if email_code:
                     ok, err = _verify_email_code(email_code)
                     if ok:
-                        session.pop('2fa_pending', None)
-                        session.pop('2fa_username', None)
-                        session.pop('2fa_method', None)
+                        # Verse sessie tegen session fixation
+                        session.clear()
                         session.permanent = True
                         session['logged_in'] = True
                         session['username'] = username
@@ -1468,6 +1527,8 @@ def login():
                 session['2fa_method'] = 'email'
                 return render_template('login.html', show_2fa=True, tfa_method='email')
 
+            # Verse sessie tegen session fixation
+            session.clear()
             session.permanent = True
             session['logged_in'] = True
             session['username'] = username
@@ -1714,6 +1775,41 @@ def _ensure_nginx_site_logs(config_path, domain):
     return True
 
 
+def _check_http_status(domain):
+    """HTTP status for one domain: HTTPS with HTTP fallback, follows redirects."""
+    status = '---'
+    for scheme in ('https', 'http'):
+        result = run_cmd_safe(
+            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
+             f"{scheme}://{domain}", "--max-time", "5"],
+            timeout=10
+        )
+        status = result.stdout.strip() if result.stdout else '---'
+        if status != '000':
+            return status
+    return status
+
+
+def _check_http_statuses(domains):
+    """Check HTTP status for multiple domains in parallel.
+
+    Serieel kan dit bij N sites tot N×10s duren; parallel is de duurste
+    site bepalend in plaats van de som.
+    """
+    statuses = {}
+    unique = list(dict.fromkeys(domains))
+    if not unique:
+        return statuses
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(unique))) as pool:
+        futures = {pool.submit(_check_http_status, d): d for d in unique}
+        for fut in concurrent.futures.as_completed(futures):
+            try:
+                statuses[futures[fut]] = fut.result()
+            except Exception:
+                statuses[futures[fut]] = '---'
+    return statuses
+
+
 @_ttl_cache(60)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
@@ -1778,22 +1874,6 @@ def get_nginx_sites():
                             elif line.startswith('error_log'):
                                 error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
 
-            # Check HTTP status for first domain (HTTPS with HTTP fallback, follow redirects)
-            http_result = run_cmd_safe(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
-                 f"https://{domains[0]}", "--max-time", "5"],
-                timeout=10
-            )
-            http_status = http_result.stdout.strip() if http_result.stdout else '---'
-            if http_status == '000':
-                # HTTPS failed, try HTTP
-                http_result = run_cmd_safe(
-                    ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
-                     f"http://{domains[0]}", "--max-time", "5"],
-                    timeout=10
-                )
-                http_status = http_result.stdout.strip() if http_result.stdout else '---'
-
             sites.append({
                 'config': config,
                 'domains': domains,
@@ -1802,10 +1882,16 @@ def get_nginx_sites():
                 'proxy': proxy,
                 'type': 'proxy' if proxy else 'static',
                 'location': proxy if proxy else (doc_root or 'n/a'),
-                'http_status': http_status,
+                'http_status': '---',
                 'access_log': access_log_path,
                 'error_log': error_log_path,
             })
+
+    # Check HTTP status for all sites in parallel (first domain per site)
+    statuses = _check_http_statuses([s['domains'][0] for s in sites if s['domains']])
+    for s in sites:
+        if s['domains']:
+            s['http_status'] = statuses.get(s['domains'][0], '---')
 
     # Reload nginx if we modified any configs
     if configs_modified:
@@ -3685,19 +3771,19 @@ def _is_valid_ipv4(ip):
 
 
 def _is_valid_ip_or_cidr(value):
-    """Validate an IPv4 address or CIDR notation (e.g. 192.168.1.0/24)"""
-    parts = value.split('/')
-    if len(parts) == 1:
-        return _is_valid_ipv4(parts[0])
-    if len(parts) == 2:
-        if not _is_valid_ipv4(parts[0]):
-            return False
-        try:
-            prefix = int(parts[1])
-            return 0 <= prefix <= 32
-        except ValueError:
-            return False
-    return False
+    """Validate an IPv4/IPv6 address or CIDR (e.g. 192.168.1.0/24, 2001:db8::/32).
+
+    fail2ban's ignoreip en ufw ondersteunen beide IPv6, dus de whitelist
+    en UFW-regels moeten dat ook accepteren.
+    """
+    try:
+        if '/' in value:
+            ipaddress.ip_network(value, strict=False)
+        else:
+            ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
 
 
 @app.route('/firewall/ban', methods=['POST'])
@@ -4849,7 +4935,10 @@ def files():
 def files_list():
     default_path = CONFIG.get('file_browser', {}).get('default_path', '/var/www')
     path = request.args.get('path', default_path)
-    norm_path = os.path.abspath(path)
+    # realpath (niet abspath): check en daadwerkelijke toegang moeten op
+    # hetzelfde geresolvede pad gebeuren, anders kan een symlink-wissel
+    # tussen check en gebruik buiten de toegestane mappen komen.
+    norm_path = os.path.realpath(path)
 
     if not os.path.isdir(norm_path):
         return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
@@ -4970,7 +5059,7 @@ def files_mkdir():
     if not name or '/' in name or name.startswith('.'):
         return jsonify({'status': 'error', 'message': 'Invalid folder name'}), 400
 
-    norm_path = os.path.abspath(os.path.join(path, name))
+    norm_path = os.path.realpath(os.path.join(path, name))
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
@@ -4988,7 +5077,7 @@ def files_mkdir():
 @login_required
 def files_download():
     path = request.args.get('path', '')
-    norm_path = os.path.abspath(path)
+    norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
@@ -5024,7 +5113,7 @@ def files_download():
 @login_required
 def files_upload():
     path = request.form.get('path', '/var/www')
-    norm_path = os.path.abspath(path)
+    norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
@@ -5059,6 +5148,20 @@ def files_delete():
     path = data.get('path', '')
     norm_path = os.path.abspath(path)
 
+    # Symlinks: verwijder de link zelf (nooit het doel), mits de link
+    # zelf in een toegestane map staat. realpath zou hier juist het doel
+    # verwijderen en rmtree weigert symlinks.
+    if os.path.islink(norm_path):
+        if not is_path_allowed(os.path.dirname(norm_path)):
+            return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+        try:
+            os.remove(norm_path)
+            log_audit('file_delete', {'path': norm_path, 'type': 'symlink'})
+            return jsonify({'status': 'ok', 'message': 'Symlink deleted'})
+        except OSError as e:
+            return jsonify({'status': 'error', 'message': str(e)}), 500
+
+    norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
@@ -5090,7 +5193,7 @@ def files_chown():
     group = data.get('group', '')
     recursive = data.get('recursive', False)
 
-    norm_path = os.path.abspath(path)
+    norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
@@ -5123,7 +5226,7 @@ def files_chmod():
     mode = data.get('mode', '').strip()
     recursive = data.get('recursive', False)
 
-    norm_path = os.path.abspath(path)
+    norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
 
@@ -5699,7 +5802,8 @@ def validate_config(data):
 @app.route('/api/config', methods=['POST'])
 @login_required
 def update_config():
-    global CONFIG, MONITOR_INTERVAL
+    # CONFIG wordt alleen in-place gemuteerd, dus geen global nodig
+    global MONITOR_INTERVAL
     data = request.get_json() or {}
     if not data:
         return jsonify({'status': 'error', 'message': 'No data received'}), 400
@@ -6148,7 +6252,7 @@ EDITABLE_EXTENSIONS = {
 def files_read():
     """Read file content for in-browser editing"""
     path = request.args.get('path', '')
-    norm_path = os.path.abspath(path)
+    norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
@@ -6190,7 +6294,7 @@ def files_save():
     if not path:
         return jsonify({'status': 'error', 'message': 'No path specified'}), 400
 
-    norm_path = os.path.abspath(path)
+    norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
@@ -6939,21 +7043,6 @@ def get_caddy_sites():
         doc_root = site.get('root')
         log_output = site.get('log_output')
 
-        # HTTP status check (same logic as nginx)
-        http_result = run_cmd_safe(
-            ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
-             f"https://{domains[0]}", "--max-time", "5"],
-            timeout=10
-        )
-        http_status = http_result.stdout.strip() if http_result.stdout else '---'
-        if http_status == '000':
-            http_result = run_cmd_safe(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}", "-L",
-                 f"http://{domains[0]}", "--max-time", "5"],
-                timeout=10
-            )
-            http_status = http_result.stdout.strip() if http_result.stdout else '---'
-
         sites.append({
             'config': os.path.basename(config_file),
             'domains': domains,
@@ -6962,10 +7051,16 @@ def get_caddy_sites():
             'proxy': proxy,
             'type': 'proxy' if proxy else 'static',
             'location': proxy if proxy else (doc_root or 'n/a'),
-            'http_status': http_status,
+            'http_status': '---',
             'access_log': log_output,
             'error_log': log_output,  # Caddy uses single log file per site
         })
+
+    # Check HTTP status for all sites in parallel (same logic as nginx)
+    statuses = _check_http_statuses([s['domains'][0] for s in sites if s['domains']])
+    for s in sites:
+        if s['domains']:
+            s['http_status'] = statuses.get(s['domains'][0], '---')
 
     return sites
 

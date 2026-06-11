@@ -19,6 +19,10 @@ BACKUP_ENV="${BACKUP_ENV:-/var/www/vps.dmmusic.nl/data/.backup_env}"
 WWW_DIR="${WWW_DIR:-/var/www}"
 LOCK_FILE="$BACKUP_DIR/.vps-backup.lock"
 BACKUP_READ_USER="${BACKUP_READ_USER:-martijn}"
+# De data/ van de manager staat NIET in git (config.json met 2FA-secret,
+# .secret_key, VAPID-keys) en moet dus wél mee in de backup, ook al wordt
+# de manager-directory zelf overgeslagen.
+MANAGER_DATA_DIR="${MANAGER_DATA_DIR:-/var/www/vps.dmmusic.nl/data}"
 
 # Directories in /var/www that are not backup targets.
 # vps.dmmusic.nl is redeployable from git and contains the manager itself.
@@ -159,17 +163,26 @@ tar czf "$BACKUP_DIR/configs/system_$DATE.tar.gz" \
     /etc/fail2ban /etc/ufw /etc/ssh/sshd_config /home/martijn/.pm2/dump.pm2 \
     2>/dev/null || true
 
-find "$WWW_DIR" -maxdepth 2 -name ".env" -type f 2>/dev/null | while read -r envfile; do
+# VPS Manager state: secrets en instellingen die niet uit git herstelbaar zijn
+if [ -d "$MANAGER_DATA_DIR" ]; then
+    tar czf "$BACKUP_DIR/configs/vps-manager-data_$DATE.tar.gz" \
+        --exclude='*.tmp' \
+        -C "$(dirname "$MANAGER_DATA_DIR")" "$(basename "$MANAGER_DATA_DIR")"
+fi
+
+# Process substitution i.p.v. pipe: in een pipe-subshell zou een falende cp
+# onzichtbaar blijven voor set -e en de ERR-trap (backup meldt dan "success").
+while IFS= read -r envfile; do
     sitename=$(basename "$(dirname "$envfile")")
     is_listed "$sitename" "$SKIP_CONFIG_DIRS" && continue
     cp -p "$envfile" "$BACKUP_DIR/configs/${sitename}-env_$DATE"
-done
+done < <(find "$WWW_DIR" -maxdepth 2 -name ".env" -type f 2>/dev/null)
 
-find "$WWW_DIR" -maxdepth 2 -name "wp-config.php" -type f 2>/dev/null | while read -r wpconfig; do
+while IFS= read -r wpconfig; do
     sitename=$(basename "$(dirname "$wpconfig")")
     is_listed "$sitename" "$SKIP_CONFIG_DIRS" && continue
     cp -p "$wpconfig" "$BACKUP_DIR/configs/${sitename}-wp-config_$DATE.php"
-done
+done < <(find "$WWW_DIR" -maxdepth 2 -name "wp-config.php" -type f 2>/dev/null)
 
 find "$BACKUP_DIR/configs" -type f -mtime +"$RETENTION_DAYS" -delete
 

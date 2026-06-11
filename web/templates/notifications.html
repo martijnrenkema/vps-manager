@@ -464,15 +464,8 @@
         container.innerHTML = html;
     }
 
-    function escapeHtml(str) {
-        // Escapet ook quotes voor veilig gebruik in attribuut-context.
-        return String(str == null ? '' : str)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-    }
+    // Gebruikt escHtml uit base.html (zelfde escaping, attribuut-veilig)
+    const escapeHtml = escHtml;
 
     function editSubPrefs(idx) {
         const sub = allSubscriptions[idx];

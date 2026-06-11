@@ -629,7 +629,7 @@
             const container = document.getElementById('cmdResults');
             container.innerHTML = cmdFiltered.map((p, i) =>
                 `<div class="cmd-result-item${i === cmdSelectedIdx ? ' selected' : ''}" onmouseenter="cmdSelectedIdx=${i};renderCmdResults()" onclick="navigateCmd(${i})">
-                    <span class="cmd-label">${p.label}</span>
+                    <span class="cmd-label">${escHtml(p.label)}</span>
                     ${p.type === 'action' ? '<span class="cmd-type">Action</span>' : '<span class="cmd-type" style="opacity:0.4">Page</span>'}
                 </div>`
             ).join('');
