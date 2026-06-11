@@ -46,7 +46,7 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **Terminal Allowlist** - Command allowlist approach with subshell escape blocking, all blocked commands logged
 - **Symlink Protection** - File browser resolves symlinks to prevent directory traversal escapes
 - **Atomic JSON Writes** - All config and state files written atomically via temp file + rename to prevent corruption
-- **No External CDN** - Bootstrap and fonts served locally, no third-party dependencies at runtime
+- **Minimal External Dependencies** - Bootstrap and fonts served locally; only Chart.js (dashboard/uptime charts) is loaded from a CDN
 
 ### UX & Interface
 - **Command Palette** - Quick navigation with `Ctrl+K` / `Cmd+K`, fuzzy search across all pages
@@ -86,6 +86,9 @@ pm2 start "cd /var/www/vps-manager && venv/bin/python app.py" \
   --name vps-manager
 pm2 save
 ```
+
+The app exposes an unauthenticated `GET /health` endpoint for uptime
+monitoring, PM2 health checks, or reverse proxy checks.
 
 ## Updating
 
@@ -237,6 +240,7 @@ sudo install -m 750 web/vps-backup.sh /usr/local/bin/vps-backup.sh
 sudo install -m 640 /dev/null /var/www/vps.dmmusic.nl/data/.backup_env
 sudo sh -c 'printf "WEBHOOK_SECRET=%s\n" "your-webhook-secret" > /var/www/vps.dmmusic.nl/data/.backup_env'
 echo '0 3 * * * root /usr/local/bin/vps-backup.sh' | sudo tee /etc/cron.d/vps-backup
+sudo cp deploy/logrotate-vps-manager /etc/logrotate.d/vps-manager
 ```
 
 What it backs up:
@@ -245,6 +249,7 @@ What it backs up:
 - WordPress `wp-content` uploads/themes/plugins and custom root files, without WordPress core.
 - Node/Python/static site files without rebuildable dependencies such as `node_modules`, `.next`, `venv`, `.git`, caches, logs and bytecode.
 - Nginx/Caddy, Let's Encrypt, cron/systemd/PHP/MySQL/fail2ban/UFW/SSH metadata, plus selected site `.env` and `wp-config.php` files.
+- VPS Manager state (`data/` with `config.json`, secret key, VAPID keys) — these are not in git, so this tarball is the only way to recover 2FA and push subscriptions.
 - A daily checksum manifest covering current-day DB/config files and all mirrored site files.
 
 ### Remote Pull Script (NAS / offsite)
@@ -287,7 +292,8 @@ Restore order:
 4. Restore `.env` / `wp-config.php` from `configs/`.
 5. Restore MariaDB with `gunzip -c databases/<db>_YYYYMMDD.sql.gz | mysql`.
 6. Restore SQLite `.db` files to their original paths and fix ownership.
-7. Restart services/PM2 and verify HTTP, database login and SSL.
+7. Restore the VPS Manager `data/` directory from `configs/vps-manager-data_YYYYMMDD.tar.gz` (2FA, secret key, VAPID keys, settings).
+8. Restart services/PM2 and verify HTTP, database login and SSL.
 
 ## Dependencies
 

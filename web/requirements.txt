@@ -1,6 +1,8 @@
-flask
-flask-wtf
-pywebpush
-cryptography
-pyotp
-qrcode[pil]
+# Begrensde versies: een verse install krijgt geen onverwachte major-upgrade
+# met breaking changes, maar patch/minor-updates (incl. security fixes) wel.
+flask>=3.0,<4
+flask-wtf>=1.2,<2
+pywebpush>=1.14,<3
+cryptography>=42,<47
+pyotp>=2.9,<3
+qrcode[pil]>=7.4,<9

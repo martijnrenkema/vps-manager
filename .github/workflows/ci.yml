@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install flake8
+        run: python -m pip install flake8
+
+      - name: Syntax check
+        run: python -m py_compile web/app.py web/config.py
+
+      # Alleen echte fouten (syntax errors, undefined names, foute
+      # vergelijkingen) — geen stijlregels, die zouden op de bestaande
+      # codebase alleen ruis geven.
+      - name: Critical lint (pyflakes errors)
+        run: flake8 --select=E9,F63,F7,F82 web/
+
+      - name: Shell script check
+        run: bash -n web/vps-backup.sh web/nas-pull-backup.sh
