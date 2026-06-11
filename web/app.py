@@ -4445,7 +4445,7 @@ def _copy_update_files():
     failures = []
     outputs = []
     top_files = ['app.py', 'config.py', 'VERSION', 'requirements.txt',
-                 'vps-backup.sh', 'nas-pull-backup.sh']
+                 'vps-backup.sh', 'nas-pull-backup.sh', 'update-watchdog.sh']
     for fname in top_files:
         src = os.path.join(web_src, fname)
         if not os.path.exists(src):
@@ -4482,6 +4482,10 @@ def _do_update_install():
     git_ok, git_msg = _ensure_git_repo()
     if not git_ok:
         return jsonify({'status': 'error', 'message': f'Git setup failed: {git_msg}'}), 500
+
+    # Onthoud de huidige commit voor de rollback-watchdog
+    prev_rev = run_cmd(f"git -C {APP_DIR} rev-parse HEAD", timeout=10)
+    prev_commit = prev_rev.stdout.strip() if prev_rev.returncode == 0 else ''
 
     # Fetch and reset to origin/main
     result = run_cmd(
@@ -4524,8 +4528,9 @@ def _do_update_install():
     log_audit('self_update', {'from': current_before, 'to': new_version})
     _invalidate_cache('check_app_update_alert', 'get_pm2_processes')
 
-    # Restart via a delayed thread so this response can flush before the
-    # PM2 process (this very app) is killed and respawned.
+    # Arm de rollback-watchdog en herstart via een delayed thread zodat dit
+    # response kan flushen voordat PM2 dit proces killt en respawnt.
+    _spawn_update_watchdog(prev_commit)
     threading.Thread(target=_delayed_restart, daemon=True).start()
 
     return jsonify({
@@ -4543,6 +4548,32 @@ def _delayed_restart(delay=1.5):
     """Restart PM2 process after a delay (so SSE response can flush)"""
     time.sleep(delay)
     run_cmd_safe(["pm2", "restart", "vps-manager"], timeout=15)
+
+
+def _spawn_update_watchdog(prev_commit):
+    """Start a detached watchdog that rolls back if the updated app
+    never becomes healthy after the restart.
+
+    setsid + achtergrond-& zorgt dat de watchdog in een eigen sessie draait
+    en de PM2-restart van dit proces overleeft. Faalt de healthcheck, dan
+    reset de watchdog naar prev_commit en herstart opnieuw — zo kan een
+    kapotte release het dashboard nooit permanent onbereikbaar maken.
+    """
+    if not prev_commit:
+        return False
+    script = os.path.join(APP_DIR, 'web', 'update-watchdog.sh')
+    if not os.path.isfile(script):
+        script = os.path.join(APP_DIR, 'update-watchdog.sh')
+    if not os.path.isfile(script):
+        return False
+    port = os.environ.get('VPS_MANAGER_PORT', '5050')
+    log_path = str(DATA_DIR / 'update-watchdog.log')
+    marker = str(DATA_DIR / '.update_rollback')
+    args = ' '.join(shlex.quote(a) for a in
+                    [script, APP_DIR, prev_commit, port, log_path, marker])
+    # >/dev/null zodat de gespawnde watchdog onze pipes niet openhoudt
+    result = run_cmd(f"setsid nohup bash {args} >/dev/null 2>&1 &", timeout=10)
+    return result.returncode == 0
 
 
 @app.route('/api/update/install-token', methods=['POST'])
@@ -4608,6 +4639,11 @@ def update_install_stream():
             return
         yield send_event({'step': 1, 'name': steps[0], 'status': 'done', 'output': result.stdout[-200:]})
 
+        # Onthoud de huidige commit zodat de watchdog kan terugrollen als de
+        # nieuwe versie na de herstart niet gezond wordt.
+        prev_rev = run_cmd(f"git -C {APP_DIR} rev-parse HEAD", timeout=10)
+        prev_commit = prev_rev.stdout.strip() if prev_rev.returncode == 0 else ''
+
         # Step 2: reset + copy files
         yield send_event({'step': 2, 'name': steps[1], 'status': 'running', 'output': ''})
         reset = run_cmd(f"git -C {APP_DIR} reset --hard origin/main", timeout=30)
@@ -4659,7 +4695,9 @@ def update_install_stream():
         log_audit('self_update', {'from': current_before, 'to': new_version})
         _save_update_history('self-update', 'success' if not error_occurred else 'warning',
                              f'v{current_before} → v{new_version}')
-        yield send_event({'step': 5, 'name': steps[4], 'status': 'done', 'output': 'Restarting...'})
+        watchdog_armed = _spawn_update_watchdog(prev_commit)
+        restart_msg = 'Restarting... (auto-rollback armed)' if watchdog_armed else 'Restarting...'
+        yield send_event({'step': 5, 'name': steps[4], 'status': 'done', 'output': restart_msg})
 
         # Send complete event before restart
         yield send_event({'type': 'complete', 'previous_version': current_before, 'new_version': new_version})
@@ -7687,12 +7725,46 @@ def caddy_debug():
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
+
+    # Meld het als de update-watchdog een mislukte update heeft teruggerold
+    _rollback_marker = DATA_DIR / '.update_rollback'
+    if _rollback_marker.exists():
+        try:
+            _rollback_detail = _rollback_marker.read_text().strip()
+        except OSError:
+            _rollback_detail = ''
+        logger.error("Previous update failed and was rolled back: %s", _rollback_detail)
+        try:
+            log_audit('self_update_rollback', {'detail': _rollback_detail})
+            _add_notification_history(
+                'VPS Manager',
+                'Update failed its health check and was automatically rolled back to the previous version',
+                'app_update')
+        except Exception:
+            logger.exception("Could not record rollback notification")
+        try:
+            _rollback_marker.unlink()
+        except OSError:
+            pass
+
     # Start background push notification monitor
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
     port = int(os.environ.get('VPS_MANAGER_PORT', 5050))
     # Bind standaard op loopback: nginx proxyt lokaal naar deze poort, dus de
-    # Werkzeug dev-server hoeft niet extern bereikbaar te zijn. Override met
+    # server hoeft niet extern bereikbaar te zijn. Override met
     # VPS_MANAGER_HOST=0.0.0.0 alleen als je bewust direct wilt exposen.
     host = os.environ.get('VPS_MANAGER_HOST', '127.0.0.1')
-    app.run(host=host, port=port, debug=False)
+    try:
+        from waitress import serve
+    except ImportError:
+        # Waitress hoort via requirements.txt geïnstalleerd te zijn; liever
+        # draaien op de dev-server dan helemaal niet opstarten (bijv. na een
+        # handmatige git pull zonder pip install).
+        logging.warning('waitress not installed, falling back to the Flask dev server')
+        app.run(host=host, port=port, debug=False)
+    else:
+        logger.info("Serving with waitress on %s:%s", host, port)
+        # send_bytes=1: SSE-events (update-voortgang) moeten per event
+        # doorgestuurd worden, niet gebufferd tot de standaard 18KB.
+        serve(app, host=host, port=port, threads=8, send_bytes=1)
