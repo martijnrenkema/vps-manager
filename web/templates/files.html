@@ -284,7 +284,8 @@ function renderFiles(data) {
         // Owner cell
         const ownerTd = document.createElement('td');
         ownerTd.style.fontSize = '12px';
-        if (item.owner && item.owner !== 'martijn' && item.owner !== '?') {
+        // Markeer bestanden waarvan de owner afwijkt van de owner van de map
+        if (item.owner && item.owner !== '?' && currentDirInfo.owner && item.owner !== currentDirInfo.owner) {
             ownerTd.style.color = 'var(--yellow)';
         } else {
             ownerTd.style.color = 'var(--text-muted)';
@@ -474,7 +475,7 @@ async function loadPermsUsers() {
         const groupSel = document.getElementById('permsGroup');
         ownerSel.innerHTML = '';
         groupSel.innerHTML = '';
-        for (const u of ['martijn', 'www-data', 'root']) {
+        for (const u of ['www-data', 'root']) {
             ownerSel.appendChild(new Option(u, u));
             groupSel.appendChild(new Option(u, u));
         }
@@ -487,8 +488,8 @@ async function showPermsDialog() {
     document.getElementById('permsCurrentOwner').textContent = (currentDirInfo.owner || '?') + ':' + (currentDirInfo.group || '?');
     const modeStr = (currentDirInfo.mode || '0755').replace('0o', '');
     document.getElementById('permsCurrentMode').textContent = modeStr;
-    document.getElementById('permsOwner').value = currentDirInfo.owner || 'martijn';
-    document.getElementById('permsGroup').value = currentDirInfo.group || 'martijn';
+    document.getElementById('permsOwner').value = currentDirInfo.owner || 'www-data';
+    document.getElementById('permsGroup').value = currentDirInfo.group || 'www-data';
     document.getElementById('permsMode').value = modeStr;
     octalToMatrix(modeStr);
     document.getElementById('permsSymbolic').textContent = octalToSymbolic(modeStr);

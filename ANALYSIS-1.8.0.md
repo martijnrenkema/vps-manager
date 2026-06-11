@@ -11,7 +11,7 @@ Volledige code-analyse na de 1.8.0 release: bugs, security, performance, ontbrek
 ## 1. Bugs (geverifieerd)
 
 ### 1.1 Manager-data wordt niet geback-upt — **HOOG**
-`web/vps-backup.sh:25` — `SKIP_DIRS="html vps.dmmusic.nl"` slaat de hele manager-directory over met als reden "redeployable from git". Maar `data/` staat in `.gitignore` en bevat:
+`web/vps-backup.sh:25` — `SKIP_DIRS` slaat de hele manager-directory over met als reden "redeployable from git". Maar `data/` staat in `.gitignore` en bevat:
 - `config.json` (TOTP-secret, SMTP-wachtwoord, webhook-secret, alle instellingen)
 - `.secret_key` (Flask sessie-key)
 - VAPID-keys (alle push-subscriptions worden waardeloos zonder)
@@ -93,7 +93,7 @@ Bewust géén aanbeveling: een database. Op deze schaal (max 100 notificaties, 1
 
 - **`app.py` is 7.601 regels** met ~80 routes, 246 functies, 0 classes, geen blueprints, geen type hints. Het werkt, maar elke wijziging raakt hetzelfde bestand en niets is in isolatie testbaar. Logische splitsing in Flask-blueprints: `auth`, `monitoring`, `webserver` (nginx/caddy), `files`, `firewall`, `notifications`, `system`. Dit kan incrementeel (één blueprint per release).
 - **±8.100 regels inline JS** verspreid over templates, met duplicatie (`escHtml`/`escapeHtml`, toast/confirm-patronen, fetch-wrappers). Eén gedeelde `static/app.js` vermindert duplicatie én is een voorwaarde voor een strakkere CSP.
-- **Hardcoded persoonlijke defaults in de scripts** — `nas-pull-backup.sh:12-19` (`martijn@212.227.135.150`, `vps.dmmusic.nl`) en `vps-backup.sh:18` zijn voor eigen gebruik prima, maar voor een publieke repo horen die in een gedocumenteerd `.backup_env`-voorbeeldbestand.
+- **Hardcoded persoonlijke defaults in de scripts** — `nas-pull-backup.sh` (VPS-host/poort/webhook-URL) en `vps-backup.sh` (paden, backup-user) bevatten omgevingsspecifieke defaults; voor een publieke repo horen die in een gedocumenteerd `.backup_env`-bestand. *(Opgelost in v1.8.1: defaults zijn generiek gemaakt en gedocumenteerd in de README.)*
 - **Cross-field configvalidatie ontbreekt** — `ssl_warning_days` < `ssl_critical_days` of onlogische DDoS-thresholds worden geaccepteerd (`app.py:~5630`, `config.py`).
 
 ---

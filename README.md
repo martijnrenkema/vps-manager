@@ -237,15 +237,15 @@ Install the VPS-side script as root:
 
 ```bash
 sudo install -m 750 web/vps-backup.sh /usr/local/bin/vps-backup.sh
-sudo install -m 640 /dev/null /var/www/vps.dmmusic.nl/data/.backup_env
-sudo sh -c 'printf "WEBHOOK_SECRET=%s\n" "your-webhook-secret" > /var/www/vps.dmmusic.nl/data/.backup_env'
+sudo install -m 640 /dev/null /var/www/vps-manager/data/.backup_env
+sudo sh -c 'printf "WEBHOOK_SECRET=%s\n" "your-webhook-secret" > /var/www/vps-manager/data/.backup_env'
 echo '0 3 * * * root /usr/local/bin/vps-backup.sh' | sudo tee /etc/cron.d/vps-backup
 sudo cp deploy/logrotate-vps-manager /etc/logrotate.d/vps-manager
 ```
 
 What it backs up:
 - MariaDB dumps for all non-system databases, plus SQLite `.db` files under included sites.
-- Site data from `/var/www`, excluding `html` and `vps.dmmusic.nl` by default.
+- Site data from `/var/www`, excluding `html` and the manager's own directory (`vps-manager`) by default — override with `SKIP_DIRS` in `.backup_env`.
 - WordPress `wp-content` uploads/themes/plugins and custom root files, without WordPress core.
 - Node/Python/static site files without rebuildable dependencies such as `node_modules`, `.next`, `venv`, `.git`, caches, logs and bytecode.
 - Nginx/Caddy, Let's Encrypt, cron/systemd/PHP/MySQL/fail2ban/UFW/SSH metadata, plus selected site `.env` and `wp-config.php` files.
@@ -260,7 +260,12 @@ Install the NAS-side script on Synology:
 mkdir -p /volume1/Backup/vps
 install -m 750 web/nas-pull-backup.sh /volume1/Backup/vps/pull-backup.sh
 install -m 600 /dev/null /volume1/Backup/vps/.backup_env
-printf "WEBHOOK_SECRET=%s\n" "your-webhook-secret" > /volume1/Backup/vps/.backup_env
+cat > /volume1/Backup/vps/.backup_env <<'EOC'
+VPS=youruser@your-vps-hostname
+SSH_PORT=22
+WEBHOOK_URL=https://your-dashboard-domain/api/backup/webhook
+WEBHOOK_SECRET=your-webhook-secret
+EOC
 ```
 
 Configure Synology Task Scheduler to run:

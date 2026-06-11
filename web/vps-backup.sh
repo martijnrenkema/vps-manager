@@ -15,18 +15,21 @@ RETENTION_DAYS="${RETENTION_DAYS:-7}"
 CHECKSUM_FILE="$BACKUP_DIR/checksums_$DATE.sha256"
 LOG="${LOG:-/var/log/vps-backup.log}"
 WEBHOOK_URL="${WEBHOOK_URL:-http://127.0.0.1:5050/api/backup/webhook}"
-BACKUP_ENV="${BACKUP_ENV:-/var/www/vps.dmmusic.nl/data/.backup_env}"
+BACKUP_ENV="${BACKUP_ENV:-/var/www/vps-manager/data/.backup_env}"
 WWW_DIR="${WWW_DIR:-/var/www}"
 LOCK_FILE="$BACKUP_DIR/.vps-backup.lock"
-BACKUP_READ_USER="${BACKUP_READ_USER:-martijn}"
-# De data/ van de manager staat NIET in git (config.json met 2FA-secret,
-# .secret_key, VAPID-keys) en moet dus wél mee in de backup, ook al wordt
-# de manager-directory zelf overgeslagen.
-MANAGER_DATA_DIR="${MANAGER_DATA_DIR:-/var/www/vps.dmmusic.nl/data}"
+# Optional: user that may read the backups (for the rsync pull from the NAS).
+# Empty = no chown, backups stay owned by root.
+BACKUP_READ_USER="${BACKUP_READ_USER:-}"
+# The manager's data/ is NOT in git (config.json with 2FA secret,
+# .secret_key, VAPID keys) so it must be included in the backup even
+# though the manager directory itself is skipped.
+MANAGER_DATA_DIR="${MANAGER_DATA_DIR:-/var/www/vps-manager/data}"
 
 # Directories in /var/www that are not backup targets.
-# vps.dmmusic.nl is redeployable from git and contains the manager itself.
-SKIP_DIRS="${SKIP_DIRS:-html vps.dmmusic.nl}"
+# vps-manager is redeployable from git; its data/ is backed up separately
+# via MANAGER_DATA_DIR. Override SKIP_DIRS if your deploy dir has another name.
+SKIP_DIRS="${SKIP_DIRS:-html vps-manager}"
 SKIP_CONFIG_DIRS="${SKIP_CONFIG_DIRS:-$SKIP_DIRS}"
 
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
@@ -160,18 +163,19 @@ fi
 tar czf "$BACKUP_DIR/configs/system_$DATE.tar.gz" \
     --ignore-failed-read \
     /etc/cron.d /etc/crontab /etc/systemd/system /etc/php /etc/mysql \
-    /etc/fail2ban /etc/ufw /etc/ssh/sshd_config /home/martijn/.pm2/dump.pm2 \
+    /etc/fail2ban /etc/ufw /etc/ssh/sshd_config \
+    /root/.pm2/dump.pm2 /home/*/.pm2/dump.pm2 \
     2>/dev/null || true
 
-# VPS Manager state: secrets en instellingen die niet uit git herstelbaar zijn
+# VPS Manager state: secrets and settings that cannot be restored from git
 if [ -d "$MANAGER_DATA_DIR" ]; then
     tar czf "$BACKUP_DIR/configs/vps-manager-data_$DATE.tar.gz" \
         --exclude='*.tmp' \
         -C "$(dirname "$MANAGER_DATA_DIR")" "$(basename "$MANAGER_DATA_DIR")"
 fi
 
-# Process substitution i.p.v. pipe: in een pipe-subshell zou een falende cp
-# onzichtbaar blijven voor set -e en de ERR-trap (backup meldt dan "success").
+# Process substitution instead of a pipe: in a pipe subshell a failing cp
+# would be invisible to set -e and the ERR trap (backup would report success).
 while IFS= read -r envfile; do
     sitename=$(basename "$(dirname "$envfile")")
     is_listed "$sitename" "$SKIP_CONFIG_DIRS" && continue
@@ -260,7 +264,7 @@ mv "$tmp_checksum" "$CHECKSUM_FILE"
 
 find "$BACKUP_DIR" -type d -exec chmod 755 {} \;
 find "$BACKUP_DIR/sites" -type f -exec chmod 644 {} \;
-if id -u "$BACKUP_READ_USER" >/dev/null 2>&1; then
+if [ -n "$BACKUP_READ_USER" ] && id -u "$BACKUP_READ_USER" >/dev/null 2>&1; then
     chown -R "$BACKUP_READ_USER:$BACKUP_READ_USER" "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" 2>/dev/null || true
     chown "$BACKUP_READ_USER:$BACKUP_READ_USER" "$CHECKSUM_FILE" 2>/dev/null || true
 fi
