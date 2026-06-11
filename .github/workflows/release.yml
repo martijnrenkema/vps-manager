@@ -1,0 +1,22 @@
+name: Release
+
+# Automatically creates a GitHub release when a v* tag is pushed.
+# The release notes are taken from RELEASE.md (update it before tagging).
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: RELEASE.md

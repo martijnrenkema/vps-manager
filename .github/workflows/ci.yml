@@ -20,9 +20,9 @@ jobs:
       - name: Syntax check
         run: python -m py_compile web/app.py web/config.py
 
-      # Alleen echte fouten (syntax errors, undefined names, foute
-      # vergelijkingen) — geen stijlregels, die zouden op de bestaande
-      # codebase alleen ruis geven.
+      # Only real errors (syntax errors, undefined names, broken
+      # comparisons) — no style rules, which would only add noise on the
+      # existing codebase.
       - name: Critical lint (pyflakes errors)
         run: flake8 --select=E9,F63,F7,F82 web/
 

@@ -351,46 +351,65 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.9.0 - Production Server, Update Rollback & Bug Fixes
+- **Production WSGI server** - The app now serves via waitress instead of the Flask dev server (with automatic fallback if waitress is missing); SSE update progress streams per event
+- **Self-update rollback watchdog** - The updater arms a detached watchdog before restarting; if the new version fails its `/health` check, it automatically rolls back to the previous commit, restarts, and records an audit entry plus a notification. A broken release can no longer leave the dashboard unreachable
+- **Health endpoint** - New unauthenticated `GET /health` for uptime monitoring, PM2 health checks and reverse proxy checks
+- **Manager state now backed up** - `vps-backup.sh` includes the manager's `data/` directory (settings, 2FA secret, session key, VAPID keys) as a separate tarball; previously a disk failure meant a 2FA lockout and losing all push subscriptions
+- **TOTP replay protection** - Each 2FA time step is accepted at most once, so an observed/intercepted code cannot be reused within its validity window
+- **Session fixation protection** - The session is fully regenerated on every successful login
+- **Fix: corrupt config silently wiped** - A corrupt `config.json` is now logged and preserved as `config.json.corrupt` instead of being silently replaced with defaults on the next save
+- **Fix: NAS webhook broke on multi-line errors** - `json_escape` in `nas-pull-backup.sh` now escapes newlines/control characters, so failure reports with rsync output no longer produce invalid JSON
+- **Fix: backup script could report success on partial failure** - `find | while` pipe subshells hid errors from `set -e`/the ERR trap; replaced with process substitution
+- **Fix: file browser symlink handling** - All file routes resolve symlinks consistently (realpath) for both the permission check and the actual access; deleting a symlink now removes the link itself (deleting a directory symlink previously errored)
+- **IPv6 support in firewall** - Whitelist and UFW rule validation now accept IPv6 addresses and CIDR (server and client side)
+- **Faster website checks** - Per-site HTTP status checks (Nginx and Caddy) run in parallel instead of sequentially; with many sites this cuts page load from the sum of all checks to the slowest single check
+- **Memory housekeeping** - Expired TTL/IP-geolocation cache entries are swept periodically instead of accumulating forever
+- **Security headers** - Added `Strict-Transport-Security` (HSTS)
+- **Generic defaults** - Removed environment-specific values (deploy paths, usernames, hostnames) from the backup scripts and file browser; everything is configurable via `.backup_env` and the file browser enumerates real system accounts
+- **Dependency pinning & CI** - `requirements.txt` now uses bounded version ranges; new GitHub Actions workflow runs syntax checks, critical lint and shell checks on every push
+- **Misc** - Login page uses the locally vendored Inter font (Google Fonts reference removed), logrotate config shipped in `deploy/`, UFW table refresh errors now show feedback instead of failing silently, shared HTML escaping helper deduplicated
+
 ### v1.8.0 - Security & Robustness Hardening
-- **Web terminal dichtgezet** - Interpreters die zelf commando's of bestanden kunnen spawnen (awk, sed, find, xargs, php, git, tar, mysql) uit de allowlist gehaald, sudo-flags (`sudo -u …`) geweigerd, en command-substitution/process-substitution/newlines geblokkeerd. Voorheen kon een ingelogde gebruiker via bv. `sudo awk 'BEGIN{system("id")}'` een root-shell krijgen
-- **Root-cronjobs met bevestiging** - Toevoegen/uitvoeren van een cronjob die als root draait vraagt nu een expliciete bevestiging in de UI, en alle cron-acties worden in het audit-log vastgelegd
-- **Fix: DDoS-detectie werkte niet** - `ss` met state-filter laat de State-kolom weg, dus de connectie-per-IP telling las de verkeerde kolom (`$5` i.p.v. `$4`) en de "Possible DDoS"-alert kon nooit afgaan
-- **Fix: Caddy log-blok werd omgekeerd ingevoegd** - Hierdoor faalde `caddy validate` en herschreef de app in Caddy-modus bij elke cache-expiry alle configs, faalde, en draaide terug
-- **Fix: monitor-crash zonder alerts** - `cooldown` werd alleen binnen `if alerts:` toegekend maar onvoorwaardelijk gebruikt in de cleanup; bij een herstart met stale entries crashte elke cyclus stil
-- **Concurrency-races verholpen** - Gedeelde locks rond read-modify-write van `subscriptions.json` / `notification_log.json` / `notification_history.json` en alle config-writers (wachtwoord, 2FA, SMTP, notificatie-voorkeuren, dismiss alert), zodat monitor-thread en webrequests elkaar niet meer overschrijven
-- **Self-update robuuster** - Breekt nu af vóór de herstart als git reset, bestandskopie of pip install faalt (geen half-toegepaste update meer), draait altijd `pip install`, en herstart via een vertraagde thread zodat de respons eerst verzonden wordt
-- **Push-notificaties** - Bredere foutafvang zodat één kapotte subscription de loop niet breekt, en de cooldown-state wordt direct na elke succesvolle push weggeschreven (geen dubbele meldingen meer na een netwerkfout)
-- **IP-geolocatie versneld** - Lookups worden nu per IP gecachet (24u) en parallel opgehaald met een harde tijdslimiet i.p.v. tot 100 sequentiële calls die de SSH-logs-pagina minuten konden blokkeren
-- **CLI-tool** - Deploy stopt nu bij een gefaalde `npm install`/`build` (geen kapotte build die live gaat), alle SSH/lokale calls hebben een timeout, `rsync --delete` wordt voorafgegaan door een bron-check (voorkomt wissen van de remote bij een lege/niet-gemounte bron), en bronpaden worden per-OS opgelost (Linux vs macOS)
-- **Stored XSS gedicht** - `escHtml()`/`escapeHtml()` escapen nu ook quotes, zodat een kwaadaardig land-antwoord van de externe geo-API niet uit een `title="…"`-attribuut kan breken
-- **Security headers** - Content-Security-Policy, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` en `Referrer-Policy` toegevoegd; ProxyFix zodat rate limiting en audit-logs de echte client-IP zien; dev-server bindt standaard op loopback; timing-safe username-vergelijking; logout via CSRF-beschermde POST; Caddy SSL-expiry in UTC; auth.log-parser begrijpt nu ook het ISO8601-formaat van Ubuntu 24.04
+- **Web terminal locked down** - Removed interpreters that can spawn commands or files (awk, sed, find, xargs, php, git, tar, mysql) from the allowlist, rejected sudo flags (`sudo -u ...`), and blocked command substitution/process substitution/newlines. Previously a logged-in user could obtain a root shell via e.g. `sudo awk 'BEGIN{system("id")}'`
+- **Root cronjobs require confirmation** - Adding or running a cronjob that runs as root now asks for explicit confirmation in the UI, and all cron actions are recorded in the audit log
+- **Fix: DDoS detection never fired** - `ss` with a state filter omits the State column, so the per-IP connection count read the wrong column (`$5` instead of `$4`) and the "Possible DDoS" alert could never trigger
+- **Fix: Caddy log block inserted reversed** - This made `caddy validate` fail, so in Caddy mode the app rewrote all configs on every cache expiry, failed validation, and rolled back — in a loop
+- **Fix: monitor crash without alerts** - `cooldown` was only assigned inside `if alerts:` but used unconditionally in the cleanup; after a restart with stale entries every monitor cycle crashed silently
+- **Concurrency races resolved** - Shared locks around read-modify-write of `subscriptions.json` / `notification_log.json` / `notification_history.json` and all config writers (password, 2FA, SMTP, notification preferences, dismiss alert), so the monitor thread and web requests no longer overwrite each other's changes
+- **More robust self-update** - Now aborts before the restart if git reset, the file copy or pip install fails (no more half-applied updates), always runs `pip install`, and restarts via a delayed thread so the response is sent first
+- **Push notifications** - Broader error handling so one broken subscription doesn't break the send loop, and cooldown state is persisted immediately after every successful push (no more duplicate notifications after a network error)
+- **Faster IP geolocation** - Lookups are cached per IP (24h) and fetched in parallel with a hard time limit, instead of up to 100 sequential calls that could block the SSH logs page for minutes
+- **CLI tool** - Deploy now stops on a failed `npm install`/`build` (no broken build going live), all SSH/local calls have timeouts, `rsync --delete` is preceded by a source check (prevents wiping the remote on an empty/unmounted source), and source paths are resolved per OS (Linux vs macOS)
+- **Stored XSS fixed** - `escHtml()`/`escapeHtml()` now also escape quotes, so a malicious country name from the external geo API cannot break out of a `title="..."` attribute
+- **Security headers** - Added Content-Security-Policy, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy`; ProxyFix so rate limiting and audit logs see the real client IP; server binds to loopback by default; timing-safe username comparison; logout via CSRF-protected POST; Caddy SSL expiry in UTC; auth.log parser now also understands Ubuntu 24.04's ISO8601 format
 
 ### v1.7.5 - Daily Update Notification Window
-- **Fix: dubbele/nachtelijke update notificaties** - System en app update meldingen worden nu gebatcht en maximaal één keer per dag verstuurd, na een instelbaar tijdstip (default 08:00). Voorheen werd je 's nachts wakker gemaakt als er een nieuw apt package of GitHub release verscheen, en bij elke wijziging van het aantal updates (5 → 6 available) kwam er weer een melding bovenop
-- **Nieuwe setting "Updates notification time"** - Configureerbaar in Settings → Monitor & Notifications; ook eerdere updates wachten netjes tot dit tijdstip voordat ze gepusht/gemaild worden
-- **Geldt voor push én email** - Beide kanalen gebruiken dezelfde dagelijkse gate (aparte markers per kanaal), dashboard alerts blijven realtime zichtbaar
+- **Fix: duplicate/nighttime update notifications** - System and app update notifications are now batched and sent at most once per day, after a configurable time (default 08:00). Previously you could be woken at night when a new apt package or GitHub release appeared, and every change in the update count (5 → 6 available) produced yet another notification
+- **New "Updates notification time" setting** - Configurable in Settings → Monitor & Notifications; pending update notifications wait for this time before being pushed/emailed
+- **Applies to push and email** - Both channels use the same daily gate (separate markers per channel); dashboard alerts remain visible in real time
 
 ### v1.7.4 - PWA Icon Update Loop Fix
-- **Fix: Android prompt steeds "icon updaten" bij elke open** - De maskable icon variant in het manifest verwees naar dezelfde 512px PNG als de "any" purpose, terwijl het VPS-logo te dicht bij de randen ligt voor een correcte maskable safe zone (centrale 80%). Hierdoor bleef Chrome op Android de WebAPK queue'en voor updates. Maskable purpose verwijderd zodat Android het standaard icon gebruikt zonder masking
-- **Service worker pre-cache opgeschoond** - Stale `/static/manifest.json` referentie verwijderd uit de pre-cache lijst (manifest wordt sinds v1.7.3 vanuit `/manifest.json` geserveerd); SW cache bumped naar v4 zodat bestaande installs het oppakken
-- **Note voor gebruikers:** als de "icon update" prompt op Android blijft komen na deze update, verwijder de PWA en installeer hem opnieuw — dat reset Chrome's WebAPK identity
+- **Fix: Android repeatedly prompting to update the icon** - The maskable icon variant in the manifest pointed to the same 512px PNG as the "any" purpose, while the VPS logo sits too close to the edges for a valid maskable safe zone (central 80%). This kept Chrome on Android queueing WebAPK updates. The maskable purpose was removed so Android uses the standard icon without masking
+- **Service worker pre-cache cleaned up** - Removed the stale `/static/manifest.json` reference from the pre-cache list (the manifest is served from `/manifest.json` since v1.7.3); SW cache bumped to v4 so existing installs pick it up
+- **Note for users:** if the "icon update" prompt keeps appearing on Android after this update, remove the PWA and reinstall it — that resets Chrome's WebAPK identity
 
 ### v1.7.3 - Uptime False Positives & PWA Install Fixes
-- **Fix: false "site is down" alerts na reboot** - Uptime alert vereist nu twee opeenvolgende mislukte checks voordat een site als offline wordt gemarkeerd; voorkomt critical emails voor sites die na een VPS-reboot nog aan het opstarten zijn
-- **Fix: PWA niet installeerbaar op Android** - Service worker werd geregistreerd met `scope: '/'` vanuit `/static/sw.js`, maar Flask's static handler stuurt geen `Service-Worker-Allowed` header, waardoor Chrome de registratie stil afwijst en de install prompt niet verschijnt. SW en manifest worden nu vanuit de app root geserveerd met de juiste headers
-- **Manifest verbeterd** - `scope`, `id` en maskable icon toegevoegd voor betere Android install-ervaring
-- **Fix: dubbele notification emails in dezelfde minuut** - Extra dedup op `(category, message)` binnen één monitor cycle zodat twee alerts met verschillende `key`-velden maar identieke tekst niet allebei een mail produceren; notification log wordt nu ook direct na elke succesvolle email gepersisteerd zodat een tweede app-proces (bijv. duplicate PM2) de send kan zien en niet nogmaals mailt
+- **Fix: false "site is down" alerts after reboot** - The uptime alert now requires two consecutive failed checks before a site is marked offline, preventing critical emails for sites still starting up after a VPS reboot
+- **Fix: PWA not installable on Android** - The service worker was registered with `scope: '/'` from `/static/sw.js`, but Flask's static handler doesn't send a `Service-Worker-Allowed` header, so Chrome silently rejected the registration and the install prompt never appeared. The SW and manifest are now served from the app root with the correct headers
+- **Improved manifest** - Added `scope`, `id` and a maskable icon for a better Android install experience
+- **Fix: duplicate notification emails within the same minute** - Extra dedup on `(category, message)` within a single monitor cycle, so two alerts with different `key` fields but identical text no longer both produce an email; the notification log is also persisted immediately after every successful email so a second app process (e.g. a duplicate PM2 instance) sees the send and doesn't mail again
 
 ### v1.7.2 - Email Notification Dedup Fixes
-- **Fix: duplicate emails bij flapping alerts** - Waarden die rond een threshold schommelen (RAM, disk, load) konden elke 5 min opnieuw mailen doordat de cooldown entry te vroeg gewist werd; resolved alerts houden nu hun cooldown
-- **Fix: notification burst na restart** - Eerste monitor cycle na (her)start seed nu de notification log met bestaande alerts zonder te versturen, voorkomt dat alle actieve alerts tegelijk gemaild worden
+- **Fix: duplicate emails on flapping alerts** - Values oscillating around a threshold (RAM, disk, load) could trigger a new email every 5 minutes because the cooldown entry was cleared too early; resolved alerts now keep their cooldown
+- **Fix: notification burst after restart** - The first monitor cycle after a (re)start seeds the notification log with existing alerts without sending, preventing all active alerts from being emailed at once
 
 ### v1.7.1 - Notification Fixes & 2FA Email Improvements
-- **Code in subject line** - Verificatiecode nu zichtbaar in email subject voor snelle herkenning op telefoon
-- **Smart copy support** - Aangepast tekst-patroon zodat Samsung/Android/iOS de code automatisch detecteren en een "Kopieer" knop tonen in notificatie-popups
-- **Fix: notifications page hanging** - Pagina bleef hangen op "Checking notification support..." zonder actieve PWA/service worker; email preferences laden nu direct onafhankelijk van push status
-- **Fix: Enable Push crash** - Knop wordt nu verborgen als push niet beschikbaar is (was klikbaar maar crashte)
-- **Fix: app_update ontbrak in defaults** - Push subscribe en preferences fallback bevatten nu alle categorieën
+- **Code in subject line** - The verification code is now visible in the email subject for quick recognition on your phone
+- **Smart copy support** - Adjusted the text pattern so Samsung/Android/iOS automatically detect the code and offer a "Copy" button in notification popups
+- **Fix: notifications page hanging** - The page hung on "Checking notification support..." without an active PWA/service worker; email preferences now load immediately, independent of push status
+- **Fix: Enable Push crash** - The button is now hidden when push is unavailable (it was clickable but crashed)
+- **Fix: app_update missing from defaults** - Push subscribe and preference fallbacks now include all notification categories
 
 ### v1.7.0 - Email Notifications & SMTP Sender Name
 - **Email notifications** - Per-category email alerts alongside push notifications (matrix UI with Push/Email columns)

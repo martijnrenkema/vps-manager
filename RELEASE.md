@@ -1,52 +1,56 @@
-# v1.2.0
+# v1.9.0 — Production Server, Update Rollback & Bug Fixes
 
-## New Features
+This release moves the dashboard to a production WSGI server, makes self-updates safe to fail, and fixes a series of bugs found during a full code audit.
 
-### Audit Log
-Full audit trail for all actions performed in the dashboard. Every login, config change, service restart, firewall action, and file edit is logged with timestamp, user, IP address, and details.
-- View and filter the audit log from the sidebar
-- Automatic rotation (max 1000 entries)
-- Clear log via the UI
+## Highlights
 
-### File Editor
-In-browser file editing for all files within allowed paths. Accessible from the file browser by clicking any text file.
-- Syntax-aware editing with monospace font
-- Binary file detection (prevents editing non-text files)
-- File size limit (1MB) to prevent browser hangs
-- Read-only mode for files without write permissions
+### Production WSGI server
+The app now serves via [waitress](https://docs.pylonsproject.org/projects/waitress/) instead of the Flask development server. Waitress is installed automatically through `requirements.txt` during the update; if it is somehow missing the app falls back to the dev server rather than failing to start. Update progress (SSE) streams per event.
 
-### Cronjob Editor
-Full CRUD management for cron jobs, both user and root crontabs.
-- Add, edit, and delete cron entries via the UI
-- Human-readable schedule descriptions (e.g. "Dagelijks om 03:00")
-- Schedule validation with support for ranges (`1-10`), steps (`*/5`), range+step combos (`1-10/2`), and named values (`mon`, `jan`)
-- Systemd timers overview
+### Self-update rollback watchdog
+Updates installed from the Updates page are now guarded end-to-end:
+- The updater already aborted **before** restarting if the download, file copy or `pip install` failed.
+- New: right before restarting, it arms a detached watchdog that polls the new `/health` endpoint. If the freshly updated app never becomes healthy, the watchdog automatically rolls back to the previous commit, restarts, and the app records an audit entry plus a notification.
 
-### Nginx Config Editor
-Manage Nginx site configurations directly from the dashboard.
-- Read and edit config files in `/etc/nginx/sites-available/`
-- Enable/disable sites (symlink management)
-- Built-in `nginx -t` validation before saving or enabling
-- Nginx reload with return code verification
+A broken release can no longer leave the dashboard unreachable.
 
-### Push Notifications for App Updates
-The monitoring loop now checks GitHub for new VPS Manager releases and sends a push notification when an update is available.
+### Manager state is now part of the backup
+`vps-backup.sh` includes the manager's `data/` directory (settings, 2FA secret, session key, VAPID keys) as a separate tarball in `configs/`. Previously this data was in no backup at all — a disk failure meant a 2FA lockout and losing every push subscription.
 
-## Improvements
+## Security
+- **TOTP replay protection** — each 2FA time step is accepted at most once; an observed code cannot be reused within its validity window
+- **Session fixation protection** — the session is fully regenerated on every successful login
+- **HSTS** — `Strict-Transport-Security` header added
+- **File browser symlink handling** — all file routes resolve symlinks consistently for both the permission check and the actual access; deleting a symlink removes the link itself (deleting a directory symlink previously errored)
 
-- **Firewall**: Unban now also removes the corresponding UFW deny rule (matching the ban flow)
-- **Firewall**: Removed duplicate banned IPs card from the dashboard
-- **Config validation**: All nested config objects (`thresholds`, `ddos_detection`, `file_browser`, `services`) are type-checked before saving
+## Bug fixes
+- A corrupt `config.json` is now logged and preserved as `config.json.corrupt` instead of being silently replaced with defaults
+- `json_escape` in `nas-pull-backup.sh` escapes newlines/control characters, so failure reports containing rsync output no longer produce invalid JSON (which silently dropped exactly the error reports that mattered)
+- `find | while` pipe subshells in `vps-backup.sh` hid copy errors from `set -e`/the ERR trap; the backup could report success on partial failure
+- Firewall whitelist and UFW rule validation now accept IPv6 addresses and CIDR
+- UFW table refresh errors show feedback instead of failing silently
+- Login page uses the locally vendored Inter font (Google Fonts reference removed)
 
-## Security Fixes
+## Performance
+- Per-site HTTP status checks (Nginx and Caddy) run in parallel instead of sequentially — with many sites, page load drops from the sum of all checks to the slowest single check
+- Expired TTL/IP-geolocation cache entries are swept periodically instead of accumulating indefinitely
 
-- **File routes**: Permission check (`is_path_allowed`) now runs before file existence check, preventing information disclosure about files outside allowed paths
-- **Nginx reload**: Return code of `systemctl reload nginx` is now checked in enable/disable routes — no more silent failures
-- **Cron validator**: Fixed rejection of valid cron syntax (range+step like `1-10/2`, named values like `mon`, `jan`)
-- **Config validation**: Added `isinstance` checks for all nested objects to prevent 500 errors on malformed input
-- **Backup download**: Handles explicit `null` values in config for backup directories without crashing
-- **Banned IPs**: SQLite temp file `chmod` return code is now checked before opening the database
+## Operations
+- New unauthenticated `GET /health` endpoint for uptime monitoring, PM2 health checks and reverse proxy checks
+- `requirements.txt` now pins bounded version ranges
+- New CI workflow: syntax checks, critical lint and shell checks on every push
+- Logrotate config shipped in `deploy/`
+- Releases are now created automatically when a `v*` tag is pushed
 
-## Audit Trail Coverage
+## For existing backup script users
+The backup scripts no longer contain environment-specific defaults (paths, usernames, hostnames). If you reinstall `vps-backup.sh` or `nas-pull-backup.sh`, set your own values in `.backup_env` — see the README ("Backup Monitoring") for a full example. Your currently installed scripts keep working unchanged.
 
-Actions logged: `login`, `login_failed`, `logout`, `pm2_restart`, `pm2_stop`, `pm2_start`, `service_restart`, `service_start`, `service_stop`, `firewall_ban`, `firewall_unban`, `nginx_config_enable`, `nginx_config_disable`, `nginx_config_save`, `cronjob_add`, `cronjob_edit`, `cronjob_delete`, `file_save`, `config_update`
+## Updating
+Go to **Updates** in the sidebar and click install, or update manually:
+
+```bash
+cd /var/www/vps-manager
+git fetch origin && git reset --hard origin/main
+venv/bin/pip install -r requirements.txt
+pm2 restart vps-manager
+```
