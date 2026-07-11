@@ -43,6 +43,13 @@
     {% endif %}
 
     <div class="stats-grid">
+        {% if health %}
+        <div class="stat-card" style="border-top-color:var(--{{ health.color }})">
+            <div class="label">Health Score <span class="tooltip-icon" data-bs-toggle="tooltip" title="Overall server health based on active alerts: errors weigh heaviest, warnings less. 100 = no active alerts." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
+            <div class="value" style="color:var(--{{ health.color }})">{{ health.score }}<span style="font-size:14px;color:var(--text-muted)">/100</span></div>
+            <div class="sub">{{ health.label }}</div>
+        </div>
+        {% endif %}
         <div class="stat-card" style="border-top-color:var(--accent)">
             <div class="label">Hostname</div>
             <div class="value" style="font-size:18px">{{ data.hostname }}</div>
@@ -440,7 +447,7 @@ function updateAlertsBadge() {
 
 // Dashboard service restart
 async function dashServiceRestart(name, btn) {
-    var data = await apiCall('/service/' + encodeURIComponent(name) + '/restart', 'POST');
+    var data = await apiCall('/services/restart/' + encodeURIComponent(name), 'POST');
     if (!data) return;
     var row = btn.closest('tr');
     if (row) {

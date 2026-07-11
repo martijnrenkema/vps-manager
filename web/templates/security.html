@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% from "icons.html" import icon %}
+{% block title %}Security Audit - VPS Manager{% endblock %}
+{% block page_title %}Security Audit{% endblock %}
+
+{% block content %}
+<div class="stats-grid">
+    <div class="stat-card" style="border-top-color:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+        <div class="label">Security Score <span class="tooltip-icon" data-bs-toggle="tooltip" title="Percentage of hardening checks that pass. Warnings count half; informational checks are not scored.">?</span></div>
+        <div class="value" style="color:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">{{ data.score }}<span style="font-size:14px;color:var(--text-muted)">/100</span></div>
+        <div class="sub">Checked at {{ data.generated_at }}</div>
+    </div>
+    <div class="stat-card" style="border-top-color:var(--green)">
+        <div class="label">Passed</div>
+        <div class="value" style="color:var(--green)">{{ data.summary.ok }}</div>
+        <div class="sub">checks OK</div>
+    </div>
+    <div class="stat-card" style="border-top-color:var(--yellow)">
+        <div class="label">Warnings</div>
+        <div class="value" style="color:{% if data.summary.warn %}var(--yellow){% else %}var(--text-muted){% endif %}">{{ data.summary.warn }}</div>
+        <div class="sub">recommendations</div>
+    </div>
+    <div class="stat-card" style="border-top-color:var(--red)">
+        <div class="label">Failed</div>
+        <div class="value" style="color:{% if data.summary.fail %}var(--red){% else %}var(--text-muted){% endif %}">{{ data.summary.fail }}</div>
+        <div class="sub">need action</div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        {{ icon('shield') }} Hardening Checks
+        <button class="btn btn-sm" style="margin-left:auto" id="rerunBtn" onclick="rerunAudit(this)">Re-run audit</button>
+    </div>
+    <div class="card-body">
+        <div class="table-wrap">
+            <table class="table-responsive-cards">
+                <thead>
+                    <tr>
+                        <th style="width:110px">Status</th>
+                        <th>Check</th>
+                        <th>Details</th>
+                        <th>Recommendation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in data.checks %}
+                    <tr>
+                        <td data-label="Status">
+                            {% if c.status == 'ok' %}
+                                <span class="badge badge-green"><span class="badge-dot green"></span>OK</span>
+                            {% elif c.status == 'warn' %}
+                                <span class="badge badge-yellow"><span class="badge-dot yellow"></span>Warning</span>
+                            {% elif c.status == 'fail' %}
+                                <span class="badge badge-red"><span class="badge-dot red"></span>Failed</span>
+                            {% else %}
+                                <span class="badge">Info</span>
+                            {% endif %}
+                        </td>
+                        <td data-label="Check"><strong>{{ c.label }}</strong></td>
+                        <td data-label="Details"><span style="color:var(--text-secondary)">{{ c.details }}</span></td>
+                        <td data-label="Recommendation"><span style="color:var(--text-muted)">{{ c.recommendation or '—' }}</span></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<div class="card" style="margin-top:24px">
+    <div class="card-header">{{ icon('activity') }} Self-healing Services</div>
+    <div class="card-body">
+        <p style="color:var(--text-secondary);margin:0 0 16px">
+            When enabled, the monitor automatically restarts a monitored service that goes down
+            (max <span id="healMaxLabel">{{ auto_heal.get('max_restarts_per_day', 3) }}</span>&times; per service per 24h)
+            and sends a notification about the restart. A service that keeps failing after that
+            triggers a normal "down" alert instead.
+        </p>
+        <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="healEnabled" {% if auto_heal.get('enabled') %}checked{% endif %}>
+                <span>Enable auto-heal</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:8px">
+                <span style="color:var(--text-secondary)">Max restarts / day:</span>
+                <input type="number" id="healMax" class="form-control" style="width:80px" min="1" max="20"
+                       value="{{ auto_heal.get('max_restarts_per_day', 3) }}">
+            </label>
+            <button class="btn btn-sm btn-green" onclick="saveAutoHeal(this)">Save</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function rerunAudit(btn) {
+    btn.disabled = true;
+    btn.textContent = 'Running…';
+    try {
+        const res = await fetch('/api/security/audit?refresh=1');
+        if (res.ok) { location.reload(); return; }
+        showToast('Audit failed', 'error');
+    } catch (e) {
+        showToast('Audit failed', 'error');
+    }
+    btn.disabled = false;
+    btn.textContent = 'Re-run audit';
+}
+
+async function saveAutoHeal(btn) {
+    const enabled = document.getElementById('healEnabled').checked;
+    const maxRestarts = parseInt(document.getElementById('healMax').value, 10);
+    if (!maxRestarts || maxRestarts < 1 || maxRestarts > 20) {
+        showToast('Max restarts must be between 1 and 20', 'error');
+        return;
+    }
+    btn.disabled = true;
+    const data = await apiCall('/api/config', 'POST', {
+        auto_heal: { enabled: enabled, max_restarts_per_day: maxRestarts },
+    });
+    btn.disabled = false;
+    if (data && data.status === 'ok') {
+        document.getElementById('healMaxLabel').textContent = maxRestarts;
+        showToast('Auto-heal settings saved', 'success');
+    }
+}
+</script>
+{% endblock %}
