@@ -1,49 +1,44 @@
-# v1.9.0 — Production Server, Update Rollback & Bug Fixes
+# v1.10.0 — Security Audit, Self-Healing Services & Smarter Alerts
 
-This release moves the dashboard to a production WSGI server, makes self-updates safe to fail, and fixes a series of bugs found during a full code audit.
+This release makes the dashboard proactive: it audits the server's hardening, can heal failed services on its own, and warns about problems before they happen — plus a round of bug fixes from a full code review.
 
 ## Highlights
 
-### Production WSGI server
-The app now serves via [waitress](https://docs.pylonsproject.org/projects/waitress/) instead of the Flask development server. Waitress is installed automatically through `requirements.txt` during the update; if it is somehow missing the app falls back to the dev server rather than failing to start. Update progress (SSE) streams per event.
+### Security Audit page
+A new **Security Audit** page (sidebar → Security) runs nine read-only hardening checks and scores the result:
 
-### Self-update rollback watchdog
-Updates installed from the Updates page are now guarded end-to-end:
-- The updater already aborted **before** restarting if the download, file copy or `pip install` failed.
-- New: right before restarting, it arms a detached watchdog that polls the new `/health` endpoint. If the freshly updated app never becomes healthy, the watchdog automatically rolls back to the previous commit, restarts, and the app records an audit entry plus a notification.
+- SSH: root login and password authentication (from the effective `sshd -T` config)
+- UFW firewall active
+- fail2ban running
+- Automatic security updates (unattended-upgrades) enabled
+- Pending security updates
+- Pending reboot (kernel/libc updates waiting for a restart)
+- Two-factor authentication enabled on the dashboard itself
+- Backup freshness (last successful backup within 48h)
+- Unexpected publicly listening ports (anything other than SSH/HTTP/HTTPS bound to 0.0.0.0)
 
-A broken release can no longer leave the dashboard unreachable.
+Every finding comes with a concrete recommendation. Failures sort to the top, and a *Re-run audit* button refreshes all checks on demand. The audit never changes anything — it only reports.
 
-### Manager state is now part of the backup
-`vps-backup.sh` includes the manager's `data/` directory (settings, 2FA secret, session key, VAPID keys) as a separate tarball in `configs/`. Previously this data was in no backup at all — a disk failure meant a 2FA lockout and losing every push subscription.
+### Self-healing services (opt-in)
+When enabled, the monitor automatically restarts a monitored service that goes down, capped per service per 24 hours (default 3×). Each restart is recorded in the audit log and sent as a notification; a service that keeps failing triggers a "gave up" alert so a human takes over instead of an endless restart loop. Configure it on the Security Audit page. Disabled by default.
 
-## Security
-- **TOTP replay protection** — each 2FA time step is accepted at most once; an observed code cannot be reused within its validity window
-- **Session fixation protection** — the session is fully regenerated on every successful login
-- **HSTS** — `Strict-Transport-Security` header added
-- **File browser symlink handling** — all file routes resolve symlinks consistently for both the permission check and the actual access; deleting a symlink removes the link itself (deleting a directory symlink previously errored)
+### Predictive disk-full alert
+The monitor already collects disk usage every 5 minutes; a linear fit over that history now projects when `/` will be full. You get a warning when that is within 14 days and an error within 3 days — before the disk actually fills up, not after. Slow growth (< 0.1%/day) and short histories deliberately produce no forecast, so noise is never extrapolated.
+
+### Health score
+The dashboard shows an overall health score (0–100) computed from the active alerts — errors weigh heaviest — with a color-coded label, so one glance tells you whether anything needs attention.
+
+## New
+- **Reboot-required alert** — when `/var/run/reboot-required` exists (e.g. after a kernel update), the dashboard shows an alert and the daily update notification includes it
+- `GET /api/security/audit` endpoint and `security` section for `/api/refresh/`
 
 ## Bug fixes
-- A corrupt `config.json` is now logged and preserved as `config.json.corrupt` instead of being silently replaced with defaults
-- `json_escape` in `nas-pull-backup.sh` escapes newlines/control characters, so failure reports containing rsync output no longer produce invalid JSON (which silently dropped exactly the error reports that mattered)
-- `find | while` pipe subshells in `vps-backup.sh` hid copy errors from `set -e`/the ERR trap; the backup could report success on partial failure
-- Firewall whitelist and UFW rule validation now accept IPv6 addresses and CIDR
-- UFW table refresh errors show feedback instead of failing silently
-- Login page uses the locally vendored Inter font (Google Fonts reference removed)
-
-## Performance
-- Per-site HTTP status checks (Nginx and Caddy) run in parallel instead of sequentially — with many sites, page load drops from the sum of all checks to the slowest single check
-- Expired TTL/IP-geolocation cache entries are swept periodically instead of accumulating indefinitely
-
-## Operations
-- New unauthenticated `GET /health` endpoint for uptime monitoring, PM2 health checks and reverse proxy checks
-- `requirements.txt` now pins bounded version ranges
-- New CI workflow: syntax checks, critical lint and shell checks on every push
-- Logrotate config shipped in `deploy/`
-- Releases are now created automatically when a `v*` tag is pushed
-
-## For existing backup script users
-The backup scripts no longer contain environment-specific defaults (paths, usernames, hostnames). If you reinstall `vps-backup.sh` or `nas-pull-backup.sh`, set your own values in `.backup_env` — see the README ("Backup Monitoring") for a full example. Your currently installed scripts keep working unchanged.
+- **Dashboard restart button never worked** — it called `/service/<name>/restart` while the route is `/services/restart/<name>`; every click was a silent 404
+- **Monitor loop skipped its pause after the first cycle** — after seeding existing alerts at startup, `continue` bypassed the pacing sleep and immediately started a second full monitoring cycle
+- **IPv6 addresses could not be banned/unbanned** — fail2ban bans IPv6 too, but the firewall ban/unban endpoints only accepted IPv4, making those bans unmanageable from the UI
+- **HTTP 500 on non-ASCII 2FA codes** — `hmac.compare_digest` raises `TypeError` on non-ASCII strings; TOTP and email code verification now compare bytes and correctly answer "Invalid code"
+- **Websites page could crash on a config edge case** — an nginx `access_log`/`error_log` directive without a value caused an `IndexError` that broke the whole site list
+- **Saving push preferences for an unknown device reported success** — now returns 404, consistent with the per-device endpoint
 
 ## Updating
 Go to **Updates** in the sidebar and click install, or update manually:
