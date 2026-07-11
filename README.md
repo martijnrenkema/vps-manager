@@ -351,6 +351,19 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.10.0 - Security Audit, Self-Healing Services & Smarter Alerts
+- **Security Audit page** - Nine read-only hardening checks with a weighted score and concrete recommendations: SSH root login & password authentication (effective `sshd -T` config), UFW active, fail2ban running, unattended-upgrades enabled, pending security updates, pending reboot, dashboard 2FA, backup freshness, and unexpected publicly listening ports
+- **Self-healing services (opt-in)** - The monitor automatically restarts a down service (capped per service per 24h, default 3×) with audit logging and notifications; a service that keeps failing triggers a "gave up" alert instead of an endless restart loop
+- **Predictive disk-full alert** - A linear fit over the collected metrics history warns when `/` is projected to be full within 14 days (error within 3 days) — before the disk fills up, not after
+- **Reboot-required alert** - Detects `/var/run/reboot-required` (e.g. kernel updates) and surfaces it on the dashboard and in the daily update notification
+- **Health score** - The dashboard shows an overall 0-100 health score computed from active alerts, with color-coded label
+- **Fix: dashboard restart button never worked** - It called `/service/<name>/restart` while the route is `/services/restart/<name>`; every click was a silent 404
+- **Fix: monitor loop skipped its pause after the first cycle** - After seeding existing alerts at startup, `continue` bypassed the pacing sleep and immediately started a second full monitoring cycle
+- **Fix: IPv6 addresses could not be banned/unbanned** - fail2ban bans IPv6 too, but the ban/unban endpoints only accepted IPv4
+- **Fix: HTTP 500 on non-ASCII 2FA codes** - TOTP and email code verification now compare bytes; garbage input gets "Invalid code" instead of a server error
+- **Fix: websites page could crash** - An nginx `access_log`/`error_log` directive without a value caused an `IndexError` that broke the whole site list
+- **Fix: push preferences for an unknown device reported success** - Now returns 404, consistent with the per-device endpoint
+
 ### v1.9.0 - Production Server, Update Rollback & Bug Fixes
 - **Production WSGI server** - The app now serves via waitress instead of the Flask dev server (with automatic fallback if waitress is missing); SSE update progress streams per event
 - **Self-update rollback watchdog** - The updater arms a detached watchdog before restarting; if the new version fails its `/health` check, it automatically rolls back to the previous commit, restarts, and records an audit entry plus a notification. A broken release can no longer leave the dashboard unreachable
