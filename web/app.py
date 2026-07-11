@@ -666,6 +666,81 @@ def collect_metrics():
     return point
 
 
+# Auto-heal: restart-pogingen per service (in-memory; een herstart van de
+# app reset de teller, dat is acceptabel voor een daglimiet).
+_auto_heal_attempts = {}  # {service: [timestamp, ...]}
+_auto_heal_lock = threading.Lock()
+
+
+def _auto_heal_services(services):
+    """Restart services that are down, when auto-heal is enabled.
+
+    Returns a list of alert dicts describing what happened, so the caller
+    can feed them into the normal notification pipeline. Capped per service
+    per 24h: a crash-looping service moet een mens wakker maken, niet
+    eindeloos herstart worden.
+    """
+    cfg = CONFIG.get('auto_heal', {})
+    if not cfg.get('enabled', False):
+        return []
+    try:
+        max_per_day = int(cfg.get('max_restarts_per_day', 3))
+    except (ValueError, TypeError):
+        max_per_day = 3
+
+    alerts = []
+    now = time.time()
+    healed_any = False
+
+    for svc in services:
+        if svc.get('status') == 'active':
+            continue
+        name = svc.get('name', '')
+        if not name or not is_safe_name(name):
+            continue
+
+        with _auto_heal_lock:
+            attempts = [t for t in _auto_heal_attempts.get(name, []) if now - t < 86400]
+            if len(attempts) >= max_per_day:
+                _auto_heal_attempts[name] = attempts
+                alerts.append({
+                    'severity': 'error',
+                    'message': f"Auto-heal gave up on '{name}': still down after {max_per_day} restarts in 24h",
+                    'link': '/services',
+                    'key': f'auto_heal_gaveup_{name}',
+                })
+                continue
+            attempts.append(now)
+            _auto_heal_attempts[name] = attempts
+            attempt_no = len(attempts)
+
+        result = run_cmd_safe(['sudo', 'systemctl', 'restart', name], timeout=60)
+        if result.returncode == 0:
+            healed_any = True
+            log_audit('auto_heal_restart', {'service': name, 'attempt': attempt_no})
+            logger.info(f"Auto-heal: restarted '{name}' (attempt {attempt_no}/{max_per_day} today)")
+            alerts.append({
+                'severity': 'info',
+                'message': f"Service '{name}' was down and has been automatically restarted (attempt {attempt_no}/{max_per_day} today)",
+                'link': '/services',
+                'key': f'auto_heal_ok_{name}',
+            })
+        else:
+            err = (result.stderr or result.stdout or 'unknown error').strip()[:120]
+            log_audit('auto_heal_restart_failed', {'service': name, 'error': err})
+            logger.warning(f"Auto-heal: could not restart '{name}': {err}")
+            alerts.append({
+                'severity': 'error',
+                'message': f"Auto-heal could not restart '{name}': {err}",
+                'link': '/services',
+                'key': f'auto_heal_fail_{name}',
+            })
+
+    if healed_any:
+        _invalidate_cache('get_services_status')
+    return alerts
+
+
 def _monitor_loop():
     """Background thread: check alerts and send push notifications"""
     # Wait for app to fully start
@@ -696,16 +771,34 @@ def _monitor_loop():
 
             subs = _load_subscriptions()
             email_prefs_any = any(CONFIG.get('email_notifications', {}).values())
+            auto_heal_enabled = CONFIG.get('auto_heal', {}).get('enabled', False)
+            if not subs and not email_prefs_any and not auto_heal_enabled:
+                time.sleep(MONITOR_INTERVAL)
+                continue
+
+            services = get_services_status()
+
+            # Self-healing: probeer gefaalde services te herstarten vóórdat de
+            # alerts worden opgebouwd, zodat een geslaagde heal een
+            # heal-notificatie geeft in plaats van een "service down"-alert.
+            heal_alerts = []
+            try:
+                heal_alerts = _auto_heal_services(services)
+                if any(a['key'].startswith('auto_heal_ok_') for a in heal_alerts):
+                    services = get_services_status()
+            except Exception as e:
+                logger.warning(f"Auto-heal error: {e}")
+
             if not subs and not email_prefs_any:
                 time.sleep(MONITOR_INTERVAL)
                 continue
 
             # Gather current state - free intermediate data after building alerts
             data = get_server_overview()
-            services = get_services_status()
             pm2 = get_pm2_processes()
             ssl = get_ssl_info()
             alerts = get_dashboard_alerts(data, services, pm2, ssl)
+            alerts.extend(heal_alerts)
             del data, services, pm2, ssl
 
             # Add DDoS alerts
@@ -797,14 +890,14 @@ def _monitor_loop():
                         log_changed = True
                         logger.info(f"First cycle: seeded {len(current_alert_keys)} alerts into notification log (no notifications sent)")
                         first_cycle = False
-                        # Sla op en sla deze cyclus verder over (niets versturen).
-                        # Géén time.sleep hier: dat zou onder _notif_lock vallen en
-                        # webrequests minutenlang blokkeren. `continue` geeft de lock
-                        # vrij; de volgende cyclus paceert zichzelf via de sleep
-                        # onderaan de loop.
                         if log_changed:
                             _save_notification_log(notif_log)
-                        continue
+                        # Niets versturen deze cyclus: maak de alert-lijst leeg zodat
+                        # de verstuur-loop hieronder niets doet, maar val wél door
+                        # naar de cleanup en de sleep onderaan de while-loop. Een
+                        # `continue` zou die sleep overslaan en direct een tweede
+                        # volledige monitoringcyclus starten.
+                        alerts = []
 
                     for alert in alerts:
                         category = _classify_alert(alert)
@@ -1266,7 +1359,9 @@ def _verify_totp(secret, code):
     now = time.time()
     for offset in (0, -1, 1):
         step_time = now + offset * totp.interval
-        if hmac.compare_digest(totp.at(step_time), code):
+        # Vergelijk op bytes: compare_digest gooit een TypeError (→ HTTP 500)
+        # op str-input met niet-ASCII tekens uit het formulier.
+        if hmac.compare_digest(totp.at(step_time).encode(), code.encode('utf-8')):
             counter = int(step_time) // totp.interval
             with _totp_counter_lock:
                 if counter <= _totp_last_counter:
@@ -1310,7 +1405,9 @@ def _verify_email_code(submitted_code):
         if _email_2fa_code['attempts'] > _EMAIL_CODE_MAX_ATTEMPTS:
             _email_2fa_code.clear()
             return False, 'Too many attempts, request a new code'
-        if hmac.compare_digest(submitted_code, _email_2fa_code['code']):
+        # Vergelijk op bytes: compare_digest gooit een TypeError (→ HTTP 500)
+        # op str-input met niet-ASCII tekens uit het formulier.
+        if hmac.compare_digest(submitted_code.encode('utf-8'), _email_2fa_code['code'].encode()):
             _email_2fa_code.clear()
             return True, ''
         return False, 'Invalid code'
@@ -1810,6 +1907,17 @@ def _check_http_statuses(domains):
     return statuses
 
 
+def _nginx_directive_value(line, directive):
+    """First value of an nginx directive line, or None.
+
+    Guard tegen een directive zonder waarde (bijv. 'access_log;'):
+    .split()[0] op een lege lijst zou anders de hele sitelijst laten
+    crashen met een IndexError.
+    """
+    parts = line.replace(directive, '', 1).rstrip(';').strip().split()
+    return parts[0] if parts else None
+
+
 @_ttl_cache(60)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
@@ -1850,9 +1958,9 @@ def get_nginx_sites():
             elif 'proxy_pass' in line:
                 proxy = line.replace('proxy_pass', '').rstrip(';').strip()
             elif line.startswith('access_log') and 'off' not in line:
-                access_log_path = line.replace('access_log', '').rstrip(';').strip().split()[0]
+                access_log_path = _nginx_directive_value(line, 'access_log')
             elif line.startswith('error_log'):
-                error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
+                error_log_path = _nginx_directive_value(line, 'error_log')
 
         # Deduplicate domains (certbot creates 2 server blocks per config)
         domains = list(dict.fromkeys(domains))
@@ -1870,9 +1978,9 @@ def get_nginx_sites():
                         for line in info_result.stdout.strip().split('\n'):
                             line = line.strip()
                             if line.startswith('access_log') and 'off' not in line:
-                                access_log_path = line.replace('access_log', '').rstrip(';').strip().split()[0]
+                                access_log_path = _nginx_directive_value(line, 'access_log')
                             elif line.startswith('error_log'):
-                                error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
+                                error_log_path = _nginx_directive_value(line, 'error_log')
 
             sites.append({
                 'config': config,
@@ -2616,7 +2724,6 @@ def get_nginx_logs():
     """Get nginx log information"""
     nginx_cfg = CONFIG.get('nginx', {})
     error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
-    access_log = nginx_cfg.get('access_log', '/var/log/nginx/access.log')
 
     data = {'errors': [], 'per_site': [], 'access_summary': [], 'php_errors': []}
 
@@ -2896,6 +3003,74 @@ def get_disk_per_site():
     return sites, total
 
 
+def predict_disk_full_days():
+    """Estimate the number of days until / is full, based on a linear fit
+    over the collected metrics history.
+
+    Returns None when there is not enough data (< ~2h of points or < 6h
+    time span), when disk usage is not growing, or when growth is too slow
+    to produce a meaningful forecast (< 0.1%/day would extrapolate noise).
+    """
+    metrics = _load_metrics()
+    pts = [(m['ts'], m['disk']) for m in metrics
+           if isinstance(m.get('ts'), (int, float)) and isinstance(m.get('disk'), (int, float))]
+    if len(pts) < 24:
+        return None
+    span = pts[-1][0] - pts[0][0]
+    if span < 6 * 3600:
+        return None
+
+    # Least-squares linear fit: disk% = slope * t + b
+    n = len(pts)
+    t0 = pts[0][0]
+    xs = [t - t0 for t, _ in pts]
+    ys = [d for _, d in pts]
+    sx = sum(xs)
+    sy = sum(ys)
+    sxx = sum(x * x for x in xs)
+    sxy = sum(x * y for x, y in zip(xs, ys))
+    denom = n * sxx - sx * sx
+    if denom == 0:
+        return None
+    slope = (n * sxy - sx * sy) / denom  # %/second
+    slope_per_day = slope * 86400
+    if slope_per_day < 0.1:
+        return None
+
+    remaining = 100 - ys[-1]
+    if remaining <= 0:
+        return 0.0
+    return remaining / slope_per_day
+
+
+def compute_health_score(alerts):
+    """Compute an overall server health score (0-100) from active alerts.
+
+    Alerts al bevatten de individuele problemen (services down, disk,
+    SSL, updates, ...), dus de score weegt alleen de alerts zelf — anders
+    zou bijv. een kapotte service dubbel tellen.
+    """
+    score = 100
+    for a in alerts:
+        sev = a.get('severity')
+        if sev == 'error':
+            score -= 15
+        elif sev == 'warning':
+            score -= 5
+        else:
+            score -= 1
+    score = max(0, min(100, score))
+    if score >= 90:
+        label, color = 'Excellent', 'green'
+    elif score >= 75:
+        label, color = 'Good', 'green'
+    elif score >= 50:
+        label, color = 'Fair', 'yellow'
+    else:
+        label, color = 'Needs attention', 'red'
+    return {'score': score, 'label': label, 'color': color}
+
+
 def get_dashboard_alerts(data, services, pm2, ssl):
     """Generate dashboard alerts from existing data"""
     alerts = []
@@ -2978,6 +3153,28 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         if sec_count > 0:
             msg += f" (including {sec_count} security)"
         alerts.append({'severity': 'warning', 'message': msg, 'link': '/updates', 'key': 'updates_available'})
+
+    # Reboot required (e.g. kernel/libc updates installed but not active yet)
+    if os.path.exists('/var/run/reboot-required'):
+        alerts.append({
+            'severity': 'warning',
+            'message': 'Server reboot required to finish installed updates',
+            'link': '/updates',
+            'key': 'reboot_required',
+        })
+
+    # Predictive disk-full warning based on the metrics growth trend
+    try:
+        days = predict_disk_full_days()
+        if days is not None and days <= 14:
+            alerts.append({
+                'severity': 'error' if days <= 3 else 'warning',
+                'message': f"Disk / is projected to be full in ~{max(days, 0):.0f} days at the current growth rate",
+                'link': '/disk',
+                'key': 'disk_forecast',
+            })
+    except Exception:
+        logger.debug('Disk forecast failed', exc_info=True)
 
     # Sort: error first, then warning, then info
     alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 99))
@@ -3088,6 +3285,195 @@ def get_ddos_stats():
     stats['ip_threshold'] = ddos_cfg.get('single_ip_threshold', 50)
 
     return stats
+
+
+# ---------------------------------------------------------------------------
+# Security audit
+# ---------------------------------------------------------------------------
+
+def _audit_check(key, label, status, details='', recommendation=''):
+    """One security audit result. status: ok | warn | fail | info"""
+    return {
+        'key': key,
+        'label': label,
+        'status': status,
+        'details': details,
+        'recommendation': recommendation,
+    }
+
+
+# Poorten die publiek open horen te staan; al het andere is reden voor review.
+_EXPECTED_PUBLIC_PORTS = {'22', '80', '443'}
+
+
+@_ttl_cache(120)
+def get_security_audit():
+    """Run a set of hardening checks and return them with a score.
+
+    Alle checks zijn read-only; de audit past zelf niets aan.
+    """
+    checks = []
+
+    # --- SSH daemon hardening (effective config via sshd -T) ---
+    sshd_cfg = {}
+    result = run_cmd("sudo sshd -T 2>/dev/null", timeout=10)
+    if result.returncode == 0 and result.stdout.strip():
+        for line in result.stdout.split('\n'):
+            parts = line.split(None, 1)
+            if len(parts) == 2:
+                sshd_cfg[parts[0].lower()] = parts[1].strip().lower()
+
+    if sshd_cfg:
+        v = sshd_cfg.get('permitrootlogin', 'unknown')
+        if v in ('no', 'prohibit-password', 'without-password'):
+            checks.append(_audit_check('ssh_root_login', 'SSH root login', 'ok',
+                                       f'PermitRootLogin is {v}'))
+        else:
+            checks.append(_audit_check('ssh_root_login', 'SSH root login', 'fail',
+                                       f'PermitRootLogin is {v}',
+                                       'Set "PermitRootLogin no" (or prohibit-password) in /etc/ssh/sshd_config'))
+
+        v = sshd_cfg.get('passwordauthentication', 'unknown')
+        if v == 'no':
+            checks.append(_audit_check('ssh_password_auth', 'SSH password authentication', 'ok',
+                                       'Only key-based login is allowed'))
+        else:
+            checks.append(_audit_check('ssh_password_auth', 'SSH password authentication', 'warn',
+                                       f'PasswordAuthentication is {v}',
+                                       'Use SSH keys and set "PasswordAuthentication no" to stop brute-force attempts'))
+
+        port = sshd_cfg.get('port', '22')
+        checks.append(_audit_check('ssh_port', 'SSH port', 'info', f'sshd listens on port {port}'))
+    else:
+        checks.append(_audit_check('ssh_config', 'SSH configuration', 'info',
+                                   'Could not read the effective sshd configuration (sudo sshd -T failed)'))
+
+    # --- Firewall ---
+    result = run_cmd("sudo ufw status 2>/dev/null", timeout=10)
+    if result.returncode == 0 and 'Status: active' in result.stdout:
+        checks.append(_audit_check('ufw', 'UFW firewall', 'ok', 'Firewall is active'))
+    elif result.returncode == 0 and 'inactive' in result.stdout:
+        checks.append(_audit_check('ufw', 'UFW firewall', 'fail', 'UFW is installed but inactive',
+                                   'Enable it with "sudo ufw enable" (allow SSH first!)'))
+    else:
+        checks.append(_audit_check('ufw', 'UFW firewall', 'warn', 'UFW status could not be determined',
+                                   'Install and enable UFW, or verify another firewall is active'))
+
+    # --- fail2ban ---
+    result = run_cmd_safe(['systemctl', 'is-active', 'fail2ban'], timeout=5)
+    if result.stdout.strip() == 'active':
+        checks.append(_audit_check('fail2ban', 'fail2ban intrusion prevention', 'ok', 'fail2ban is running'))
+    else:
+        checks.append(_audit_check('fail2ban', 'fail2ban intrusion prevention', 'warn',
+                                   'fail2ban is not active',
+                                   'Install/start fail2ban to automatically ban brute-force attackers'))
+
+    # --- Automatic security updates ---
+    result = run_cmd_safe(['apt-config', 'dump', 'APT::Periodic::Unattended-Upgrade'], timeout=5)
+    if result.returncode == 0 and '"1"' in result.stdout:
+        checks.append(_audit_check('unattended', 'Automatic security updates', 'ok',
+                                   'unattended-upgrades is enabled'))
+    else:
+        checks.append(_audit_check('unattended', 'Automatic security updates', 'warn',
+                                   'unattended-upgrades appears to be disabled',
+                                   'Run "sudo dpkg-reconfigure unattended-upgrades" to enable automatic security patches'))
+
+    # --- Pending security updates ---
+    try:
+        sec_updates = [u for u in get_system_updates() if u['category'] == 'security']
+    except Exception:
+        sec_updates = []
+    if sec_updates:
+        checks.append(_audit_check('security_updates', 'Pending security updates', 'warn',
+                                   f'{len(sec_updates)} security update(s) waiting',
+                                   'Install them from the Updates page'))
+    else:
+        checks.append(_audit_check('security_updates', 'Pending security updates', 'ok',
+                                   'No security updates pending'))
+
+    # --- Reboot required ---
+    if os.path.exists('/var/run/reboot-required'):
+        checks.append(_audit_check('reboot', 'Pending reboot', 'warn',
+                                   'A reboot is required to activate installed updates (e.g. kernel)',
+                                   'Reboot the server at a convenient moment'))
+    else:
+        checks.append(_audit_check('reboot', 'Pending reboot', 'ok', 'No reboot required'))
+
+    # --- Dashboard 2FA ---
+    auth_cfg = CONFIG.get('auth', {})
+    if auth_cfg.get('tfa_method') or auth_cfg.get('totp_secret'):
+        checks.append(_audit_check('tfa', 'Dashboard two-factor authentication', 'ok', '2FA is enabled'))
+    else:
+        checks.append(_audit_check('tfa', 'Dashboard two-factor authentication', 'warn',
+                                   '2FA is not enabled for this dashboard',
+                                   'Enable TOTP or email 2FA in Settings'))
+
+    # --- Backup freshness ---
+    backup_status = _load_backup_status()
+    last_success = backup_status.get('last_success')
+    if isinstance(last_success, dict):
+        try:
+            last_dt = datetime.fromisoformat(last_success.get('timestamp', ''))
+            age_h = (datetime.now() - last_dt).total_seconds() / 3600
+            if age_h <= 48:
+                checks.append(_audit_check('backup', 'Recent backup', 'ok',
+                                           f'Last successful backup {age_h:.0f}h ago'))
+            else:
+                checks.append(_audit_check('backup', 'Recent backup', 'warn',
+                                           f'Last successful backup was {age_h / 24:.0f} days ago',
+                                           'Check the backup page and cron schedule'))
+        except (ValueError, TypeError):
+            checks.append(_audit_check('backup', 'Recent backup', 'info', 'Backup status could not be parsed'))
+    else:
+        checks.append(_audit_check('backup', 'Recent backup', 'info',
+                                   'No backup reports received yet',
+                                   'Configure the backup script and webhook secret'))
+
+    # --- Publicly listening ports ---
+    try:
+        net = get_network_info()
+        public_ports = {}
+        for p in net.get('ports', []):
+            local = p.get('local', '')
+            addr = local.rsplit(':', 1)[0] if ':' in local else local
+            if addr in ('0.0.0.0', '[::]', '*', '::'):
+                public_ports.setdefault(p.get('port', '?'), p.get('process') or '?')
+        unexpected = {port: proc for port, proc in public_ports.items()
+                      if port not in _EXPECTED_PUBLIC_PORTS}
+        if unexpected:
+            listing = ', '.join(f"{port} ({proc})" for port, proc in sorted(unexpected.items()))
+            checks.append(_audit_check('public_ports', 'Publicly listening ports', 'warn',
+                                       f'Unexpected public ports: {listing}',
+                                       'Bind internal services to 127.0.0.1 or restrict them with UFW'))
+        else:
+            checks.append(_audit_check('public_ports', 'Publicly listening ports', 'ok',
+                                       'Only standard ports (SSH/HTTP/HTTPS) are publicly reachable'))
+    except Exception:
+        logger.debug('Public port check failed', exc_info=True)
+        checks.append(_audit_check('public_ports', 'Publicly listening ports', 'info',
+                                   'Could not determine listening ports'))
+
+    # Score: percentage of scored checks that pass (info doesn't count)
+    scored = [c for c in checks if c['status'] in ('ok', 'warn', 'fail')]
+    ok_count = len([c for c in scored if c['status'] == 'ok'])
+    # 'warn' telt half mee: het is een aanbeveling, geen acuut gat
+    warn_count = len([c for c in scored if c['status'] == 'warn'])
+    score = round((ok_count + warn_count * 0.5) / len(scored) * 100) if scored else 0
+
+    order = {'fail': 0, 'warn': 1, 'ok': 2, 'info': 3}
+    checks.sort(key=lambda c: order.get(c['status'], 9))
+
+    return {
+        'checks': checks,
+        'score': score,
+        'summary': {
+            'ok': ok_count,
+            'warn': warn_count,
+            'fail': len([c for c in scored if c['status'] == 'fail']),
+            'info': len([c for c in checks if c['status'] == 'info']),
+        },
+        'generated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+    }
 
 
 UPTIME_HISTORY_PATH = DATA_DIR / 'uptime_history.json'
@@ -3428,7 +3814,9 @@ def dashboard():
     alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 99))
     dismissed = CONFIG.get('dismissed_alerts', [])
     alerts = [a for a in alerts if a.get('key') not in dismissed]
-    return render_template('dashboard.html', data=data, services=services, pm2=pm2, ssl=ssl, alerts=alerts)
+    health = compute_health_score(alerts)
+    return render_template('dashboard.html', data=data, services=services, pm2=pm2, ssl=ssl,
+                           alerts=alerts, health=health)
 
 
 @app.route('/api/alerts/dismiss', methods=['POST'])
@@ -3762,12 +4150,41 @@ def firewall():
     return render_template('firewall.html', data=data)
 
 
+@app.route('/security')
+@login_required
+def security_audit_page():
+    data = get_security_audit()
+    return render_template('security.html', data=data,
+                           auto_heal=CONFIG.get('auto_heal', {}))
+
+
+@app.route('/api/security/audit')
+@login_required
+def api_security_audit():
+    if request.args.get('refresh'):
+        _invalidate_cache('get_security_audit', 'get_system_updates', 'get_network_info')
+    return jsonify(get_security_audit())
+
+
 def _is_valid_ipv4(ip):
     """Validate an IPv4 address (without CIDR)"""
     return bool(re.match(
         r'^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$',
         ip
     ))
+
+
+def _is_valid_ip(ip):
+    """Validate an IPv4 or IPv6 address (without CIDR).
+
+    fail2ban bant ook IPv6-adressen (bijv. via de sshd-jail), dus ban/unban
+    vanuit de UI moet die ook accepteren — anders zijn IPv6-bans onbeheerbaar.
+    """
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
 
 
 def _is_valid_ip_or_cidr(value):
@@ -3794,8 +4211,8 @@ def firewall_ban():
     ip = data.get('ip', '').strip()
     jail = data.get('jail', 'sshd').strip()
 
-    if not ip or not _is_valid_ipv4(ip):
-        return jsonify({'status': 'error', 'message': 'Invalid IPv4 address'}), 400
+    if not ip or not _is_valid_ip(ip):
+        return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
     if not is_safe_name(jail):
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
@@ -3829,8 +4246,8 @@ def firewall_unban():
     ip = data.get('ip', '').strip()
     jail = data.get('jail', 'sshd').strip()
 
-    if not ip or not _is_valid_ipv4(ip):
-        return jsonify({'status': 'error', 'message': 'Invalid IPv4 address'}), 400
+    if not ip or not _is_valid_ip(ip):
+        return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
     if not is_safe_name(jail):
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
@@ -4225,7 +4642,6 @@ def _parse_unattended_upgrades_log():
         return entries
     lines = result.stdout.split('\n')
 
-    current_date = None
     current_packages = []
     for line in lines:
         line = line.strip()
@@ -4242,7 +4658,6 @@ def _parse_unattended_upgrades_log():
                 parts = line.split('Packages that will be upgraded:')
                 if len(parts) > 1:
                     current_packages = [p.strip() for p in parts[1].strip().split() if p.strip()]
-                    current_date = date_str[:10]
 
             elif 'INFO' in line and 'All upgrades installed' in line:
                 entries.append({
@@ -5447,6 +5862,8 @@ def push_preferences():
                     'app_update': bool(data.get('app_update', True)),
                 }
                 break
+        else:
+            return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
         _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Preferences saved'})
 
@@ -5470,7 +5887,6 @@ def push_subscriptions_list():
             provider = 'Unknown'
         masked = '...' + ep[-8:] if len(ep) > 8 else ep
         ua = s.get('user_agent', '')
-        is_pwa = 'standalone' in ua or ('Mobile' not in ua and 'Android' not in ua and provider != 'Unknown')
         result.append({
             'endpoint': ep,
             'endpoint_short': masked,
@@ -5764,6 +6180,18 @@ def validate_config(data):
             for key in ('connection_threshold', 'syn_threshold', 'single_ip_threshold'):
                 if key in dd and (not isinstance(dd[key], int) or dd[key] < 1):
                     errors.append(f'{key} must be a positive integer')
+
+    if 'auto_heal' in data:
+        if not isinstance(data['auto_heal'], dict):
+            errors.append('auto_heal must be an object')
+        else:
+            ah = data['auto_heal']
+            if 'enabled' in ah and not isinstance(ah['enabled'], bool):
+                errors.append('auto_heal.enabled must be a boolean')
+            if 'max_restarts_per_day' in ah:
+                v = ah['max_restarts_per_day']
+                if not isinstance(v, int) or not (1 <= v <= 20):
+                    errors.append('auto_heal.max_restarts_per_day must be between 1-20')
 
     if 'auth' in data:
         if not isinstance(data['auth'], dict):
@@ -6220,6 +6648,7 @@ def api_refresh(section):
         'nginx-logs': get_web_logs,
         'databases': get_database_info,
         'cronjobs': get_cronjobs,
+        'security': get_security_audit,
     }
 
     if section == 'disk':
@@ -6933,7 +7362,6 @@ def _ensure_caddy_site_logs(config_file):
             continue
 
         # Find the block boundaries
-        block_start = i
         depth = 0
         if '{' in lines[i]:
             depth = lines[i].count('{') - lines[i].count('}')

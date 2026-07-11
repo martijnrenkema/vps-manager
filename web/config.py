@@ -67,6 +67,10 @@ def get_default_config():
             "syn_threshold": 50,
             "single_ip_threshold": 50,
         },
+        "auto_heal": {
+            "enabled": False,
+            "max_restarts_per_day": 3,
+        },
         "web_server": "nginx",
         "nginx": {
             "error_log": "/var/log/nginx/error.log",
