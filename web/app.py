@@ -797,14 +797,14 @@ def _monitor_loop():
                         log_changed = True
                         logger.info(f"First cycle: seeded {len(current_alert_keys)} alerts into notification log (no notifications sent)")
                         first_cycle = False
-                        # Sla op en sla deze cyclus verder over (niets versturen).
-                        # Géén time.sleep hier: dat zou onder _notif_lock vallen en
-                        # webrequests minutenlang blokkeren. `continue` geeft de lock
-                        # vrij; de volgende cyclus paceert zichzelf via de sleep
-                        # onderaan de loop.
                         if log_changed:
                             _save_notification_log(notif_log)
-                        continue
+                        # Niets versturen deze cyclus: maak de alert-lijst leeg zodat
+                        # de verstuur-loop hieronder niets doet, maar val wél door
+                        # naar de cleanup en de sleep onderaan de while-loop. Een
+                        # `continue` zou die sleep overslaan en direct een tweede
+                        # volledige monitoringcyclus starten.
+                        alerts = []
 
                     for alert in alerts:
                         category = _classify_alert(alert)
@@ -1266,7 +1266,9 @@ def _verify_totp(secret, code):
     now = time.time()
     for offset in (0, -1, 1):
         step_time = now + offset * totp.interval
-        if hmac.compare_digest(totp.at(step_time), code):
+        # Vergelijk op bytes: compare_digest gooit een TypeError (→ HTTP 500)
+        # op str-input met niet-ASCII tekens uit het formulier.
+        if hmac.compare_digest(totp.at(step_time).encode(), code.encode('utf-8')):
             counter = int(step_time) // totp.interval
             with _totp_counter_lock:
                 if counter <= _totp_last_counter:
@@ -1310,7 +1312,9 @@ def _verify_email_code(submitted_code):
         if _email_2fa_code['attempts'] > _EMAIL_CODE_MAX_ATTEMPTS:
             _email_2fa_code.clear()
             return False, 'Too many attempts, request a new code'
-        if hmac.compare_digest(submitted_code, _email_2fa_code['code']):
+        # Vergelijk op bytes: compare_digest gooit een TypeError (→ HTTP 500)
+        # op str-input met niet-ASCII tekens uit het formulier.
+        if hmac.compare_digest(submitted_code.encode('utf-8'), _email_2fa_code['code'].encode()):
             _email_2fa_code.clear()
             return True, ''
         return False, 'Invalid code'
@@ -1810,6 +1814,17 @@ def _check_http_statuses(domains):
     return statuses
 
 
+def _nginx_directive_value(line, directive):
+    """First value of an nginx directive line, or None.
+
+    Guard tegen een directive zonder waarde (bijv. 'access_log;'):
+    .split()[0] op een lege lijst zou anders de hele sitelijst laten
+    crashen met een IndexError.
+    """
+    parts = line.replace(directive, '', 1).rstrip(';').strip().split()
+    return parts[0] if parts else None
+
+
 @_ttl_cache(60)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
@@ -1850,9 +1865,9 @@ def get_nginx_sites():
             elif 'proxy_pass' in line:
                 proxy = line.replace('proxy_pass', '').rstrip(';').strip()
             elif line.startswith('access_log') and 'off' not in line:
-                access_log_path = line.replace('access_log', '').rstrip(';').strip().split()[0]
+                access_log_path = _nginx_directive_value(line, 'access_log')
             elif line.startswith('error_log'):
-                error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
+                error_log_path = _nginx_directive_value(line, 'error_log')
 
         # Deduplicate domains (certbot creates 2 server blocks per config)
         domains = list(dict.fromkeys(domains))
@@ -1870,9 +1885,9 @@ def get_nginx_sites():
                         for line in info_result.stdout.strip().split('\n'):
                             line = line.strip()
                             if line.startswith('access_log') and 'off' not in line:
-                                access_log_path = line.replace('access_log', '').rstrip(';').strip().split()[0]
+                                access_log_path = _nginx_directive_value(line, 'access_log')
                             elif line.startswith('error_log'):
-                                error_log_path = line.replace('error_log', '').rstrip(';').strip().split()[0]
+                                error_log_path = _nginx_directive_value(line, 'error_log')
 
             sites.append({
                 'config': config,
@@ -2616,7 +2631,6 @@ def get_nginx_logs():
     """Get nginx log information"""
     nginx_cfg = CONFIG.get('nginx', {})
     error_log = nginx_cfg.get('error_log', '/var/log/nginx/error.log')
-    access_log = nginx_cfg.get('access_log', '/var/log/nginx/access.log')
 
     data = {'errors': [], 'per_site': [], 'access_summary': [], 'php_errors': []}
 
@@ -3770,6 +3784,19 @@ def _is_valid_ipv4(ip):
     ))
 
 
+def _is_valid_ip(ip):
+    """Validate an IPv4 or IPv6 address (without CIDR).
+
+    fail2ban bant ook IPv6-adressen (bijv. via de sshd-jail), dus ban/unban
+    vanuit de UI moet die ook accepteren — anders zijn IPv6-bans onbeheerbaar.
+    """
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
+
+
 def _is_valid_ip_or_cidr(value):
     """Validate an IPv4/IPv6 address or CIDR (e.g. 192.168.1.0/24, 2001:db8::/32).
 
@@ -3794,8 +3821,8 @@ def firewall_ban():
     ip = data.get('ip', '').strip()
     jail = data.get('jail', 'sshd').strip()
 
-    if not ip or not _is_valid_ipv4(ip):
-        return jsonify({'status': 'error', 'message': 'Invalid IPv4 address'}), 400
+    if not ip or not _is_valid_ip(ip):
+        return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
     if not is_safe_name(jail):
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
@@ -3829,8 +3856,8 @@ def firewall_unban():
     ip = data.get('ip', '').strip()
     jail = data.get('jail', 'sshd').strip()
 
-    if not ip or not _is_valid_ipv4(ip):
-        return jsonify({'status': 'error', 'message': 'Invalid IPv4 address'}), 400
+    if not ip or not _is_valid_ip(ip):
+        return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
     if not is_safe_name(jail):
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
@@ -4225,7 +4252,6 @@ def _parse_unattended_upgrades_log():
         return entries
     lines = result.stdout.split('\n')
 
-    current_date = None
     current_packages = []
     for line in lines:
         line = line.strip()
@@ -4242,7 +4268,6 @@ def _parse_unattended_upgrades_log():
                 parts = line.split('Packages that will be upgraded:')
                 if len(parts) > 1:
                     current_packages = [p.strip() for p in parts[1].strip().split() if p.strip()]
-                    current_date = date_str[:10]
 
             elif 'INFO' in line and 'All upgrades installed' in line:
                 entries.append({
@@ -5447,6 +5472,8 @@ def push_preferences():
                     'app_update': bool(data.get('app_update', True)),
                 }
                 break
+        else:
+            return jsonify({'status': 'error', 'message': 'Subscription not found'}), 404
         _save_subscriptions(subs)
     return jsonify({'status': 'ok', 'message': 'Preferences saved'})
 
@@ -5470,7 +5497,6 @@ def push_subscriptions_list():
             provider = 'Unknown'
         masked = '...' + ep[-8:] if len(ep) > 8 else ep
         ua = s.get('user_agent', '')
-        is_pwa = 'standalone' in ua or ('Mobile' not in ua and 'Android' not in ua and provider != 'Unknown')
         result.append({
             'endpoint': ep,
             'endpoint_short': masked,
@@ -6933,7 +6959,6 @@ def _ensure_caddy_site_logs(config_file):
             continue
 
         # Find the block boundaries
-        block_start = i
         depth = 0
         if '{' in lines[i]:
             depth = lines[i].count('{') - lines[i].count('}')
