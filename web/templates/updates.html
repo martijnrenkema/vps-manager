@@ -332,8 +332,19 @@ async function installAppUpdate() {
 
     var completed = false;
     // Get one-time token via CSRF-protected POST, then open SSE stream
-    var tokenRes = await fetch('/api/update/install-token', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
-    var tokenData = await tokenRes.json();
+    var tokenData;
+    try {
+        var tokenRes = await fetch('/api/update/install-token', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
+        if (!tokenRes.ok) throw new Error('HTTP ' + tokenRes.status);
+        tokenData = await tokenRes.json();
+        if (!tokenData.token) throw new Error('no token');
+    } catch (err) {
+        // Zonder deze catch bleef de stepper stil hangen als het token-request
+        // faalde (bijv. verlopen sessie) — precies "er gebeurt niks".
+        showToast('Could not start update (session expired?). Reload the page and try again.', 'error');
+        installBtn.disabled = false;
+        return;
+    }
     var es = new EventSource('/api/update/install-stream?token=' + encodeURIComponent(tokenData.token));
 
     es.onmessage = function(e) {

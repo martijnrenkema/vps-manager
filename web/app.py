@@ -5012,11 +5012,6 @@ def update_install_stream():
             yield f"data: {json.dumps({'type': 'error', 'message': 'Invalid or expired token'})}\n\n"
         return Response(denied(), mimetype='text/event-stream')
 
-    if not _apt_lock.acquire(blocking=False):
-        def error_stream():
-            yield f"data: {json.dumps({'type': 'error', 'message': 'Another update operation is already running'})}\n\n"
-        return Response(error_stream(), mimetype='text/event-stream')
-
     def generate():
         import json as _json
 
@@ -5122,18 +5117,29 @@ def update_install_stream():
         t.start()
 
     def generate_with_lock():
+        # Lock pas nemen zodra de stream echt geïtereerd wordt: als de
+        # response nooit start (bijv. een servererror bij het opzetten),
+        # draait een try/finally rond een nog-niet-gestarte generator niet
+        # en zou de lock voor altijd bezet blijven.
+        if not _apt_lock.acquire(blocking=False):
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Another update operation is already running'})}\n\n"
+            return
         try:
             yield from generate()
         finally:
             _apt_lock.release()
 
+    # NB: geen 'Connection: keep-alive' header — dat is een hop-by-hop
+    # header die WSGI-apps niet mogen zetten (PEP 3333). Waitress handhaaft
+    # dat met een AssertionError, waardoor deze stream sinds de overstap
+    # naar waitress altijd direct crashte (HTTP 500, geen enkel event) en
+    # de in-app updater "niets deed".
     return Response(
         generate_with_lock(),
         mimetype='text/event-stream',
         headers={
             'Cache-Control': 'no-cache',
             'X-Accel-Buffering': 'no',
-            'Connection': 'keep-alive',
         }
     )
 
