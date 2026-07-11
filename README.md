@@ -351,6 +351,9 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v1.10.2 - Update Button Fallback
+- **In-app updater falls back automatically** - If the update progress stream fails before delivering a single event (as it did in v1.9.0/v1.10.0), the button now automatically installs the update via the plain install endpoint instead of stranding the user. No live step-by-step progress in that case, but the update completes and the page reloads
+
 ### v1.10.1 - Critical Fix: In-App Updater Broken Since v1.9.0
 - **Fix: in-app updater failed instantly** - The update progress stream set a hop-by-hop `Connection: keep-alive` header, which waitress (the production server since v1.9.0) rejects before sending anything; clicking *Install update* did nothing. Updating from v1.9.0/v1.10.0 requires one manual update (`git fetch origin && git reset --hard origin/main`, `venv/bin/pip install -r requirements.txt`, `pm2 restart vps-manager`)
 - **Fix: update lock could leak** - A stream that failed before starting never released the update lock, blocking every retry (including apt updates) with "Another update operation is already running" until a restart

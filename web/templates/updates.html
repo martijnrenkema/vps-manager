@@ -346,8 +346,10 @@ async function installAppUpdate() {
         return;
     }
     var es = new EventSource('/api/update/install-stream?token=' + encodeURIComponent(tokenData.token));
+    var gotEvent = false;
 
     es.onmessage = function(e) {
+        gotEvent = true;
         var data = JSON.parse(e.data);
 
         if (data.type === 'complete') {
@@ -383,10 +385,35 @@ async function installAppUpdate() {
     es.onerror = function() {
         es.close();
         if (completed) return;
+        if (!gotEvent) {
+            // The stream died before delivering a single event, so no update
+            // has started yet (a broken stream, not a mid-update restart).
+            // Fall back to the plain install endpoint: no live progress, but
+            // the button still works instead of stranding the user.
+            installAppUpdateFallback(installBtn, stepperEl);
+            return;
+        }
         // Connection lost unexpectedly - app may be restarting
         showToast('Connection lost. Reloading...', 'warning');
         setTimeout(function() { location.reload(); }, 5000);
     };
+}
+
+async function installAppUpdateFallback(installBtn, stepperEl) {
+    stepperEl.innerHTML = '<div class="alert alert-warning">Live progress unavailable — installing the update in the background. This takes about a minute; the page reloads automatically.</div>';
+    try {
+        var res = await fetch('/api/update/install', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
+        var data = await res.json();
+        if (res.ok && data.status === 'ok') {
+            showToast('Update installed (v' + data.previous_version + ' → v' + data.new_version + '). Restarting...', 'success');
+            setTimeout(function() { location.reload(); }, 8000);
+            return;
+        }
+        showToast(data.message || 'Update failed', 'error');
+    } catch (err) {
+        showToast('Update failed: ' + err, 'error');
+    }
+    installBtn.disabled = false;
 }
 
 // Load update history
