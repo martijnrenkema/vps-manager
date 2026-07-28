@@ -1,0 +1,1194 @@
+<title>LCARS-thema voor VPS Manager — mockup</title>
+<style>
+/*FONTS*/
+
+:root,
+:root[data-theme="dark"],
+:root[data-theme="light"]{
+  /* LCARS is een gecommitteerde visuele wereld: puur zwart is canon.
+     Beide thema-standen krijgen bewust dezelfde tokens. */
+  --ground:#000000;
+  --panel:#08080a;
+  --hair:#1a1a1e;
+  --gold:#ff9c00;
+  --gold-dim:#a86800;
+  --violet:#cc99cc;
+  --peri:#9c9cff;
+  --husk:#ffcc99;
+  --sun:#f1df6f;
+  --mars:#cc6666;
+  --bluey:#99ccff;
+  --ink:#000000;
+  --text:#f4e3c8;
+  --text-dim:#b99b74;
+  --rail:168px;
+  --gap:6px;
+  --head:96px;
+  --arm:34px;
+  --foot:64px;
+  --f-cond:'LcarsCond','Liberation Sans Narrow','Arial Narrow',sans-serif;
+  --f-mono:ui-monospace,'DejaVu Sans Mono',Menlo,Consolas,monospace;
+  --f-prose:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;
+}
+
+*{box-sizing:border-box}
+title{display:none}
+html,body{margin:0;padding:0;background:#000}
+body{
+  background:var(--ground);
+  color:var(--text);
+  font-family:var(--f-cond);
+  -webkit-font-smoothing:antialiased;
+  min-height:100vh;
+}
+
+/* ─────────── frame ─────────── */
+
+.lcars{
+  display:flex;
+  flex-direction:column;
+  height:100vh;
+  height:100dvh;
+  overflow:hidden;
+  padding:var(--gap);
+  gap:var(--gap);
+}
+
+.frame-top{display:flex;gap:var(--gap);height:var(--head);flex:none}
+.frame-bot{display:flex;gap:var(--gap);height:var(--foot);flex:none}
+.frame-mid{display:flex;gap:var(--gap);flex:1;min-height:0}
+
+/* de elbow: één blok, met een holle binnenhoek uitgesneden door ::after */
+.elbow{
+  width:calc(var(--rail) + 52px);
+  flex:none;
+  background:var(--gold);
+  position:relative;
+}
+.elbow-tl{border-top-left-radius:110px 62px}
+.elbow-tl::after{
+  content:"";
+  position:absolute;
+  left:var(--rail);
+  top:var(--arm);
+  right:0;
+  bottom:0;
+  background:var(--ground);
+  border-top-left-radius:22px;
+}
+.elbow-bl{border-bottom-left-radius:110px 46px}
+.elbow-bl::after{
+  content:"";
+  position:absolute;
+  left:var(--rail);
+  top:0;
+  right:0;
+  bottom:var(--arm);
+  background:var(--ground);
+  border-bottom-left-radius:22px;
+}
+
+/* balken in de kop- en voetrand */
+.bar{
+  height:var(--arm);
+  flex:none;
+  background:var(--peri);
+  display:flex;
+  align-items:center;
+  justify-content:flex-end;
+  padding:0 14px 2px;
+  color:var(--ink);
+  font-weight:700;
+  font-size:15px;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+  line-height:1;
+  white-space:nowrap;
+  overflow:hidden;
+}
+.frame-bot .bar{align-self:flex-end}
+.bar-grow{flex:1;min-width:0}
+.bar-title{background:var(--gold);font-size:19px}
+.bar-code{background:var(--violet);width:118px;font-variant-numeric:tabular-nums}
+.bar-cap{
+  width:56px;
+  background:var(--husk);
+  border-top-right-radius:17px;
+  border-bottom-right-radius:17px;
+}
+.frame-bot .bar-cap{background:var(--violet)}
+.bar-stat{background:var(--bluey);width:150px;justify-content:space-between;font-size:13px}
+.bar-stat .dot{
+  width:10px;height:10px;border-radius:50%;background:var(--ink);
+  animation:pulse 2.4s ease-in-out infinite;
+}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ─────────── rail ─────────── */
+
+.rail{
+  width:var(--rail);
+  flex:none;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--gold-dim) var(--ground);
+  padding-bottom:2px;
+}
+.rail::-webkit-scrollbar{width:6px}
+.rail::-webkit-scrollbar-thumb{background:var(--gold-dim)}
+.rail::-webkit-scrollbar-track{background:var(--ground)}
+
+.rail-group{
+  height:26px;flex:none;
+  background:var(--violet);
+  color:var(--ink);
+  display:flex;align-items:center;justify-content:flex-end;
+  padding:0 12px 1px;
+  font-size:13px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;
+  margin-top:9px;
+}
+.rail-group:first-child{margin-top:0}
+.rail-group[data-g="server"]{background:var(--peri)}
+.rail-group[data-g="security"]{background:var(--husk)}
+.rail-group[data-g="tools"]{background:var(--sun)}
+
+.rail-btn{
+  height:32px;flex:none;
+  background:var(--gold);
+  color:var(--ink);
+  border:0;
+  display:flex;align-items:flex-end;justify-content:flex-end;
+  padding:0 12px 5px;
+  font-family:var(--f-cond);
+  font-size:15px;font-weight:700;letter-spacing:.07em;
+  text-transform:uppercase;
+  cursor:pointer;
+  text-align:right;
+  transition:background .12s linear,color .12s linear;
+}
+.rail-btn[data-live="1"]{background:var(--husk)}
+.rail-btn:hover{background:var(--sun)}
+.rail-btn:focus-visible{outline:3px solid var(--bluey);outline-offset:-3px}
+.rail-btn[aria-current="true"]{background:var(--bluey);color:var(--ink)}
+.rail-btn .num{
+  font-weight:400;
+  font-size:12px;
+  opacity:.62;
+  margin-right:auto;
+  letter-spacing:.02em;
+  font-variant-numeric:tabular-nums;
+}
+.rail-verdict{margin-top:9px;background:var(--mars);color:#fff}
+.rail-verdict:hover{background:#e07a7a}
+.rail-verdict[aria-current="true"]{background:var(--bluey);color:var(--ink)}
+
+/* ─────────── scherm ─────────── */
+
+.screen{
+  flex:1;min-width:0;
+  overflow-y:auto;
+  scrollbar-width:thin;
+  scrollbar-color:var(--gold-dim) var(--ground);
+  padding-right:2px;
+}
+.screen::-webkit-scrollbar{width:6px}
+.screen::-webkit-scrollbar-thumb{background:var(--gold-dim)}
+.screen::-webkit-scrollbar-track{background:var(--ground)}
+
+.view[hidden]{display:none}
+.view{animation:wake .22s ease-out both}
+@keyframes wake{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+.view-head{
+  display:flex;align-items:baseline;gap:14px;
+  margin:0 0 14px;
+}
+.view-head h2{
+  margin:0;
+  font-size:34px;font-weight:700;letter-spacing:.03em;
+  text-transform:uppercase;
+  color:var(--gold);
+  line-height:1;
+}
+.view-head .sub{
+  font-size:14px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--text-dim);
+  margin-left:auto;
+  font-variant-numeric:tabular-nums;
+}
+
+/* paneel: LCARS-kop met ronde linkerkap, inhoud eronder */
+.panel{margin-bottom:var(--gap)}
+.panel-head{
+  display:flex;align-items:center;gap:var(--gap);
+  height:28px;
+  margin-bottom:5px;
+}
+.panel-cap{
+  width:46px;flex:none;height:100%;
+  background:var(--violet);
+  border-top-left-radius:14px;border-bottom-left-radius:14px;
+}
+.panel-head[data-c="peri"] .panel-cap{background:var(--peri)}
+.panel-head[data-c="husk"] .panel-cap{background:var(--husk)}
+.panel-head[data-c="mars"] .panel-cap{background:var(--mars)}
+.panel-head[data-c="bluey"] .panel-cap{background:var(--bluey)}
+.panel-title{
+  flex:1;height:100%;
+  background:var(--gold);
+  color:var(--ink);
+  display:flex;align-items:center;justify-content:flex-end;
+  padding:0 14px 2px;
+  font-size:16px;font-weight:700;letter-spacing:.14em;
+  text-transform:uppercase;
+}
+.panel-head[data-c="peri"] .panel-title{background:var(--peri)}
+.panel-head[data-c="husk"] .panel-title{background:var(--husk)}
+.panel-head[data-c="mars"] .panel-title{background:var(--mars);color:#fff}
+.panel-head[data-c="bluey"] .panel-title{background:var(--bluey)}
+.panel-body{background:var(--panel);padding:14px 16px}
+
+/* ─────────── statblokken ─────────── */
+
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:var(--gap)}
+.stat{
+  background:var(--panel);
+  border-left:9px solid var(--gold);
+  padding:11px 14px 13px;
+  min-width:0;
+}
+.stat[data-c="violet"]{border-left-color:var(--violet)}
+.stat[data-c="peri"]{border-left-color:var(--peri)}
+.stat[data-c="bluey"]{border-left-color:var(--bluey)}
+.stat[data-c="sun"]{border-left-color:var(--sun)}
+.stat[data-c="mars"]{border-left-color:var(--mars)}
+.stat .k{
+  font-size:13px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--husk);
+  margin-bottom:4px;
+}
+.stat .v{
+  font-size:40px;font-weight:700;line-height:.94;
+  color:var(--gold);
+  font-variant-numeric:tabular-nums;
+  overflow-wrap:anywhere;
+}
+.stat .v.sm{font-size:25px}
+.stat .v small{font-size:15px;color:var(--text-dim);font-weight:400}
+.stat .s{
+  font-size:13px;color:var(--text-dim);margin-top:5px;
+  letter-spacing:.04em;
+  overflow-wrap:anywhere;
+}
+.stat[data-c="bluey"] .v{color:var(--bluey)}
+.stat[data-c="sun"] .v{color:var(--sun)}
+.stat[data-c="mars"] .v{color:var(--mars)}
+.stat[data-c="violet"] .v{color:var(--violet)}
+.stat[data-c="peri"] .v{color:var(--peri)}
+
+/* segmentmeter — LCARS toont niveau als losse blokjes */
+.meter{
+  margin-top:9px;
+  height:13px;
+  background:#151517;
+  position:relative;
+  overflow:hidden;
+}
+.meter i{
+  display:block;height:100%;
+  background:var(--bluey);
+  width:0;
+  transition:width .9s cubic-bezier(.2,.8,.25,1);
+}
+.meter::after{
+  content:"";position:absolute;inset:0;
+  background:repeating-linear-gradient(90deg,transparent 0 7px,var(--ground) 7px 10px);
+  pointer-events:none;
+}
+.meter[data-lvl="warn"] i{background:var(--sun)}
+.meter[data-lvl="crit"] i{background:var(--mars)}
+
+/* ─────────── waarschuwingen ─────────── */
+
+.alert{
+  display:flex;align-items:stretch;gap:var(--gap);
+  margin-bottom:4px;
+}
+.alert .tag{
+  width:122px;flex:none;
+  background:var(--sun);color:var(--ink);
+  display:flex;align-items:center;justify-content:flex-end;
+  padding:5px 12px 6px;
+  font-size:13px;font-weight:700;letter-spacing:.12em;
+  border-top-left-radius:13px;border-bottom-left-radius:13px;
+}
+.alert[data-sev="crit"] .tag{background:var(--mars);color:#fff}
+.alert[data-sev="info"] .tag{background:var(--bluey)}
+/* let op: geen display:flex hier — een flexcontainer stript de witruimte
+   rond inline-elementen, waardoor "voor <strong>klant-a.nl</strong> verloopt"
+   aan elkaar plakt. */
+.alert .msg{
+  flex:1;
+  background:var(--panel);
+  padding:9px 14px 10px;
+  font-size:15px;letter-spacing:.03em;
+  color:var(--text);
+  min-width:0;
+}
+
+/* ─────────── datatabel ─────────── */
+
+.tbl-wrap{overflow-x:auto}
+table.lc{
+  width:100%;border-collapse:collapse;
+  font-size:15px;letter-spacing:.03em;
+  min-width:520px;
+}
+table.lc th{
+  text-align:left;
+  font-size:12px;font-weight:700;letter-spacing:.17em;
+  text-transform:uppercase;
+  color:var(--husk);
+  padding:0 10px 7px;
+  border-bottom:2px solid var(--gold-dim);
+  white-space:nowrap;
+}
+table.lc td{
+  padding:6px 10px;
+  border-bottom:1px solid var(--hair);
+  color:var(--text);
+  vertical-align:middle;
+}
+table.lc tbody tr:hover td{background:#111114}
+table.lc .num{text-align:right;font-variant-numeric:tabular-nums;color:var(--husk)}
+table.lc .nm{font-weight:700;color:var(--bluey)}
+
+.pill{
+  display:inline-block;
+  padding:2px 11px 3px;
+  border-radius:9px;
+  background:var(--bluey);color:var(--ink);
+  font-size:12px;font-weight:700;letter-spacing:.13em;
+  text-transform:uppercase;
+  white-space:nowrap;
+}
+.pill[data-s="stop"]{background:var(--mars);color:#fff}
+.pill[data-s="warn"]{background:var(--sun)}
+.pill[data-s="idle"]{background:#3a3a40;color:var(--text-dim)}
+
+/* ─────────── grafiek ─────────── */
+
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:var(--gap)}
+.chart-box{background:var(--panel);padding:12px 14px 8px}
+.chart-box .k{
+  font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--husk);
+}
+.chart-box .v{
+  font-size:28px;font-weight:700;color:var(--gold);line-height:1.1;
+  font-variant-numeric:tabular-nums;
+}
+.chart-box canvas{display:block;width:100%;height:112px;margin-top:6px}
+
+/* ─────────── terminal ─────────── */
+
+.term{
+  background:var(--panel);
+  padding:14px 16px;
+  font-family:var(--f-mono);
+  font-size:13px;
+  line-height:1.62;
+  color:var(--bluey);
+  overflow-x:auto;
+  white-space:pre;
+}
+.term .p{color:var(--gold)}
+.term .o{color:var(--text-dim)}
+.term .g{color:#8fdc9a}
+.term .cur{
+  display:inline-block;width:8px;height:14px;
+  background:var(--gold);vertical-align:-2px;
+  animation:blink 1.05s steps(1) infinite;
+}
+@keyframes blink{0%,50%{opacity:1}50.01%,100%{opacity:0}}
+
+/* ─────────── beoordeling (proza) ─────────── */
+
+.prose{
+  font-family:var(--f-prose);
+  font-size:15px;
+  line-height:1.62;
+  color:#ded3c4;
+  max-width:66ch;
+  letter-spacing:0;
+}
+.prose p{margin:0 0 13px}
+.prose strong{color:var(--husk);font-weight:600}
+.prose ul{margin:0 0 13px;padding-left:19px}
+.prose li{margin-bottom:7px}
+.prose li::marker{color:var(--gold)}
+.prose code{
+  font-family:var(--f-mono);font-size:12.5px;
+  background:#17171b;padding:1px 5px;border-radius:3px;color:var(--bluey);
+}
+.prose a{color:var(--bluey)}
+
+.verdict-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:var(--gap)}
+.verdict-grid .panel{display:flex;flex-direction:column}
+.verdict-grid .panel-body{flex:1}
+
+.msg code,.note code{
+  font-family:var(--f-mono);font-size:12.5px;
+  background:#17171b;padding:1px 5px;border-radius:3px;color:var(--bluey);
+  letter-spacing:0;
+}
+
+.score{
+  display:flex;align-items:baseline;gap:12px;
+  margin-bottom:11px;
+}
+.score b{
+  font-family:var(--f-cond);
+  font-size:52px;font-weight:700;line-height:.9;color:var(--gold);
+  font-variant-numeric:tabular-nums;
+}
+.score span{
+  font-family:var(--f-cond);
+  font-size:14px;letter-spacing:.15em;text-transform:uppercase;color:var(--text-dim);
+}
+
+.steps{counter-reset:s;list-style:none;padding:0;margin:0}
+.steps li{
+  counter-increment:s;
+  display:flex;gap:13px;
+  margin-bottom:11px;
+  align-items:flex-start;
+}
+.steps li::before{
+  content:counter(s,decimal-leading-zero);
+  font-family:var(--f-cond);
+  font-size:15px;font-weight:700;letter-spacing:.06em;
+  background:var(--gold);color:var(--ink);
+  padding:3px 9px 4px;
+  border-radius:9px;
+  flex:none;
+  min-width:38px;
+  text-align:center;
+}
+
+.note{
+  font-family:var(--f-cond);
+  font-size:13px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--text-dim);
+  padding:9px 0 0;
+}
+
+/* ─────────── boot ─────────── */
+
+.boot .rail-btn,.boot .rail-group{animation:slide .34s ease-out both}
+@keyframes slide{from{opacity:0;transform:translateX(-14px)}to{opacity:1;transform:none}}
+
+/* ─────────── responsief ─────────── */
+
+@media (max-width:860px){
+  :root{--rail:118px;--head:76px;--foot:44px;--arm:26px}
+  .elbow{width:calc(var(--rail) + 26px)}
+  .bar-title{font-size:15px}
+  .bar-stat{display:none}
+  .bar-code{width:88px;font-size:13px}
+  .view-head h2{font-size:24px}
+  .stat .v{font-size:30px}
+  .rail-btn{font-size:13px;height:29px}
+  .rail-btn .num{display:none}
+  .wide-only{display:none}
+  .alert .tag{width:96px;font-size:12px;padding:5px 9px 6px}
+  .stats{grid-template-columns:1fr}
+  .panel-cap{width:34px}
+  .panel-title{font-size:14px}
+  .view-head .sub{font-size:12px}
+  .frame-bot .bar-grow{font-size:12px;letter-spacing:.06em}
+  .frame-bot .bar-code{font-size:12px;width:70px}
+}
+
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;transition-duration:.001ms!important}
+}
+</style>
+
+<div class="lcars boot">
+
+  <header class="frame-top">
+    <div class="elbow elbow-tl"></div>
+    <div class="bar bar-title bar-grow">VPS Manager<span class="wide-only">&nbsp;&nbsp;&middot;&nbsp;&nbsp; LCARS</span></div>
+    <div class="bar bar-code">01&#8209;1002</div>
+    <div class="bar bar-stat"><span class="dot"></span><span>Online</span></div>
+    <div class="bar bar-cap"></div>
+  </header>
+
+  <div class="frame-mid">
+
+    <nav class="rail" aria-label="Hoofdnavigatie">
+      <div class="rail-group" data-g="web">Web</div>
+      <button class="rail-btn" data-view="dash" data-live="1" aria-current="true"><span class="num">00</span>Dashboard</button>
+      <button class="rail-btn" data-view="soon"><span class="num">06</span>Websites</button>
+      <button class="rail-btn" data-view="soon"><span class="num">04</span>Uptime</button>
+      <button class="rail-btn" data-view="soon">Nginx Logs</button>
+      <button class="rail-btn" data-view="soon">Nginx Config</button>
+      <button class="rail-btn" data-view="soon"><span class="num">06</span>SSL</button>
+      <button class="rail-btn" data-view="soon">DNS</button>
+
+      <div class="rail-group" data-g="server">Server</div>
+      <button class="rail-btn" data-view="svc" data-live="1"><span class="num">12</span>Services</button>
+      <button class="rail-btn" data-view="soon"><span class="num">98</span>Processen</button>
+      <button class="rail-btn" data-view="soon">Netwerk</button>
+      <button class="rail-btn" data-view="soon"><span class="num">03</span>Databases</button>
+      <button class="rail-btn" data-view="soon">PHP</button>
+      <button class="rail-btn" data-view="soon"><span class="num">07</span>Cronjobs</button>
+      <button class="rail-btn" data-view="soon">Schijf</button>
+      <button class="rail-btn" data-view="soon">Bestanden</button>
+
+      <div class="rail-group" data-g="security">Beveiliging</div>
+      <button class="rail-btn" data-view="sec" data-live="1"><span class="num">82</span>Audit</button>
+      <button class="rail-btn" data-view="soon">SSH Logs</button>
+      <button class="rail-btn" data-view="sec" data-live="1"><span class="num">06</span>Firewall</button>
+      <button class="rail-btn" data-view="soon">Back-up</button>
+      <button class="rail-btn" data-view="soon"><span class="num">14</span>Updates</button>
+
+      <div class="rail-group" data-g="tools">Extra</div>
+      <button class="rail-btn" data-view="term" data-live="1">Terminal</button>
+      <button class="rail-btn" data-view="soon"><span class="num">02</span>Meldingen</button>
+      <button class="rail-btn" data-view="soon">Auditlog</button>
+      <button class="rail-btn" data-view="soon">Instellingen</button>
+
+      <button class="rail-btn rail-verdict" data-view="oordeel">Mijn oordeel</button>
+    </nav>
+
+    <main class="screen" id="screen">
+
+      <!-- ══════════ DASHBOARD ══════════ -->
+      <section class="view" id="v-dash">
+        <div class="view-head">
+          <h2>Dashboard</h2>
+          <span class="sub">Ubuntu 24.04.3 &middot; 6 cores</span>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="husk">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Meldingen &nbsp;&middot;&nbsp; 2</div>
+          </div>
+          <div class="alert" data-sev="warn">
+            <div class="tag">Waarschuwing</div>
+            <div class="msg">Certificaat voor <strong>klant-a.nl</strong> verloopt over 8 dagen</div>
+          </div>
+          <div class="alert" data-sev="info">
+            <div class="tag">Info</div>
+            <div class="msg">14 pakketupdates beschikbaar, waarvan 3 beveiligingsupdates</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Systeemstatus</div>
+          </div>
+          <div class="stats">
+            <div class="stat" data-c="sun">
+              <div class="k">Gezondheid</div>
+              <div class="v">82<small>/100</small></div>
+              <div class="s">Aandacht nodig</div>
+            </div>
+            <div class="stat">
+              <div class="k">Hostnaam</div>
+              <div class="v sm">vps&#8209;01</div>
+              <div class="s">Ubuntu 24.04.3 LTS</div>
+            </div>
+            <div class="stat" data-c="bluey">
+              <div class="k">Bedrijfstijd</div>
+              <div class="v sm">2d 01:21:59</div>
+              <div class="s">AMD EPYC&#8209;Milan, 6 cores</div>
+            </div>
+            <div class="stat" data-c="violet">
+              <div class="k">Belasting</div>
+              <div class="v sm">0.00 / 0.00 / 0.00</div>
+              <div class="s">1 / 5 / 15 minuten</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="peri">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Capaciteit</div>
+          </div>
+          <div class="stats">
+            <div class="stat" data-c="bluey">
+              <div class="k">Geheugen</div>
+              <div class="v">6<small>%</small></div>
+              <div class="s">1.4G / 23.4G &middot; vrij 22.0G</div>
+              <div class="meter" data-fill="6"><i></i></div>
+            </div>
+            <div class="stat" data-c="bluey">
+              <div class="k">Schijf /</div>
+              <div class="v">3<small>%</small></div>
+              <div class="s">11G / 348G &middot; vrij 338G</div>
+              <div class="meter" data-fill="3"><i></i></div>
+            </div>
+            <div class="stat" data-c="bluey">
+              <div class="k">Swap</div>
+              <div class="v">0<small>%</small></div>
+              <div class="s">0.0G / 4.0G</div>
+              <div class="meter" data-fill="0"><i></i></div>
+            </div>
+            <div class="stat" data-c="sun">
+              <div class="k">Back-upschijf</div>
+              <div class="v">74<small>%</small></div>
+              <div class="s">1.4T / 1.9T &middot; vrij 0.5T</div>
+              <div class="meter" data-lvl="warn" data-fill="74"><i></i></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="bluey">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Verloop &nbsp;&middot;&nbsp; 24 uur</div>
+          </div>
+          <div class="charts">
+            <div class="chart-box">
+              <div class="k">CPU-belasting &middot; 1 min</div>
+              <div class="v">0.04</div>
+              <canvas id="c-cpu" width="600" height="224" aria-label="Grafiek CPU-belasting over 24 uur"></canvas>
+            </div>
+            <div class="chart-box">
+              <div class="k">Geheugengebruik</div>
+              <div class="v">6.0%</div>
+              <canvas id="c-mem" width="600" height="224" aria-label="Grafiek geheugengebruik over 24 uur"></canvas>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════ SERVICES ══════════ -->
+      <section class="view" id="v-svc" hidden>
+        <div class="view-head">
+          <h2>Services</h2>
+          <span class="sub">12 bewaakt &middot; 1 gestopt</span>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Systemd-units</div>
+          </div>
+          <div class="panel-body">
+            <div class="tbl-wrap">
+              <table class="lc">
+                <thead>
+                  <tr>
+                    <th>Service</th><th>Status</th><th>Sinds</th>
+                    <th class="num">Geheugen</th><th class="num">CPU</th><th class="num">PID</th>
+                  </tr>
+                </thead>
+                <tbody id="svc-rows"></tbody>
+              </table>
+            </div>
+            <p class="note">Deze tabel is de eerlijke stresstest: LCARS heeft geen eigen tabelconventie. Zie &ldquo;Mijn oordeel&rdquo;.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════ BEVEILIGING ══════════ -->
+      <section class="view" id="v-sec" hidden>
+        <div class="view-head">
+          <h2>Beveiliging</h2>
+          <span class="sub">Laatste controle 04:00</span>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="mars">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Auditscore</div>
+          </div>
+          <div class="stats">
+            <div class="stat" data-c="sun">
+              <div class="k">Score</div>
+              <div class="v">82<small>/100</small></div>
+              <div class="s">3 aanbevelingen open</div>
+              <div class="meter" data-lvl="warn" data-fill="82"><i></i></div>
+            </div>
+            <div class="stat" data-c="bluey">
+              <div class="k">SSH</div>
+              <div class="v sm">Sleutels</div>
+              <div class="s">Wachtwoordlogin uit &middot; root uit</div>
+            </div>
+            <div class="stat" data-c="mars">
+              <div class="k">Geblokkeerd &middot; 24u</div>
+              <div class="v">47</div>
+              <div class="s">fail2ban, sshd-jail</div>
+            </div>
+            <div class="stat" data-c="bluey">
+              <div class="k">Firewall</div>
+              <div class="v sm">Actief</div>
+              <div class="s">ufw &middot; 6 regels</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="husk">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Firewallregels</div>
+          </div>
+          <div class="panel-body">
+            <div class="tbl-wrap">
+              <table class="lc">
+                <thead>
+                  <tr><th>Poort</th><th>Actie</th><th>Van</th><th>Omschrijving</th></tr>
+                </thead>
+                <tbody id="fw-rows"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="mars">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Aanbevelingen</div>
+          </div>
+          <div class="alert" data-sev="warn">
+            <div class="tag">Middel</div>
+            <div class="msg">Automatische beveiligingsupdates staan uit &mdash; <code>unattended-upgrades</code> is niet ingeschakeld</div>
+          </div>
+          <div class="alert" data-sev="warn">
+            <div class="tag">Middel</div>
+            <div class="msg">MariaDB luistert op 0.0.0.0 &mdash; beperk tot 127.0.0.1</div>
+          </div>
+          <div class="alert" data-sev="info">
+            <div class="tag">Laag</div>
+            <div class="msg">Kernel 6.8.0&#8209;51 heeft een herstart nodig om 6.8.0&#8209;54 te activeren</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════ TERMINAL ══════════ -->
+      <section class="view" id="v-term" hidden>
+        <div class="view-head">
+          <h2>Terminal</h2>
+          <span class="sub">root@vps&#8209;01</span>
+        </div>
+        <div class="panel">
+          <div class="panel-head" data-c="bluey">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Shell</div>
+          </div>
+          <div class="term"><span class="p">root@vps-01:~#</span> systemctl status caddy --no-pager
+<span class="o">●</span> caddy.service - Caddy web server
+     Loaded: loaded (/lib/systemd/system/caddy.service; enabled)
+     Active: <span class="g">active (running)</span> since Sat 2026-07-26 16:12:03 CEST; 2d ago
+   Main PID: 1184 (caddy)
+      Tasks: 11 (limit: 28461)
+     Memory: 42.8M
+        CPU: 3min 21.104s
+
+<span class="p">root@vps-01:~#</span> df -h /
+<span class="o">Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda1       348G   11G  338G   3% /</span>
+
+<span class="p">root@vps-01:~#</span> <span class="cur"></span></div>
+        </div>
+        <p class="note">Monospace binnen een LCARS-frame &mdash; noodzakelijk compromis, want condensed type is onbruikbaar voor logs en config.</p>
+      </section>
+
+      <!-- ══════════ NOG NIET UITGEWERKT ══════════ -->
+      <section class="view" id="v-soon" hidden>
+        <div class="view-head">
+          <h2 id="soon-title">Scherm</h2>
+          <span class="sub">Niet in deze mockup</span>
+        </div>
+        <div class="panel">
+          <div class="panel-head" data-c="peri">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Buiten de mockup</div>
+          </div>
+          <div class="panel-body">
+            <div class="prose">
+              <p>Deze mockup werkt vier schermen uit &mdash; <strong>Dashboard</strong>, <strong>Services</strong>,
+                 <strong>Beveiliging</strong> en <strong>Terminal</strong> &mdash; omdat die samen alle vormen dekken
+                 die in de andere negentien terugkomen: statuskaarten, meters, grafieken, dichte tabellen en
+                 monospace-uitvoer.</p>
+              <p>De schermen die hier ontbreken zijn vooral <em>formulieren</em>: Nginx Config, DNS, Cronjobs,
+                 Instellingen. Dat is precies waar LCARS het zwaarst heeft, en waar ik in mijn oordeel op terugkom.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════ OORDEEL ══════════ -->
+      <section class="view" id="v-oordeel" hidden>
+        <div class="view-head">
+          <h2>Mijn oordeel</h2>
+          <span class="sub">Is dit een goed idee?</span>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="bluey">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Kort antwoord</div>
+          </div>
+          <div class="panel-body">
+            <div class="score"><b>Ja</b><span>&mdash; maar als opt&#8209;in thema, en kleiner dan je denkt</span></div>
+            <div class="prose">
+              <p>Ik heb hier eerder gezegd dat dit &ldquo;goed als skin kan&rdquo;. Na het bouwen van deze mockup
+                 nuanceer ik dat: het <em>ziet</em> er goed uit, maar het is geen kleurenswap. LCARS is voor
+                 tachtig procent <strong>vorm</strong> &mdash; elbow-bochten, ronde kappen, rechts uitgelijnde
+                 labels, blokken zonder randen &mdash; en die vorm zit niet in je CSS-variabelen. Die zit in je markup.</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="verdict-grid">
+          <div class="panel">
+            <div class="panel-head" data-c="bluey">
+              <div class="panel-cap"></div>
+              <div class="panel-title">Wat meezit</div>
+            </div>
+            <div class="panel-body">
+              <div class="prose">
+                <ul>
+                  <li>Je app is al donker en werkt met <code>--bg-*</code> / <code>--accent</code> tokens. De
+                      kleurlaag is grotendeels één bestand.</li>
+                  <li>LCARS is ontworpen voor precies wat jouw dashboard doet: statuskleuren, meters, readouts.
+                      Het dashboard hierboven is nauwelijks een compromis.</li>
+                  <li>Je hebt al vier nette navigatiegroepen. Die vertalen één-op-één naar een LCARS-rail.</li>
+                  <li>Zwart met oranje haalt moeiteloos contrastniveau AAA.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-head" data-c="mars">
+              <div class="panel-cap"></div>
+              <div class="panel-title">Wat het kost</div>
+            </div>
+            <div class="panel-body">
+              <div class="prose">
+                <ul>
+                  <li><strong>Formulieren.</strong> LCARS heeft geen invoervelden, selectievakjes of dropdowns &mdash;
+                      die bestaan niet in de canon. Voor Nginx Config, DNS, Cronjobs en Instellingen moet je ze
+                      zelf verzinnen.</li>
+                  <li><strong>Dichte tabellen.</strong> Kijk bij Services en Beveiliging: dat is een gewone tabel
+                      in een LCARS-lijst. Meer zit er niet in, en dat raakt Processen, Bestanden en alle logschermen.</li>
+                  <li><strong>Bootstrap.</strong> Je gebruikt modals, tooltips en tabelklassen. Die vechten met
+                      LCARS-vormen; elk onderdeel moet je apart overschrijven.</li>
+                  <li><strong>Het lettertype.</strong> LCARS staat of valt met ultra-condensed type. Ik heb er hier
+                      één gegenereerd; je zult een licentie of open alternatief moeten meeleveren.</li>
+                  <li>Nog ~25 hardgecodeerde hexkleuren in je templates die eerst naar variabelen moeten.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head" data-c="husk">
+            <div class="panel-cap"></div>
+            <div class="panel-title">Hoe ik het zou aanpakken</div>
+          </div>
+          <div class="panel-body">
+            <div class="prose">
+              <ol class="steps">
+                <li><span>Ruim eerst de hardgecodeerde kleuren op en voeg <code>data-theme</code> op
+                    <code>&lt;body&gt;</code> toe met een keuze in Instellingen. Dat is nuttig werk, ook als je
+                    LCARS uiteindelijk niet doet.</span></li>
+                <li><span>Bouw alleen de <em>chrome</em> in LCARS: frame, rail, paginakoppen, statuskaarten,
+                    meldingen. Dat is één stylesheet plus een aangepaste <code>base.html</code>, en het dekt het
+                    gevoel voor negentig procent.</span></li>
+                <li><span>Laat tabellen, formulieren en logs binnen dat frame gewoon leesbaar. Een LCARS-omlijsting
+                    om een nette tabel is geloofwaardiger dan een tabel die LCARS probeert te zijn.</span></li>
+                <li><span>Houd het huidige thema als standaard. LCARS is een plezierthema, geen vervanging &mdash;
+                    je beheert er wel echte servers mee om vier uur &rsquo;s nachts.</span></li>
+              </ol>
+              <p class="note" style="text-transform:none;letter-spacing:.02em;font-family:var(--f-prose);font-size:14px;color:var(--text-dim)">
+                Eén detail dat opvalt zodra je het ziet: dit thema kan geen lichte modus hebben. LCARS op wit
+                bestaat niet. De themawissel rechtsboven in de artifact-weergave doet hier dus bewust niets.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <footer class="frame-bot">
+    <div class="elbow elbow-bl"></div>
+    <div class="bar bar-grow" id="foot-label">Mockup &nbsp;&middot;&nbsp; geen live data</div>
+    <div class="bar bar-code" style="background:var(--husk)">v1.10.2</div>
+    <div class="bar bar-cap"></div>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* ---------- data ---------- */
+
+  var SERVICES = [
+    ["nginx",            "run",  "2d 01:20", "18.4 MB",  "0.1%",  "941"],
+    ["caddy",            "run",  "2d 01:20", "42.8 MB",  "0.3%",  "1184"],
+    ["php8.3-fpm",       "run",  "2d 01:19", "96.2 MB",  "0.4%",  "1022"],
+    ["mariadb",          "run",  "2d 01:20", "412.7 MB", "1.2%",  "1097"],
+    ["redis-server",     "run",  "2d 01:20", "8.9 MB",   "0.1%",  "903"],
+    ["ssh",              "run",  "2d 01:21", "6.2 MB",   "0.0%",  "812"],
+    ["fail2ban",         "run",  "2d 01:19", "31.5 MB",  "0.2%",  "1240"],
+    ["ufw",              "run",  "2d 01:21", "—",        "0.0%",  "—"],
+    ["pm2-root",         "run",  "1d 18:04", "154.3 MB", "0.6%",  "2871"],
+    ["vps-manager",      "run",  "0d 06:12", "62.1 MB",  "0.2%",  "9014"],
+    ["cron",             "run",  "2d 01:21", "3.1 MB",   "0.0%",  "874"],
+    ["postfix",          "stop", "—",        "—",        "—",     "—"]
+  ];
+
+  var FIREWALL = [
+    ["22/tcp",   "limit", "overal",       "SSH (snelheidsbeperkt)"],
+    ["80/tcp",   "allow", "overal",       "HTTP"],
+    ["443/tcp",  "allow", "overal",       "HTTPS"],
+    ["3306/tcp", "deny",  "overal",       "MariaDB"],
+    ["8443/tcp", "allow", "10.0.0.0/8",   "VPS Manager (intern)"],
+    ["25/tcp",   "deny",  "uitgaand",     "SMTP"]
+  ];
+
+  var STATUS_LABEL = { run: "Actief", stop: "Gestopt" };
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) { n.className = cls; }
+    if (text !== undefined) { n.textContent = text; }
+    return n;
+  }
+
+  function fillServices() {
+    var tb = document.getElementById("svc-rows");
+    SERVICES.forEach(function (r) {
+      var tr = document.createElement("tr");
+      tr.appendChild(el("td", "nm", r[0]));
+
+      var td = document.createElement("td");
+      var pill = el("span", "pill", STATUS_LABEL[r[1]]);
+      if (r[1] === "stop") { pill.setAttribute("data-s", "stop"); }
+      td.appendChild(pill);
+      tr.appendChild(td);
+
+      tr.appendChild(el("td", null, r[2]));
+      tr.appendChild(el("td", "num", r[3]));
+      tr.appendChild(el("td", "num", r[4]));
+      tr.appendChild(el("td", "num", r[5]));
+      tb.appendChild(tr);
+    });
+  }
+
+  function fillFirewall() {
+    var tb = document.getElementById("fw-rows");
+    var map = { allow: ["Toestaan", null], deny: ["Blokkeren", "stop"], limit: ["Beperken", "warn"] };
+    FIREWALL.forEach(function (r) {
+      var tr = document.createElement("tr");
+      tr.appendChild(el("td", "nm", r[0]));
+
+      var td = document.createElement("td");
+      var m = map[r[1]];
+      var pill = el("span", "pill", m[0]);
+      if (m[1]) { pill.setAttribute("data-s", m[1]); }
+      td.appendChild(pill);
+      tr.appendChild(td);
+
+      tr.appendChild(el("td", null, r[2]));
+      tr.appendChild(el("td", null, r[3]));
+      tb.appendChild(tr);
+    });
+  }
+
+  /* ---------- grafieken ---------- */
+
+  // deterministische reeks, zodat de mockup er elke keer hetzelfde uitziet
+  function series(n, seed, base, spread, spike) {
+    var s = seed, out = [], i, r;
+    for (i = 0; i < n; i++) {
+      s = (s * 1103515245 + 12345) % 2147483648;
+      r = s / 2147483648;
+      var v = base + r * spread;
+      if (spike && r > 0.955) { v += spread * 3.2; }
+      out.push(v);
+    }
+    return out;
+  }
+
+  var CPU = series(150, 7717, 0.005, 0.045, true);
+  var MEM = series(150, 3391, 5.55, 0.75, false);
+
+  function drawChart(canvas, data, color, forceZero) {
+    if (!canvas) { return; }
+    var ratio = window.devicePixelRatio || 1;
+    var w = canvas.clientWidth || 600;
+    var h = 112;
+    canvas.width = Math.round(w * ratio);
+    canvas.height = Math.round(h * ratio);
+    var ctx = canvas.getContext("2d");
+    if (!ctx) { return; }
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    var padT = 6, padB = 16, padL = 0, padR = 0;
+    var innerH = h - padT - padB;
+    var innerW = w - padL - padR;
+
+    var max = Math.max.apply(null, data);
+    var min = forceZero ? 0 : Math.min.apply(null, data);
+    if (max - min < 1e-6) { max = min + 1; }
+    var pad = (max - min) * 0.15;
+    max += pad;
+    if (!forceZero) { min -= pad; }
+
+    // raster
+    ctx.strokeStyle = "#1c1c20";
+    ctx.lineWidth = 1;
+    var g;
+    for (g = 0; g <= 3; g++) {
+      var gy = Math.round(padT + (innerH / 3) * g) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, gy);
+      ctx.lineTo(w, gy);
+      ctx.stroke();
+    }
+
+    function X(i) { return padL + (innerW * i) / (data.length - 1); }
+    function Y(v) { return padT + innerH - ((v - min) / (max - min)) * innerH; }
+
+    // vlak
+    var grad = ctx.createLinearGradient(0, padT, 0, padT + innerH);
+    grad.addColorStop(0, color.fill);
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.beginPath();
+    ctx.moveTo(X(0), padT + innerH);
+    data.forEach(function (v, i) { ctx.lineTo(X(i), Y(v)); });
+    ctx.lineTo(X(data.length - 1), padT + innerH);
+    ctx.closePath();
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    // lijn
+    ctx.beginPath();
+    data.forEach(function (v, i) {
+      if (i === 0) { ctx.moveTo(X(i), Y(v)); } else { ctx.lineTo(X(i), Y(v)); }
+    });
+    ctx.strokeStyle = color.line;
+    ctx.lineWidth = 1.6;
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    // benadrukt eindpunt — de laatste meting is de enige die nú telt
+    var lx = X(data.length - 1), ly = Y(data[data.length - 1]);
+    ctx.beginPath();
+    ctx.arc(lx - 2, ly, 3, 0, Math.PI * 2);
+    ctx.fillStyle = color.line;
+    ctx.fill();
+
+    // tijdas
+    ctx.fillStyle = "#7d6a4e";
+    ctx.font = "11px " + getComputedStyle(document.body).fontFamily;
+    ctx.textBaseline = "top";
+    ["17:00", "23:00", "05:00", "11:00"].forEach(function (t, i) {
+      var tx = (innerW / 4) * i + 2;
+      ctx.fillText(t, tx, padT + innerH + 4);
+    });
+  }
+
+  function drawAll() {
+    drawChart(document.getElementById("c-cpu"),
+      CPU, { line: "#ff9c00", fill: "rgba(255,156,0,0.30)" }, true);
+    drawChart(document.getElementById("c-mem"),
+      MEM, { line: "#99ccff", fill: "rgba(153,204,255,0.26)" }, false);
+  }
+
+  /* ---------- meters ---------- */
+
+  function runMeters(root) {
+    root.querySelectorAll(".meter").forEach(function (m) {
+      var bar = m.querySelector("i");
+      var pct = parseFloat(m.getAttribute("data-fill")) || 0;
+      bar.style.width = "0%";
+      // dwing een reflow af zodat de overgang opnieuw start
+      void bar.offsetWidth;
+      bar.style.width = Math.max(pct, 1.5) + "%";
+    });
+  }
+
+  /* ---------- navigatie ---------- */
+
+  var buttons = Array.prototype.slice.call(document.querySelectorAll(".rail-btn"));
+  var views = {
+    dash: document.getElementById("v-dash"),
+    svc: document.getElementById("v-svc"),
+    sec: document.getElementById("v-sec"),
+    term: document.getElementById("v-term"),
+    soon: document.getElementById("v-soon"),
+    oordeel: document.getElementById("v-oordeel")
+  };
+  var footLabel = document.getElementById("foot-label");
+  var screen = document.getElementById("screen");
+
+  function show(name, btn) {
+    Object.keys(views).forEach(function (k) { views[k].hidden = true; });
+    var v = views[name] || views.soon;
+    v.hidden = false;
+
+    buttons.forEach(function (b) { b.setAttribute("aria-current", b === btn ? "true" : "false"); });
+
+    if (name === "soon" && btn) {
+      document.getElementById("soon-title").textContent = btn.textContent.replace(/^\d+/, "").trim();
+    }
+
+    footLabel.textContent = btn
+      ? btn.textContent.replace(/^\d+/, "").trim() + "  ·  mockup, geen live data"
+      : "Mockup · geen live data";
+
+    screen.scrollTop = 0;
+    // herteken: canvas heeft geen afmetingen zolang het verborgen is
+    requestAnimationFrame(function () {
+      runMeters(v);
+      if (name === "dash") { drawAll(); }
+    });
+  }
+
+  buttons.forEach(function (b) {
+    b.addEventListener("click", function () { show(b.getAttribute("data-view"), b); });
+  });
+
+  /* ---------- start ---------- */
+
+  fillServices();
+  fillFirewall();
+
+  var frame = document.querySelector(".lcars");
+  var railKids = Array.prototype.slice.call(document.querySelectorAll(".rail-btn, .rail-group"));
+  railKids.forEach(function (n, i) { n.style.animationDelay = (i * 14) + "ms"; });
+  window.setTimeout(function () { frame.classList.remove("boot"); }, 1200);
+
+  requestAnimationFrame(function () {
+    drawAll();
+    runMeters(views.dash);
+  });
+
+  var rt;
+  window.addEventListener("resize", function () {
+    window.clearTimeout(rt);
+    rt = window.setTimeout(drawAll, 140);
+  });
+}());
+</script>
