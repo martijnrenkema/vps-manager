@@ -103,8 +103,22 @@ safe_rsync() {
 # DATABASES - MariaDB and SQLite data
 # =============================================================================
 SYSTEM_DBS="information_schema|performance_schema|mysql|sys"
-DATABASES=$(mysql -N -e "SHOW DATABASES" 2>/dev/null | grep -Ev "^($SYSTEM_DBS)$" || true)
+DATABASES=""
 DB_COUNT=0
+# Hosts without a MySQL/MariaDB client simply have no databases to dump. But if
+# the client IS installed, a failing listing (MariaDB down, missing
+# /root/.my.cnf, auth error) must fail the backup: previously `|| true` hid it
+# and a run with 0 dumped databases was reported as success.
+# MYSQL_BACKUP=no in .backup_env skips this for client-only hosts.
+MYSQL_BACKUP="${MYSQL_BACKUP:-auto}"
+if [ "$MYSQL_BACKUP" != "no" ] && command -v mysql >/dev/null 2>&1; then
+    if ! db_list=$(mysql -N -e "SHOW DATABASES" 2>/dev/null); then
+        report_failure "$LINENO" "could not list MariaDB/MySQL databases (server down or no credentials in /root/.my.cnf?)"
+        exit 1
+    fi
+    # grep exits 1 when only system databases exist; that is not an error
+    DATABASES=$(printf '%s\n' "$db_list" | grep -Ev "^($SYSTEM_DBS)$" || true)
+fi
 
 dump_mariadb() {
     local db="$1"
@@ -129,7 +143,7 @@ done <<< "$DATABASES"
 
 # Auto-detect SQLite databases in /var/www. Exclude dependencies and skipped apps.
 while IFS= read -r -d '' dbfile; do
-    relative="${dbfile#$WWW_DIR/}"
+    relative="${dbfile#"$WWW_DIR"/}"
     sitename="${relative%%/*}"
     is_listed "$sitename" "$SKIP_DIRS" && continue
 
@@ -262,11 +276,30 @@ done
 find sites -type f -print0 2>/dev/null | sort -z | xargs -0r sha256sum >> "$tmp_checksum"
 mv "$tmp_checksum" "$CHECKSUM_FILE"
 
-find "$BACKUP_DIR" -type d -exec chmod 755 {} \;
-find "$BACKUP_DIR/sites" -type f -exec chmod 644 {} \;
-if [ -n "$BACKUP_READ_USER" ] && id -u "$BACKUP_READ_USER" >/dev/null 2>&1; then
-    chown -R "$BACKUP_READ_USER:$BACKUP_READ_USER" "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" 2>/dev/null || true
-    chown "$BACKUP_READ_USER:$BACKUP_READ_USER" "$CHECKSUM_FILE" 2>/dev/null || true
+# Access model: root (and BACKUP_READ_USER, the account the NAS pulls with)
+# may read file contents; nobody else. Site mirrors contain each site's .env
+# and other secrets, so site files are 640 with group = the read user's primary
+# group (root if no read user is configured). Previously they were 644, which
+# undid `umask 027` and let every local user read all site secrets.
+# Directories stay 755 on purpose: names/sizes/mtimes are not secret and the
+# dashboard (which may run unprivileged) walks sites/ to show backup sizes.
+READ_GROUP=0
+READ_USER_OK=0
+if [ -n "$BACKUP_READ_USER" ]; then
+    if id -u "$BACKUP_READ_USER" >/dev/null 2>&1; then
+        READ_USER_OK=1
+        # Primary group instead of assuming a group named like the user
+        READ_GROUP=$(id -gn "$BACKUP_READ_USER")
+    else
+        echo "$(date): WARNING: BACKUP_READ_USER '$BACKUP_READ_USER' does not exist - backups stay root-only" >> "$LOG"
+    fi
+fi
+find "$BACKUP_DIR" -type d -exec chmod 755 {} +
+chgrp -R "$READ_GROUP" "$BACKUP_DIR/sites"
+find "$BACKUP_DIR/sites" -type f -exec chmod 640 {} +
+if [ "$READ_USER_OK" -eq 1 ]; then
+    chown -R "$BACKUP_READ_USER:$READ_GROUP" "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" 2>/dev/null || true
+    chown "$BACKUP_READ_USER:$READ_GROUP" "$CHECKSUM_FILE" 2>/dev/null || true
 fi
 find "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" -type d -exec chmod 750 {} \; 2>/dev/null || true
 find "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" -type f -exec chmod 640 {} \; 2>/dev/null || true

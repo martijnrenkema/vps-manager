@@ -20,6 +20,12 @@ LOG="${LOG:-$LOCAL_DIR/backup.log}"
 WEBHOOK_URL="${WEBHOOK_URL:-https://your-dashboard-domain/api/backup/webhook}"
 BACKUP_ENV="${BACKUP_ENV:-$LOCAL_DIR/.backup_env}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
+# Always keep at least this many of the newest snapshots, regardless of age
+KEEP_MIN_SNAPSHOTS="${KEEP_MIN_SNAPSHOTS:-3}"
+# Report failure when the newest VPS checksum manifest is older than this
+# (the VPS backup stopped running); the pull itself still verifies/snapshots.
+# 0 disables the check.
+MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-2}"
 LOCK_FILE="$LOCAL_DIR/.pull-backup.lock"
 
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
@@ -131,13 +137,37 @@ CHECKSUM_RESULT="$TOTAL/$TOTAL checksums OK"
 
 SNAPSHOT_NAME=$(date +%Y%m%d)
 SNAPSHOT_PATH="$SNAPSHOT_DIR/$SNAPSHOT_NAME"
-rm -rf "$SNAPSHOT_PATH.tmp"
+# Leftovers of interrupted runs (any date)
+find "$SNAPSHOT_DIR" -maxdepth 1 -mindepth 1 -type d -name '*.tmp' -exec rm -rf {} +
 rm -rf "$SNAPSHOT_PATH"
 cp -al "$DATA_DIR" "$SNAPSHOT_PATH.tmp"
 mv "$SNAPSHOT_PATH.tmp" "$SNAPSHOT_PATH"
-find "$SNAPSHOT_DIR" -maxdepth 1 -mindepth 1 -type d -mtime +"$RETENTION_DAYS" -exec rm -rf {} +
+# cp -al keeps DATA_DIR's mtime, which rsync -a copies from the VPS directory.
+# Without this touch a snapshot's age is the age of the VPS data, so when the
+# VPS backup stopped for > RETENTION_DAYS every snapshot was pruned at once.
+touch "$SNAPSHOT_PATH"
+
+# Prune by age, but never the KEEP_MIN_SNAPSHOTS newest (names are YYYYMMDD,
+# so glob order is chronological; iterate newest first).
+snapshots=( "$SNAPSHOT_DIR"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9] )
+kept=0
+for (( i = ${#snapshots[@]} - 1; i >= 0; i-- )); do
+    snap="${snapshots[$i]}"
+    [ -d "$snap" ] || continue
+    kept=$((kept + 1))
+    [ "$kept" -le "$KEEP_MIN_SNAPSHOTS" ] && continue
+    if [ -n "$(find "$snap" -maxdepth 0 -mtime +"$RETENTION_DAYS")" ]; then
+        rm -rf "$snap"
+    fi
+done
 
 SNAPSHOT_COUNT=$(find "$SNAPSHOT_DIR" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
 message="NAS pull completed - $TOTAL_SIZE on disk - transferred: ${TRANSFERRED:-unknown} bytes - speedup: ${SPEEDUP:-n/a} - $CHECKSUM_RESULT - snapshots: $SNAPSHOT_COUNT"
+
+# A verified but old manifest means the VPS backup itself stopped running:
+# don't report that as a healthy backup. MAX_BACKUP_AGE_DAYS=0 disables this.
+if [ "$MAX_BACKUP_AGE_DAYS" -gt 0 ] && [ -n "$(find "$LATEST_CHECKSUM" -maxdepth 0 -mtime +"$((MAX_BACKUP_AGE_DAYS - 1))")" ]; then
+    fail "NAS pull OK but VPS backup is stale - newest manifest $(basename "$LATEST_CHECKSUM") is older than $MAX_BACKUP_AGE_DAYS days - $message"
+fi
 echo "$(date): $message" >> "$LOG"
 report_status "success" "$message"

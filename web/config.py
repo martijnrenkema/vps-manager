@@ -28,6 +28,8 @@ def get_default_config():
             "tfa_method": None,
             "tfa_email": None,
             "session_lifetime_hours": 24,
+            # Opgehoogd bij wachtwoord-/2FA-wijziging: maakt oude sessies ongeldig
+            "session_epoch": 0,
         },
         "smtp": {
             "host": "",

@@ -6,11 +6,15 @@ Runs locally on the VPS itself (subprocess.run instead of SSH).
 """
 
 import concurrent.futures
+from collections import Counter
 import gc
 import grp
+import gzip
+import hashlib
 import html as html_mod
 import os
 import pwd
+import queue
 import re
 import io
 import json
@@ -19,7 +23,9 @@ import ipaddress
 import secrets
 import shlex
 import shutil
+import signal
 import smtplib
+import ssl as ssl_mod  # alias: de view-functie ssl() overschaduwt de modulenaam
 import stat as stat_module
 import subprocess
 import tempfile
@@ -41,11 +47,12 @@ from flask import (
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask_wtf.csrf import CSRFProtect
+from flask_wtf.csrf import CSRFProtect, CSRFError
 from pywebpush import webpush, WebPushException
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 import urllib.error
+import urllib.parse
 import urllib.request
 import base64
 
@@ -69,10 +76,28 @@ if _env_file.exists():
                 _line = _line.strip()
                 if _line and not _line.startswith('#') and '=' in _line:
                     _key, _val = _line.split('=', 1)
+                    _val = _val.strip()
+                    # PASS="x y" → x y (zoals shells en dotenv het lezen)
+                    if len(_val) >= 2 and _val[0] == _val[-1] and _val[0] in '"\'':
+                        _val = _val[1:-1]
                     if _key.strip() not in os.environ:  # Don't override existing env vars
-                        os.environ[_key.strip()] = _val.strip()
+                        os.environ[_key.strip()] = _val
     except OSError:
         pass
+
+def _write_private_file(path, data):
+    """Schrijf een geheim bestand dat vanaf het eerste moment 0600 is
+    (write + chmod achteraf laat een venster met de umask-rechten, vaak 0644)."""
+    path = Path(path)
+    if isinstance(data, str):
+        data = data.encode()
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)  # ook als het bestand al bestond met ruimere rechten
+        os.write(fd, data)
+    finally:
+        os.close(fd)
+
 
 app = Flask(__name__)
 
@@ -86,8 +111,7 @@ elif _secret_key_file.exists():
 else:
     _secret_key_file.parent.mkdir(exist_ok=True)
     _generated = os.urandom(32)
-    _secret_key_file.write_bytes(_generated)
-    os.chmod(_secret_key_file, 0o600)
+    _write_private_file(_secret_key_file, _generated)
     app.secret_key = _generated
 
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100MB upload limit
@@ -103,6 +127,10 @@ def country_flag_filter(country_code):
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+# Standaard verloopt een CSRF-token na 1 uur, waardoor elke actie in een tab
+# die langer openstaat faalt. Het token is al aan de sessie gebonden, dus
+# laat het net zo lang leven als de sessie.
+app.config['WTF_CSRF_TIME_LIMIT'] = None
 csrf = CSRFProtect(app)
 
 # App draait achter nginx op dezelfde host: vertrouw één proxy-hop zodat
@@ -122,6 +150,55 @@ _CSP = (
     "frame-ancestors 'none'; "
     "base-uri 'self'"
 )
+
+
+def _compute_asset_version():
+    """Cache-buster voor static URLs: verandert bij elke wijziging in static/
+    (ook bij een update naar een commit zonder versie-bump)."""
+    h = hashlib.sha1()
+    static_root = Path(app.static_folder)
+    try:
+        for f in sorted(static_root.rglob('*')):
+            if f.is_file():
+                st = f.stat()
+                h.update(f'{f.relative_to(static_root)}:{st.st_size}:{int(st.st_mtime)}'.encode())
+    except OSError:
+        pass
+    return h.hexdigest()[:10]
+
+
+ASSET_VERSION = _compute_asset_version()
+_GZIP_TYPES = ('text/html', 'text/css', 'application/javascript', 'text/javascript',
+               'application/json', 'image/svg+xml', 'application/manifest+json')
+
+
+@app.after_request
+def _static_cache_and_compress(resp):
+    # Geversioneerde static URLs (?v=) veranderen bij elke wijziging, dus de
+    # browser mag ze onbeperkt cachen: geen revalidatie-requests meer die
+    # waitress-threads bezetten bij elke paginawissel.
+    if request.endpoint == 'static' and request.args.get('v') and resp.status_code == 200:
+        resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+
+    # Waitress comprimeert niet en de reverse proxy is niet altijd zo
+    # ingesteld; HTML-pagina's met inline scripts zijn 50-100 KB.
+    if (resp.status_code == 200
+            and 'gzip' in request.headers.get('Accept-Encoding', '')
+            and 'Content-Encoding' not in resp.headers
+            and resp.mimetype in _GZIP_TYPES
+            and (request.endpoint == 'static' or not resp.is_streamed)):
+        resp.direct_passthrough = False
+        data = resp.get_data()
+        if len(data) >= 1024:
+            resp.set_data(gzip.compress(data, compresslevel=5))
+            resp.headers['Content-Encoding'] = 'gzip'
+            if resp.headers.get('ETag'):
+                # Gecomprimeerde representatie ≠ ongecomprimeerde
+                etag, weak = resp.get_etag()
+                if etag:
+                    resp.set_etag(etag + '-gz', weak=weak)
+        resp.vary.add('Accept-Encoding')
+    return resp
 
 
 @app.after_request
@@ -159,8 +236,7 @@ else:
     PASSWORD_HASH = generate_password_hash(_generated_pass)
     _pw_file = Path(__file__).parent / 'data' / '.generated_password'
     try:
-        _pw_file.write_text(_generated_pass)
-        os.chmod(_pw_file, 0o600)
+        _write_private_file(_pw_file, _generated_pass)
     except OSError:
         pass
     logging.warning(
@@ -320,8 +396,78 @@ _config_runtime_lock = threading.Lock()
 _notif_lock = threading.RLock()
 
 
-def _ttl_cache(seconds):
-    """Simple TTL cache decorator for expensive functions"""
+# Per-thread vlag: de monitor-thread wil altijd verse data (alerts mogen niet
+# op een verouderde snapshot gebaseerd zijn); webrequests mogen stale data
+# krijgen terwijl er op de achtergrond ververst wordt.
+_cache_tls = threading.local()
+_cache_key_locks = {}
+_cache_refreshing = set()
+# Per functienaam opgehoogd bij _invalidate_cache: een berekening die vóór
+# de invalidatie startte (bijv. een achtergrond-refresh tijdens een pm2
+# restart) mag zijn inmiddels verouderde resultaat niet meer opslaan.
+_cache_generation = {}
+
+
+def _cache_key_lock(key):
+    with _cache_lock:
+        lock = _cache_key_locks.get(key)
+        if lock is None:
+            lock = _cache_key_locks[key] = threading.RLock()
+        return lock
+
+
+def _cache_compute(key, func, args, kwargs, ttl, max_age):
+    """Bereken en sla op onder een per-key lock (single-flight).
+
+    Wachtende threads die de lock daarna krijgen zien de verse entry en
+    rekenen niet opnieuw.
+    """
+    with _cache_key_lock(key):
+        with _cache_lock:
+            entry = _cache_store.get(key)
+            generation = _cache_generation.get(key[0], 0)
+        if entry and time.time() - entry[1] < ttl:
+            return entry[0]
+        started = time.time()
+        result = func(*args, **kwargs)
+        with _cache_lock:
+            if _cache_generation.get(key[0], 0) == generation:
+                # (resultaat, tijdstip, max bewaarduur voor _sweep_caches)
+                _cache_store[key] = (result, started, max_age)
+        return result
+
+
+def _cache_refresh_async(key, func, args, kwargs, ttl, max_age):
+    with _cache_lock:
+        if key in _cache_refreshing:
+            return
+        _cache_refreshing.add(key)
+
+    def _run():
+        try:
+            _cache_compute(key, func, args, kwargs, ttl, max_age)
+        except Exception:
+            logger.warning('Background cache refresh of %s failed', func.__name__, exc_info=True)
+        finally:
+            with _cache_lock:
+                _cache_refreshing.discard(key)
+
+    threading.Thread(target=_run, daemon=True, name=f'cache-{func.__name__}').start()
+
+
+def _ttl_cache(seconds, stale=None):
+    """TTL cache decorator for expensive functions.
+
+    - Binnen `seconds`: resultaat uit de cache.
+    - Met `stale`: tot `stale` seconden oud wordt het oude resultaat meteen
+      teruggegeven en op de achtergrond ververst (stale-while-revalidate),
+      zodat een pagina nooit op bijv. `apt` of `certbot` hoeft te wachten.
+    - Gelijktijdige aanroepen voor dezelfde key rekenen maar één keer
+      (single-flight), in plaats van allemaal hetzelfde trage commando te
+      starten zodra de cache verloopt.
+    """
+    max_age = max(seconds, stale or 0)
+
     def decorator(func):
         @wraps(func)
         def wrapper(*args, **kwargs):
@@ -330,19 +476,21 @@ def _ttl_cache(seconds):
             # uit de cache krijgen.
             try:
                 key = (func.__name__, args, tuple(sorted(kwargs.items())))
+                hash(key)
             except TypeError:
                 # Niet-hashbare args: cache deze aanroep niet
                 return func(*args, **kwargs)
-            now = time.time()
             with _cache_lock:
-                if key in _cache_store:
-                    result, ts = _cache_store[key]
-                    if now - ts < seconds:
-                        return result
-            result = func(*args, **kwargs)
-            with _cache_lock:
-                _cache_store[key] = (result, now)
-            return result
+                entry = _cache_store.get(key)
+            if entry:
+                age = time.time() - entry[1]
+                if age < seconds:
+                    return entry[0]
+                if (stale and age < stale
+                        and not getattr(_cache_tls, 'require_fresh', False)):
+                    _cache_refresh_async(key, func, args, kwargs, seconds, max_age)
+                    return entry[0]
+            return _cache_compute(key, func, args, kwargs, seconds, max_age)
         return wrapper
     return decorator
 
@@ -355,6 +503,8 @@ def _invalidate_cache(*func_names):
     """
     names = set(func_names)
     with _cache_lock:
+        for name in names:
+            _cache_generation[name] = _cache_generation.get(name, 0) + 1
         for key in [k for k in _cache_store if isinstance(k, tuple) and k[0] in names]:
             _cache_store.pop(key, None)
 
@@ -368,9 +518,10 @@ def _sweep_caches():
     """
     now = time.time()
     with _cache_lock:
-        # Geen enkele _ttl_cache TTL is langer dan een uur
-        for key in [k for k, (_, ts) in _cache_store.items() if now - ts > 3600]:
+        for key in [k for k, (_, ts, max_age) in _cache_store.items() if now - ts > max_age]:
             _cache_store.pop(key, None)
+            if key not in _cache_refreshing:
+                _cache_key_locks.pop(key, None)
     with _ip_country_cache_lock:
         for ip in [ip for ip, (_, ts) in _ip_country_cache.items()
                    if now - ts > _IP_COUNTRY_TTL]:
@@ -392,7 +543,7 @@ def _generate_vapid_keys():
         format=serialization.PrivateFormat.PKCS8,
         encryption_algorithm=serialization.NoEncryption(),
     )
-    VAPID_PRIVATE_KEY_PATH.write_bytes(pem)
+    _write_private_file(VAPID_PRIVATE_KEY_PATH, pem)
     # Extract raw public key bytes (uncompressed point, skip first byte 0x04)
     pub_numbers = private_key.public_key().public_numbers()
     x = pub_numbers.x.to_bytes(32, 'big')
@@ -445,9 +596,16 @@ def _load_notification_history():
     """Load notification history"""
     if NOTIFICATION_HISTORY_PATH.exists():
         try:
-            return json.loads(NOTIFICATION_HISTORY_PATH.read_text())
+            history = json.loads(NOTIFICATION_HISTORY_PATH.read_text())
         except (json.JSONDecodeError, OSError):
-            pass
+            return []
+        # Entries van vóór de stabiele id's krijgen een deterministische id
+        # (zelfde id bij elke load, ook zonder tussentijdse save).
+        for item in history:
+            if isinstance(item, dict) and not item.get('id'):
+                raw = f"{item.get('timestamp')}|{item.get('title')}|{item.get('body')}"
+                item['id'] = hashlib.sha1(raw.encode('utf-8', 'replace')).hexdigest()[:12]
+        return history
     return []
 
 
@@ -474,6 +632,7 @@ def _add_notification_history(title, body, category):
                 return
 
         history.append({
+            'id': secrets.token_hex(6),
             'timestamp': datetime.now().isoformat(),
             'title': title,
             'body': body,
@@ -494,10 +653,15 @@ def _send_push(subscription_info, payload, private_key_pem):
             data=json.dumps(payload),
             vapid_private_key=private_key_pem,
             vapid_claims={"sub": CONFIG.get('vapid_mailto', 'mailto:admin@localhost')},
+            # Zonder timeout kan één hangend push-endpoint de monitor (die
+            # _notif_lock vasthoudt) en daarmee alle notificatie-routes blokkeren.
+            timeout=10,
         )
         return True
     except WebPushException as e:
-        if e.response and e.response.status_code in (404, 410):
+        # NB: een requests.Response met status >= 400 is falsy, dus expliciet
+        # op None checken — anders werden verlopen subscriptions nooit opgeruimd.
+        if e.response is not None and e.response.status_code in (404, 410):
             return False  # Subscription expired, should be removed
         logger.warning(f"Push failed: {e}")
         return None  # Transient error, keep subscription
@@ -514,8 +678,23 @@ def _classify_alert(alert):
     severity = alert.get('severity', '')
     key = alert.get('key', '')
 
+    # Eerst op key: berichten bevatten door de gebruiker gekozen namen, dus
+    # "PM2 process 'backup-worker' is stopped" zou op tekst als 'backup'
+    # geclassificeerd worden (en bij uitgeschakelde backup-meldingen nooit
+    # aankomen).
     if key == 'app_update_available':
         return 'app_update'
+    if key in ('high_connections', 'syn_flood') or key.startswith('ddos_'):
+        return 'ddos'
+    if key.startswith('backup_'):
+        return 'backup'
+    if key in ('updates_available', 'reboot_required'):
+        return 'updates'
+    if key.startswith(('service_down_', 'pm2_offline_', 'site_down_', 'ssl_', 'disk_',
+                       'ram_', 'swap_', 'load_', 'auto_heal_')):
+        return 'critical' if severity == 'error' else 'warnings'
+
+    # Onbekende key: val terug op de tekst-heuristiek
     if 'ddos' in msg or 'syn flood' in msg or 'connections from single' in msg:
         return 'ddos'
     if 'backup' in msg:
@@ -672,6 +851,30 @@ _auto_heal_attempts = {}  # {service: [timestamp, ...]}
 _auto_heal_lock = threading.Lock()
 
 
+# Services die de beheerder via de UI heeft gestopt: auto-heal mag die niet
+# binnen 5 minuten weer starten (bijv. mariadb gestopt voor onderhoud).
+# Persistent zodat een herstart van de app de intentie niet vergeet.
+_MANUALLY_STOPPED_PATH = DATA_DIR / 'manually_stopped_services.json'
+_manually_stopped_lock = threading.Lock()
+
+
+def _load_manually_stopped():
+    try:
+        return set(json.loads(_MANUALLY_STOPPED_PATH.read_text()))
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def _set_manually_stopped(name, stopped):
+    with _manually_stopped_lock:
+        names = _load_manually_stopped()
+        if stopped:
+            names.add(name)
+        else:
+            names.discard(name)
+        _atomic_write_json(_MANUALLY_STOPPED_PATH, sorted(names))
+
+
 def _auto_heal_services(services):
     """Restart services that are down, when auto-heal is enabled.
 
@@ -692,11 +895,14 @@ def _auto_heal_services(services):
     now = time.time()
     healed_any = False
 
+    manually_stopped = _load_manually_stopped()
     for svc in services:
-        if svc.get('status') == 'active':
+        # Alleen echt gestopte/gecrashte units; 'activating'/'reloading' zijn
+        # tussenstanden die een herstart juist zou verstoren.
+        if svc.get('status') not in ('failed', 'inactive'):
             continue
         name = svc.get('name', '')
-        if not name or not is_safe_name(name):
+        if not name or not is_safe_name(name) or name in manually_stopped:
             continue
 
         with _auto_heal_lock:
@@ -743,6 +949,9 @@ def _auto_heal_services(services):
 
 def _monitor_loop():
     """Background thread: check alerts and send push notifications"""
+    # Alerts moeten op actuele data gebaseerd zijn, nooit op een stale
+    # cache-entry (zie _ttl_cache).
+    _cache_tls.require_fresh = True
     # Wait for app to fully start
     time.sleep(30)
     logger.info("Push notification monitor started")
@@ -957,8 +1166,16 @@ def _monitor_loop():
                                     sent_count += 1
 
                             if expired:
-                                subs = [s for i, s in enumerate(subs) if i not in expired]
-                                _save_subscriptions(subs)
+                                # Herlaad en filter op endpoint: `subs` is aan het
+                                # begin van de cyclus geladen, een subscribe/
+                                # unsubscribe via de UI sindsdien zou anders
+                                # overschreven worden.
+                                dead = {subs[i]['endpoint'] for i in expired}
+                                with _notif_lock:
+                                    current_subs = _load_subscriptions()
+                                    _save_subscriptions([s for s in current_subs
+                                                         if s.get('endpoint') not in dead])
+                                subs = [s for s in subs if s['endpoint'] not in dead]
 
                             if sent_count > 0:
                                 notif_log[alert_key] = {'ts': now, 'message': alert['message']}
@@ -1146,27 +1363,49 @@ def _get_current_version():
         return '0.0.0'
 
 
-@_ttl_cache(3600)
+def _version_tuple(v):
+    """'1.10.2' → (1, 10, 2); niet-numerieke delen tellen als 0."""
+    parts = []
+    for p in str(v).lstrip('v').split('.'):
+        m = re.match(r'\d+', p)
+        parts.append(int(m.group()) if m else 0)
+    return tuple(parts)
+
+
+def _is_newer_version(latest, current):
+    # Met `!=` gaf een lokaal nieuwere versie (bijv. na een handmatige pull
+    # van main) ten onrechte "update beschikbaar" — en een downgrade-knop.
+    return bool(latest) and _version_tuple(latest) > _version_tuple(current)
+
+
+@_ttl_cache(300)
+def _fetch_latest_release():
+    """Latest GitHub release (gedeeld door het dashboard-alert en /updates).
+
+    Gooit een exceptie bij een fout, zodat mislukte checks niet gecachet worden.
+    """
+    req = urllib.request.Request(
+        'https://api.github.com/repos/martijnrenkema/vps-manager/releases/latest',
+        headers={
+            'User-Agent': 'VPS-Manager/' + _get_current_version(),
+            'Accept': 'application/vnd.github.v3+json',
+        })
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read().decode())
+
+
+@_ttl_cache(3600, stale=86400)
 def check_app_update_alert():
     """Check GitHub for a new VPS Manager release and return an alert if available"""
-    import urllib.request
-
     current = _get_current_version()
-    url = 'https://api.github.com/repos/martijnrenkema/vps-manager/releases/latest'
-    req = urllib.request.Request(url, headers={
-        'User-Agent': 'VPS-Manager/' + current,
-        'Accept': 'application/vnd.github.v3+json',
-    })
-
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
+        data = _fetch_latest_release()
     except Exception:
         logger.debug('GitHub API check failed', exc_info=True)
         return []
 
     latest = data.get('tag_name', '').lstrip('v')
-    if latest and latest != current:
+    if _is_newer_version(latest, current):
         return [{
             'severity': 'info',
             'message': f"VPS Manager update available: v{current} → v{latest}",
@@ -1176,7 +1415,7 @@ def check_app_update_alert():
     return []
 
 
-@_ttl_cache(300)
+@_ttl_cache(3600, stale=86400)
 def get_available_features():
     """Detect which optional features/services are installed on the server"""
     features = {}
@@ -1199,6 +1438,7 @@ def inject_global_info():
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
         'app_version': _get_current_version(),
+        'asset_v': ASSET_VERSION,
         'web_server': get_web_server(),
         'has_php': features.get('php', False),
         'has_mysql': features.get('mysql', False),
@@ -1210,39 +1450,76 @@ def inject_global_info():
 # Helpers
 # ---------------------------------------------------------------------------
 
+class _CmdFailed:
+    """Resultaat-object met dezelfde velden als CompletedProcess."""
+    def __init__(self, stderr, returncode=1):
+        self.stdout = ''
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+def _run(args, shell, timeout, input=None):
+    """subprocess.run met twee verbeteringen:
+
+    - Eigen process group + killpg bij timeout: met shell=True doodt
+      subprocess.run anders alleen de shell en blijven pipeline-kinderen
+      (grep/awk over grote logs, `ping`, `tail -f`) als wees doordraaien.
+    - Een ontbrekend binary (FileNotFoundError) of andere OSError geeft een
+      mislukt resultaat i.p.v. een 500.
+    """
+    try:
+        proc = subprocess.Popen(
+            args, shell=shell, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
+        )
+    except OSError as e:
+        return _CmdFailed(str(e), returncode=127)
+    try:
+        stdout, stderr = proc.communicate(input=input, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Eerst SIGTERM: sudo geeft die door aan zijn (root-)kind, SIGKILL
+        # niet. Daarna pas SIGKILL voor wat nog leeft.
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(proc.pid, sig)
+            except OSError:
+                pass
+            try:
+                proc.communicate(timeout=2)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        return _CmdFailed('Command timed out')
+    return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+
+
 def run_cmd(cmd, timeout=30):
     """Run a shell command locally on the VPS (only for hardcoded commands)"""
-    try:
-        result = subprocess.run(
-            cmd, shell=True, capture_output=True, text=True, timeout=timeout
-        )
-        return result
-    except subprocess.TimeoutExpired:
-        class Timeout:
-            stdout = ''
-            stderr = 'Command timed out'
-            returncode = 1
-        return Timeout()
+    return _run(cmd, True, timeout)
 
 
-def run_cmd_safe(args, timeout=30):
+def run_cmd_safe(args, timeout=30, input=None):
     """Run a command with argument list (no shell injection possible)"""
-    try:
-        result = subprocess.run(
-            args, capture_output=True, text=True, timeout=timeout
-        )
-        return result
-    except subprocess.TimeoutExpired:
-        class Timeout:
-            stdout = ''
-            stderr = 'Command timed out'
-            returncode = 1
-        return Timeout()
+    return _run(args, False, timeout, input=input)
+
+
+def _json_str(data, key, default=''):
+    """String-veld uit een JSON-body; getallen worden tekst, andere types
+    (lijst, object, null) de default — i.p.v. een AttributeError → 500."""
+    value = data.get(key, default) if isinstance(data, dict) else default
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        value = default
+    return str(value).strip()
 
 
 def is_safe_name(name):
-    """Validate that a name only contains safe characters (alphanumeric, dot, dash, underscore)"""
-    return bool(re.match(r'^[a-zA-Z0-9._-]+$', name))
+    """Validate that a name only contains safe characters (alphanumeric, dot, dash, underscore).
+
+    Geen leidende '-' (zou als optie aan systemctl/certbot/pm2 doorgegeven
+    worden) of '.' ('.', '..' als padcomponent), en \\Z i.p.v. $ zodat een
+    afsluitende newline niet door de check glipt.
+    """
+    return isinstance(name, str) and bool(re.match(r'[a-zA-Z0-9_][a-zA-Z0-9._-]*\Z', name))
 
 
 # ---------------------------------------------------------------------------
@@ -1413,6 +1690,19 @@ def _verify_email_code(submitted_code):
         return False, 'Invalid code'
 
 
+def _smtp_tls_context(host):
+    """TLS-context voor SMTP. Zonder expliciete context verifieert smtplib het
+    servercertificaat niet, waardoor een MITM het SMTP-wachtwoord en de
+    2FA-codes kan onderscheppen. Uitzondering: een lokale relay op loopback
+    (vaak met een self-signed snakeoil-certificaat) — daar is geen netwerkpad
+    om te onderscheppen."""
+    ctx = ssl_mod.create_default_context()
+    if host in ('localhost', '127.0.0.1', '::1'):
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl_mod.CERT_NONE
+    return ctx
+
+
 def send_email(subject, body_text, body_html=None, to=None):
     """Send email using configured SMTP settings. Returns (success, error_msg)."""
     smtp_cfg = CONFIG.get('smtp', {})
@@ -1445,11 +1735,11 @@ def send_email(subject, body_text, body_html=None, to=None):
     server = None
     try:
         if encryption == 'ssl':
-            server = smtplib.SMTP_SSL(host, port, timeout=10)
+            server = smtplib.SMTP_SSL(host, port, timeout=10, context=_smtp_tls_context(host))
         else:
             server = smtplib.SMTP(host, port, timeout=10)
             if encryption == 'starttls':
-                server.starttls()
+                server.starttls(context=_smtp_tls_context(host))
         if username and password:
             server.login(username, password)
         server.sendmail(from_addr, [to_addr], msg.as_string())
@@ -1527,13 +1817,86 @@ def send_notification_email(category, alert):
     return send_email(subject, body_text, body_html, to=to_addr)
 
 
+def _session_epoch():
+    return CONFIG['auth'].get('session_epoch', 0)
+
+
+def _session_epoch_valid():
+    """Sessies zijn signed cookies; zonder server-side teller blijft een
+    gestolen cookie geldig tot hij verloopt, ook na een wachtwoordwijziging.
+    De epoch in de config wordt opgehoogd bij wachtwoord-/2FA-wijzigingen,
+    waarmee alle andere sessies ongeldig worden."""
+    return session.get('epoch', 0) == _session_epoch()
+
+
+def _bump_session_epoch():
+    """Invalideer alle andere sessies; de huidige sessie blijft geldig."""
+    with _config_runtime_lock:
+        CONFIG['auth']['session_epoch'] = _session_epoch() + 1
+        save_config(CONFIG)
+    session['epoch'] = _session_epoch()
+
+
+def _start_session(username, method):
+    # Verse sessie tegen session fixation
+    session.clear()
+    session.permanent = True
+    session['logged_in'] = True
+    session['username'] = username
+    session['epoch'] = _session_epoch()
+    log_audit('login', {'method': method})
+    return redirect(url_for('dashboard'))
+
+
+# Een half afgeronde 2FA-login (wachtwoord ok, code nog niet) is maar
+# beperkt geldig: anders kan een achtergelaten cookie later zonder
+# wachtwoord afgemaakt worden.
+_2FA_PENDING_LIFETIME = 600
+
+
+def _wants_json():
+    """True voor fetch/XHR-aanroepen: die kunnen niets met een redirect naar
+    de HTML-loginpagina (fetch volgt hem en de JSON-parse faalt dan met een
+    misleidende "Connection error")."""
+    return (request.path.startswith('/api/')
+            or request.headers.get('X-Requested-With') == 'XMLHttpRequest'
+            or 'X-CSRFToken' in request.headers
+            or request.is_json)
+
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        if not session.get('logged_in'):
+        if not session.get('logged_in') or not _session_epoch_valid():
+            session.clear()
+            if _wants_json():
+                return jsonify({'status': 'error',
+                                'message': 'Session expired, please log in again',
+                                'login_url': url_for('login')}), 401
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return decorated
+
+
+@app.errorhandler(CSRFError)
+def _handle_csrf_error(e):
+    # Het CSRF-token hoort bij de sessie: is die verlopen, dan is "log opnieuw
+    # in" de juiste melding, niet "token verlopen".
+    if not session.get('logged_in') and _wants_json():
+        return jsonify({'status': 'error',
+                        'message': 'Session expired, please log in again',
+                        'login_url': url_for('login')}), 401
+    if _wants_json():
+        return jsonify({'status': 'error',
+                        'message': 'Security token expired, reload the page',
+                        'csrf_expired': True}), 400
+    flash('Your session expired, please try again.', 'danger')
+    if not session.get('logged_in'):
+        return redirect(url_for('login'))
+    ref = request.referrer or ''
+    if ref and urllib.parse.urlparse(ref).netloc == request.host:
+        return redirect(ref)
+    return redirect(url_for('dashboard'))
 
 
 # ---------------------------------------------------------------------------
@@ -1563,6 +1926,13 @@ def login():
             active_tfa = 'totp'
 
         # If we're in 2FA step, credentials are stored in session
+        if session.get('2fa_pending') and (
+                time.time() - session.get('2fa_started', 0) > _2FA_PENDING_LIFETIME
+                or session.get('2fa_epoch', 0) != _session_epoch()):
+            session.clear()
+            flash('Login expired, please sign in again', 'danger')
+            return render_template('login.html', show_2fa=False)
+
         if session.get('2fa_pending'):
             username = session.get('2fa_username', '')
             method = session.get('2fa_method', 'totp')
@@ -1571,13 +1941,7 @@ def login():
                 totp_secret = CONFIG['auth'].get('totp_secret')
                 if totp_secret and HAS_2FA and totp_code:
                     if _verify_totp(totp_secret, totp_code):
-                        # Verse sessie tegen session fixation
-                        session.clear()
-                        session.permanent = True
-                        session['logged_in'] = True
-                        session['username'] = username
-                        log_audit('login', {'method': '2fa_totp'})
-                        return redirect(url_for('dashboard'))
+                        return _start_session(username, '2fa_totp')
                 _record_attempt(client_ip)
                 flash('Invalid 2FA code', 'danger')
                 return render_template('login.html', show_2fa=True, tfa_method='totp')
@@ -1586,13 +1950,7 @@ def login():
                 if email_code:
                     ok, err = _verify_email_code(email_code)
                     if ok:
-                        # Verse sessie tegen session fixation
-                        session.clear()
-                        session.permanent = True
-                        session['logged_in'] = True
-                        session['username'] = username
-                        log_audit('login', {'method': '2fa_email'})
-                        return redirect(url_for('dashboard'))
+                        return _start_session(username, '2fa_email')
                     _record_attempt(client_ip)
                     flash(err, 'danger')
                     return render_template('login.html', show_2fa=True, tfa_method='email')
@@ -1606,33 +1964,34 @@ def login():
         user_ok = hmac.compare_digest(username.encode('utf-8'), USERNAME.encode('utf-8'))
         pass_ok = check_password_hash(PASSWORD_HASH, password)
         if user_ok and pass_ok:
-            if active_tfa == 'totp':
+            if active_tfa in ('totp', 'email'):
+                if active_tfa == 'email':
+                    # Hergebruik een nog geldige, recent verstuurde code: anders
+                    # kan iedereen met het wachtwoord de eigenaar met mails
+                    # bestoken en diens openstaande code steeds ongeldig maken.
+                    with _email_2fa_lock:
+                        recent = (_email_2fa_code
+                                  and time.time() - _email_2fa_code.get('last_sent', 0) < _EMAIL_RESEND_COOLDOWN
+                                  and time.time() < _email_2fa_code.get('expires', 0))
+                    if not recent:
+                        code = _generate_email_code()
+                        ok, err = _send_2fa_code_email(code)
+                        if not ok:
+                            app.logger.error('Email 2FA send failed: %s', err)
+                            flash('Could not send verification email. Check SMTP settings on the server.', 'danger')
+                            return render_template('login.html', show_2fa=False)
                 session['2fa_pending'] = True
                 session['2fa_username'] = username
-                session['2fa_method'] = 'totp'
-                return render_template('login.html', show_2fa=True, tfa_method='totp')
+                session['2fa_method'] = active_tfa
+                session['2fa_started'] = time.time()
+                session['2fa_epoch'] = _session_epoch()
+                return render_template('login.html', show_2fa=True, tfa_method=active_tfa)
 
-            if active_tfa == 'email':
-                code = _generate_email_code()
-                ok, err = _send_2fa_code_email(code)
-                if not ok:
-                    app.logger.error('Email 2FA send failed: %s', err)
-                    flash('Could not send verification email. Check SMTP settings on the server.', 'danger')
-                    return render_template('login.html', show_2fa=False)
-                session['2fa_pending'] = True
-                session['2fa_username'] = username
-                session['2fa_method'] = 'email'
-                return render_template('login.html', show_2fa=True, tfa_method='email')
-
-            # Verse sessie tegen session fixation
-            session.clear()
-            session.permanent = True
-            session['logged_in'] = True
-            session['username'] = username
-            log_audit('login', {'method': 'password'})
-            return redirect(url_for('dashboard'))
+            return _start_session(username, 'password')
         _record_attempt(client_ip)
-        log_audit('login_failed', {'username': username})
+        # Begrens de lengte: de gebruikersnaam komt ongeauthenticeerd binnen
+        # en zou anders de audit log onbeperkt kunnen laten groeien.
+        log_audit('login_failed', {'username': username[:64]})
         flash('Invalid username or password', 'danger')
     return render_template('login.html', show_2fa=show_2fa, tfa_method=tfa_method)
 
@@ -1695,15 +2054,17 @@ def format_server_uptime(seconds):
 @_ttl_cache(30)
 def get_server_overview():
     """Gather server overview data"""
+    # ';' i.p.v. '&&': één falend onderdeel (bijv. geen PRETTY_NAME) mag niet
+    # de hele overview — en daarmee de disk/RAM/load-alerts — laten wegvallen.
     cmd = (
-        "hostname && echo '---SEP---' && "
-        "cat /proc/uptime && echo '---SEP---' && "
-        "cat /proc/cpuinfo | grep 'model name' | head -1 && echo '---SEP---' && "
-        "nproc && echo '---SEP---' && "
-        "free -b | grep Mem && echo '---SEP---' && "
-        "free -b | grep Swap && echo '---SEP---' && "
-        "df -h / | tail -1 && echo '---SEP---' && "
-        "cat /etc/os-release | grep PRETTY_NAME && echo '---SEP---' && "
+        "hostname; echo '---SEP---'; "
+        "cat /proc/uptime; echo '---SEP---'; "
+        "cat /proc/cpuinfo | grep 'model name' | head -1; echo '---SEP---'; "
+        "nproc; echo '---SEP---'; "
+        "free -b | grep Mem; echo '---SEP---'; "
+        "free -b | grep Swap; echo '---SEP---'; "
+        "df -h / | tail -1; echo '---SEP---'; "
+        "cat /etc/os-release | grep PRETTY_NAME; echo '---SEP---'; "
         "cat /proc/loadavg"
     )
     result = run_cmd(cmd)
@@ -1918,7 +2279,7 @@ def _nginx_directive_value(line, directive):
     return parts[0] if parts else None
 
 
-@_ttl_cache(60)
+@_ttl_cache(60, stale=900)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
     sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
@@ -2059,7 +2420,7 @@ def _format_uptime(pm_uptime):
         return '?'
 
 
-@_ttl_cache(120)
+@_ttl_cache(600, stale=21600)
 def get_ssl_certificates():
     """Get SSL certificate info"""
     result = run_cmd("sudo certbot certificates 2>/dev/null", timeout=15)
@@ -2117,7 +2478,7 @@ def get_services_status():
         if 'php' in svc and 'fpm' in svc and svc not in seen:
             services.append(svc)
             seen.add(svc)
-        if svc in ('ufw', 'cron', 'ssh', 'certbot.timer') and svc not in seen:
+        if svc in ('ufw', 'cron', 'ssh') and svc not in seen:
             services.append(svc)
             seen.add(svc)
 
@@ -2135,32 +2496,46 @@ def get_services_status():
     result = run_cmd_safe(["systemctl", "is-active"] + final_services)
     statuses = result.stdout.strip().split('\n') if result.stdout else []
 
+    # Eén `systemctl show` voor alle actieve services i.p.v. één per service.
+    # Monotone timestamp (µs sinds boot) i.p.v. ActiveEnterTimestamp: die
+    # laatste is locale-afhankelijk ("di 2026-02-03 ...") en brak strptime.
+    active_names = [svc for i, svc in enumerate(final_services)
+                    if i < len(statuses) and statuses[i].strip() == 'active']
+    started_mono = {}
+    if active_names:
+        show = run_cmd_safe(["systemctl", "show", "-p", "Id", "-p", "ActiveEnterTimestampMonotonic"]
+                            + active_names)
+        for block, name in zip(show.stdout.strip().split('\n\n'), active_names):
+            props = dict(line.split('=', 1) for line in block.splitlines() if '=' in line)
+            try:
+                started_mono[name] = int(props.get('ActiveEnterTimestampMonotonic', '0')) / 1e6
+            except ValueError:
+                pass
+    try:
+        with open('/proc/uptime') as f:
+            boot_uptime = float(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        boot_uptime = None
+
     svc_list = []
     for i, service in enumerate(final_services):
         status = statuses[i].strip() if i < len(statuses) else 'unknown'
         uptime = ''
         if status == 'active':
-            up_result = run_cmd_safe(
-                ["systemctl", "show", service, "--property=ActiveEnterTimestamp", "--value"]
-            )
-            if up_result.returncode == 0 and up_result.stdout.strip():
-                try:
-                    start_str = up_result.stdout.strip()
-                    # Format: "Tue 2026-02-03 13:51:33 CET" - strip timezone
-                    start_str = ' '.join(start_str.split()[:3])
-                    start = datetime.strptime(start_str, '%a %Y-%m-%d %H:%M:%S')
-                    delta = datetime.now() - start
-                    days = delta.days
-                    hours, remainder = divmod(delta.seconds, 3600)
-                    minutes, _ = divmod(remainder, 60)
-                    if days > 0:
-                        uptime = f"{days}d {hours}h"
-                    elif hours > 0:
-                        uptime = f"{hours}h {minutes}m"
-                    else:
-                        uptime = f"{minutes}m"
-                except (ValueError, IndexError):
-                    uptime = '?'
+            started = started_mono.get(service)
+            if started and boot_uptime is not None and boot_uptime >= started:
+                secs = int(boot_uptime - started)
+                days, rem = divmod(secs, 86400)
+                hours, rem = divmod(rem, 3600)
+                minutes = rem // 60
+                if days > 0:
+                    uptime = f"{days}d {hours}h"
+                elif hours > 0:
+                    uptime = f"{hours}h {minutes}m"
+                else:
+                    uptime = f"{minutes}m"
+            else:
+                uptime = '?'
         svc_list.append({
             'name': service,
             'status': status,
@@ -2188,7 +2563,7 @@ def _save_backup_status(status):
     _atomic_write_json(BACKUP_STATUS_PATH, status)
 
 
-@_ttl_cache(60)
+@_ttl_cache(300, stale=21600)
 def get_backup_status():
     """Get backup status info"""
     backup_cfg = CONFIG.get('backup', {})
@@ -2411,7 +2786,31 @@ def parse_ufw_rules(ufw_output):
     return rules
 
 
-@_ttl_cache(30)
+_AUTH_LOG_TAIL_BYTES = 20_000_000
+
+
+def _tail_file_lines(path, max_bytes):
+    """Laatste max_bytes van een (root-only) logbestand als regels.
+
+    Een eventueel afgekapte eerste regel wordt weggelaten."""
+    result = run_cmd_safe(['sudo', 'tail', '-c', str(max_bytes), path], timeout=20)
+    if result.returncode != 0 or not result.stdout:
+        return []
+    lines = result.stdout.split('\n')
+    if len(result.stdout) >= max_bytes - 1 and len(lines) > 1:
+        lines = lines[1:]
+    return [line for line in lines if line.strip()]
+
+
+def _extract_log_ip(line):
+    """IPv4- of IPv6-adres na 'from' in een auth.log-regel, of ''."""
+    m = re.search(r'from\s+([0-9a-fA-F:.]+[0-9a-fA-F])', line)
+    if m and _is_valid_ip(m.group(1)):
+        return m.group(1)
+    return ''
+
+
+@_ttl_cache(60, stale=600)
 def get_ssh_logs():
     """Get SSH log analysis: failed attempts, successful logins, top attackers, fail2ban actions"""
     data = {
@@ -2424,81 +2823,57 @@ def get_ssh_logs():
         'recent_entries': [],
     }
 
-    # Count failed attempts today
-    result = run_cmd("sudo grep -ci 'failed\\|invalid user\\|authentication failure' /var/log/auth.log 2>/dev/null")
-    if result.returncode == 0 and result.stdout.strip().isdigit():
-        data['failed_count'] = int(result.stdout.strip())
+    # Eén pass in Python over het staartstuk van auth.log, i.p.v. zeven
+    # volledige grep-scans: auth.log is op een server onder brute-force al
+    # snel honderden MB's. De tellingen gelden daarmee voor het recente deel
+    # van de log (laatste ~20 MB).
+    auth_lines = _tail_file_lines('/var/log/auth.log', _AUTH_LOG_TAIL_BYTES)
+    failed_re = re.compile(r'failed|invalid user|authentication failure', re.I)
+    attacker_re = re.compile(r'failed|invalid user', re.I)
+    failed, accepted, sshd_lines = [], [], []
+    attackers = Counter()
+    for line in auth_lines:
+        if failed_re.search(line):
+            failed.append(line)
+            if attacker_re.search(line):
+                ip = _extract_log_ip(line)
+                if ip:
+                    attackers[ip] += 1
+        if 'accepted' in line.lower():
+            accepted.append(line)
+        if 'sshd' in line:
+            sshd_lines.append(line)
 
-    # Count accepted logins
-    result = run_cmd("sudo grep -ci 'accepted' /var/log/auth.log 2>/dev/null")
-    if result.returncode == 0 and result.stdout.strip().isdigit():
-        data['accepted_count'] = int(result.stdout.strip())
-
-    # Recent failed attempts (last 30)
-    result = run_cmd("sudo grep -i 'failed\\|invalid user\\|authentication failure' /var/log/auth.log 2>/dev/null | tail -30")
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            entry = _parse_auth_log_line(line)
-            data['recent_failed'].append(entry)
-
-    # Recent accepted logins (last 20)
-    result = run_cmd("sudo grep -i 'accepted' /var/log/auth.log 2>/dev/null | tail -20")
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            entry = _parse_auth_log_line(line)
-            data['recent_accepted'].append(entry)
-
-    # Top attacking IPs (from failed attempts)
-    result = run_cmd(
-        "sudo grep -i 'failed\\|invalid user' /var/log/auth.log 2>/dev/null "
-        "| grep -oP 'from \\K[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+' "
-        "| sort | uniq -c | sort -rn | head -20"
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                data['top_attackers'].append({
-                    'ip': parts[1],
-                    'count': int(parts[0]),
-                })
+    data['failed_count'] = len(failed)
+    data['accepted_count'] = len(accepted)
+    data['recent_failed'] = [_parse_auth_log_line(line) for line in failed[-30:]]
+    data['recent_accepted'] = [_parse_auth_log_line(line) for line in accepted[-20:]]
+    data['recent_entries'] = [_parse_auth_log_line(line) for line in sshd_lines[-20:]]
+    data['top_attackers'] = [{'ip': ip, 'count': c} for ip, c in attackers.most_common(20)]
 
     # Fail2ban actions (bans/unbans)
-    result = run_cmd("sudo grep -i 'ban\\|unban' /var/log/fail2ban.log 2>/dev/null | tail -30")
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line:
-                continue
-            # Parse: 2026-03-10 12:34:56,789 fail2ban.actions [1234]: NOTICE [sshd] Ban 1.2.3.4
-            ts_match = re.match(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', line)
-            timestamp = ts_match.group(1) if ts_match else ''
-            action = 'ban' if re.search(r'\bBan\b', line) else 'unban' if re.search(r'\bUnban\b', line) else 'other'
-            ip_match = re.search(r'(?:Ban|Unban|Found)\s+(\d+\.\d+\.\d+\.\d+)', line)
-            ip = ip_match.group(1) if ip_match else ''
-            jail_match = re.search(r'\[(\w+)\]\s+(?:Ban|Unban|Found)', line)
-            jail = jail_match.group(1) if jail_match else ''
-            data['fail2ban_actions'].append({
-                'timestamp': timestamp,
-                'action': action,
-                'ip': ip,
-                'jail': jail,
-                'raw': line,
-            })
-
-    # Last 20 sshd entries (general)
-    result = run_cmd("sudo grep 'sshd' /var/log/auth.log 2>/dev/null | tail -20")
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if line:
-                data['recent_entries'].append(_parse_auth_log_line(line))
+    ban_re = re.compile(r'ban|unban', re.I)
+    f2b_lines = [line for line in _tail_file_lines('/var/log/fail2ban.log', 2_000_000)
+                 if ban_re.search(line)][-30:]
+    for line in f2b_lines:
+        line = line.strip()
+        if not line:
+            continue
+        # Parse: 2026-03-10 12:34:56,789 fail2ban.actions [1234]: NOTICE [sshd] Ban 1.2.3.4
+        ts_match = re.match(r'(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})', line)
+        timestamp = ts_match.group(1) if ts_match else ''
+        action = 'ban' if re.search(r'\bBan\b', line) else 'unban' if re.search(r'\bUnban\b', line) else 'other'
+        ip_match = re.search(r'(?:Ban|Unban|Found)\s+([0-9a-fA-F:.]+)', line)
+        ip = ip_match.group(1) if ip_match and _is_valid_ip(ip_match.group(1)) else ''
+        jail_match = re.search(r'\[([\w-]+)\]\s+(?:Ban|Unban|Found)', line)
+        jail = jail_match.group(1) if jail_match else ''
+        data['fail2ban_actions'].append({
+            'timestamp': timestamp,
+            'action': action,
+            'ip': ip,
+            'jail': jail,
+            'raw': line,
+        })
 
     # Lookup country info for all IPs
     all_ips = set()
@@ -2568,9 +2943,8 @@ def _parse_auth_log_line(line):
     else:
         level = 'info'
 
-    # Extract IP
-    ip_match = re.search(r'from\s+(\d+\.\d+\.\d+\.\d+)', line)
-    ip = ip_match.group(1) if ip_match else ''
+    # Extract IP (IPv4 en IPv6)
+    ip = _extract_log_ip(line)
 
     return {
         'timestamp': timestamp,
@@ -2581,6 +2955,16 @@ def _parse_auth_log_line(line):
     }
 
 
+def _run_cmds_parallel(cmds, timeout=30):
+    """Voer onafhankelijke shell-commando's parallel uit: {naam: cmd} →
+    {naam: resultaat}. fail2ban-client en ufw zijn Python-tools met elk
+    ~0.2-0.4 s opstarttijd; serieel telt dat snel op tot seconden."""
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, max(1, len(cmds)))) as ex:
+        futures = {name: ex.submit(run_cmd, cmd, timeout) for name, cmd in cmds.items()}
+        return {name: f.result() for name, f in futures.items()}
+
+
+@_ttl_cache(30)
 def get_firewall_security():
     """Get firewall and security info"""
     data = {
@@ -2588,31 +2972,36 @@ def get_firewall_security():
         'f2b_config': {}, 'jails': [],
     }
 
-    result = run_cmd("sudo ufw status numbered 2>/dev/null")
-    if result.returncode == 0:
-        data['ufw'] = result.stdout.strip()
-        data['ufw_rules'] = parse_ufw_rules(result.stdout)
+    r = _run_cmds_parallel({
+        'ufw': "sudo ufw status numbered 2>/dev/null",
+        'sshd': "sudo fail2ban-client status sshd 2>/dev/null",
+        'banned': "sudo fail2ban-client banned 2>/dev/null",
+        'who': "who",
+        # Alleen het staartstuk: auth.log is op een aangevallen server al
+        # snel honderden MB's en een volledige grep kostte seconden.
+        'auth': "sudo tail -n 5000 /var/log/auth.log 2>/dev/null | grep 'sshd' | tail -15",
+        'bantime': "sudo fail2ban-client get sshd bantime 2>/dev/null",
+        'findtime': "sudo fail2ban-client get sshd findtime 2>/dev/null",
+        'maxretry': "sudo fail2ban-client get sshd maxretry 2>/dev/null",
+        'jails': "sudo fail2ban-client status 2>/dev/null",
+    })
 
-    result = run_cmd("sudo fail2ban-client status sshd 2>/dev/null")
-    if result.returncode == 0:
-        data['fail2ban'] = result.stdout.strip()
-
-    result = run_cmd("sudo fail2ban-client banned 2>/dev/null")
-    if result.returncode == 0:
-        data['banned'] = result.stdout.strip()
-
-    result = run_cmd("who")
-    if result.returncode == 0:
-        data['sessions'] = result.stdout.strip()
-
-    result = run_cmd("sudo grep 'sshd' /var/log/auth.log 2>/dev/null | tail -15")
-    if result.returncode == 0:
-        data['auth_log'] = result.stdout.strip()
+    if r['ufw'].returncode == 0:
+        data['ufw'] = r['ufw'].stdout.strip()
+        data['ufw_rules'] = parse_ufw_rules(r['ufw'].stdout)
+    if r['sshd'].returncode == 0:
+        data['fail2ban'] = r['sshd'].stdout.strip()
+    if r['banned'].returncode == 0:
+        data['banned'] = r['banned'].stdout.strip()
+    if r['who'].returncode == 0:
+        data['sessions'] = r['who'].stdout.strip()
+    if r['auth'].returncode == 0:
+        data['auth_log'] = r['auth'].stdout.strip()
 
     # Fail2ban config details
     f2b_config = {}
     for setting in ['bantime', 'findtime', 'maxretry']:
-        result = run_cmd(f"sudo fail2ban-client get sshd {setting} 2>/dev/null")
+        result = r[setting]
         if result.returncode == 0:
             val = result.stdout.strip()
             if setting in ('bantime', 'findtime'):
@@ -2624,13 +3013,19 @@ def get_firewall_security():
     data['f2b_config'] = f2b_config
 
     # All jails
-    result = run_cmd("sudo fail2ban-client status 2>/dev/null")
-    if result.returncode == 0:
-        jail_match = re.search(r'Jail list:\s*(.+)', result.stdout)
+    if r['jails'].returncode == 0:
+        jail_match = re.search(r'Jail list:\s*(.+)', r['jails'].stdout)
         if jail_match:
             jail_names = [j.strip() for j in jail_match.group(1).split(',') if j.strip()]
+            # sshd-status hebben we al; de rest parallel
+            jail_results = _run_cmds_parallel({
+                name: f"sudo fail2ban-client status {shlex.quote(name)} 2>/dev/null"
+                for name in jail_names if name != 'sshd'
+            }) if jail_names else {}
+            if 'sshd' in jail_names:
+                jail_results['sshd'] = r['sshd']
             for jail_name in jail_names:
-                jail_result = run_cmd(f"sudo fail2ban-client status {shlex.quote(jail_name)} 2>/dev/null")
+                jail_result = jail_results[jail_name]
                 jail_info = {'name': jail_name, 'status': 'unknown', 'banned': 0, 'total_banned': 0}
                 if jail_result.returncode == 0:
                     jail_info['status'] = 'active'
@@ -2645,28 +3040,31 @@ def get_firewall_security():
     return data
 
 
-@_ttl_cache(300)
+@_ttl_cache(1800, stale=86400)
 def get_system_updates():
     """Get list of available updates, categorized"""
-    result = run_cmd("apt list --upgradable 2>/dev/null", timeout=60)
+    # LC_ALL=C: de parsers hieronder zoeken op Engelse apt-teksten
+    result = run_cmd("LC_ALL=C apt list --upgradable 2>/dev/null", timeout=60)
     if result.returncode != 0:
         return []
 
-    # Detect phased packages via simulated upgrade
+    # Detect phased packages via simulated upgrade. Koptekst verschilt per
+    # apt-versie: "...have been kept back / deferred due to phasing:" (oud)
+    # of "Not upgrading yet due to phasing:" (apt >= 2.9). De pakketlijst
+    # staat ingesprongen eronder; de eerste niet-ingesprongen regel is de
+    # volgende sectie (bijv. "The following packages will be upgraded:").
     phased_packages = set()
-    sim_result = run_cmd("apt -s upgrade 2>/dev/null", timeout=60)
-    if sim_result.returncode == 0 and 'deferred due to phasing' in sim_result.stdout:
+    sim_result = run_cmd("LC_ALL=C apt -s upgrade 2>/dev/null", timeout=60)
+    if sim_result.returncode == 0 and 'due to phasing' in sim_result.stdout:
         in_phased = False
         for sim_line in sim_result.stdout.split('\n'):
-            if 'deferred due to phasing' in sim_line:
+            if 'due to phasing' in sim_line:
                 in_phased = True
                 continue
             if in_phased:
-                sim_line = sim_line.strip()
-                if not sim_line or sim_line[0].isdigit():
+                if not sim_line.startswith((' ', '\t')) or not sim_line.strip():
                     break
-                for pkg in sim_line.split():
-                    phased_packages.add(pkg)
+                phased_packages.update(sim_line.split())
 
     updates = []
     for line in result.stdout.strip().split('\n'):
@@ -2719,7 +3117,7 @@ def _parse_nginx_error_line(line):
     return {'timestamp': '', 'level': 'unknown', 'message': line[:120], 'raw': line}
 
 
-@_ttl_cache(30)
+@_ttl_cache(60, stale=600)
 def get_nginx_logs():
     """Get nginx log information"""
     nginx_cfg = CONFIG.get('nginx', {})
@@ -2776,8 +3174,11 @@ def get_nginx_logs():
         if not site_access_log:
             continue
         site_name = site['domains'][0] if site.get('domains') else site.get('config', '?')
+        # Alleen de laatste 10k requests: awk+sort over een access log van
+        # enkele GB's kostte per site seconden (de caddy-variant deed dit al zo).
         result = run_cmd(
-            f"sudo awk '{{print $9}}' {shlex.quote(site_access_log)} 2>/dev/null | sort | uniq -c | sort -rn | head -10"
+            f"sudo tail -n 10000 {shlex.quote(site_access_log)} 2>/dev/null "
+            f"| awk '{{print $9}}' | sort | uniq -c | sort -rn | head -10"
         )
         if result.returncode == 0 and result.stdout.strip():
             codes = []
@@ -2802,7 +3203,7 @@ def get_nginx_logs():
     return data
 
 
-@_ttl_cache(120)
+@_ttl_cache(300, stale=3600)
 def get_database_info():
     """Get MariaDB database info"""
     cmd = (
@@ -2833,8 +3234,17 @@ def get_database_info():
     return databases
 
 
+_CRON_SPECIALS = {
+    '@reboot': 'At boot', '@yearly': 'Yearly', '@annually': 'Yearly',
+    '@monthly': 'Monthly', '@weekly': 'Weekly', '@daily': 'Daily',
+    '@midnight': 'Daily', '@hourly': 'Hourly',
+}
+
+
 def _cron_to_human(parts):
     """Convert cron schedule parts to human-readable string"""
+    if len(parts) == 1 and parts[0].lower() in _CRON_SPECIALS:
+        return _CRON_SPECIALS[parts[0].lower()]
     if len(parts) < 5:
         return ' '.join(parts)
 
@@ -2915,44 +3325,18 @@ def get_cronjobs():
     """Get cron and systemd timer info as structured data"""
     data = {'root': '', 'user': '', 'timers': '', 'root_jobs': [], 'user_jobs': [], 'timer_list': []}
 
-    result = run_cmd("sudo crontab -l 2>/dev/null")
-    if result.returncode == 0:
-        data['root'] = result.stdout.strip()
-        for line in result.stdout.strip().split('\n'):
-            line = line.strip()
-            if not line or line.startswith('#') or line.startswith('MAILTO'):
-                continue
-            parts = line.split()
-            if parts and '=' in parts[0]:
-                continue
-            if len(parts) >= 6:
-                schedule_parts = parts[:5]
-                command = ' '.join(parts[5:])
-                data['root_jobs'].append({
-                    'schedule': ' '.join(schedule_parts),
-                    'human_schedule': _cron_to_human(schedule_parts),
-                    'command': command,
-                })
+    # Zelfde parser als de edit/delete/run-endpoints, zodat de index die de
+    # UI meestuurt naar dezelfde regel wijst.
+    root_text, _ = _read_crontab('root')
+    if root_text:
+        data['root'] = root_text.strip()
+        data['root_jobs'] = _parse_crontab_lines(root_text)[1]
 
-    result = run_cmd("crontab -l 2>/dev/null")
-    if result.returncode == 0:
-        user_crontab = result.stdout.strip()
-        # Skip user crontab section if it's identical to root (app running as root)
-        if user_crontab != data['root']:
-            data['user'] = user_crontab
-            for line in user_crontab.split('\n'):
-                line = line.strip()
-                if not line or line.startswith('#') or line.startswith('MAILTO') or ('=' in line.split()[0] if line.split() else True):
-                    continue
-                parts = line.split()
-                if len(parts) >= 6:
-                    schedule_parts = parts[:5]
-                    command = ' '.join(parts[5:])
-                    data['user_jobs'].append({
-                        'schedule': ' '.join(schedule_parts),
-                        'human_schedule': _cron_to_human(schedule_parts),
-                        'command': command,
-                    })
+    user_text, _ = _read_crontab('user')
+    # Skip user crontab section if it's identical to root (app running as root)
+    if user_text and user_text.strip() != data['root']:
+        data['user'] = user_text.strip()
+        data['user_jobs'] = _parse_crontab_lines(user_text)[1]
 
     result = run_cmd("systemctl list-timers --no-pager 2>/dev/null")
     if result.returncode == 0:
@@ -2980,27 +3364,41 @@ def _parse_size_to_mb(size_str):
         return 0.0
 
 
+def _human_kb(kb):
+    """KB → du -h-achtige notatie (4.0K, 512M, 1.2G)."""
+    size = float(kb)
+    for unit in ('K', 'M', 'G', 'T'):
+        if size < 1024 or unit == 'T':
+            return f"{size:.1f}{unit}" if size < 10 else f"{size:.0f}{unit}"
+        size /= 1024
+
+
+# du loopt de hele /var/www-boom af (seconden tot tientallen seconden bij
+# grote sites); de grootte verandert traag, dus ruim cachen.
+@_ttl_cache(900, stale=21600)
 def get_disk_per_site():
     """Get disk usage per site"""
-    result = run_cmd("du -sh /var/www/*/ 2>/dev/null | sort -rh")
-    if result.returncode != 0 or not result.stdout.strip():
+    # Eén scan met -k i.p.v. -h: het totaal is dan de som, zonder de hele
+    # boom een tweede keer met `du -sh /var/www/` af te lopen.
+    result = run_cmd("du -sk /var/www/*/ 2>/dev/null", timeout=120)
+    if not result.stdout.strip():
         return [], ''
 
     sites = []
+    total_kb = 0
     for line in result.stdout.strip().split('\n'):
         parts = line.split('\t')
         if len(parts) >= 2:
-            size = parts[0].strip()
+            try:
+                kb = int(parts[0].strip())
+            except ValueError:
+                continue
+            total_kb += kb
             path = parts[1].strip().rstrip('/')
-            site_name = os.path.basename(path)
-            sites.append({'site': site_name, 'size': size, 'size_mb': round(_parse_size_to_mb(size), 2)})
-
-    total_result = run_cmd("du -sh /var/www/ 2>/dev/null")
-    total = ''
-    if total_result.returncode == 0 and total_result.stdout.strip():
-        total = total_result.stdout.strip().split('\t')[0]
-
-    return sites, total
+            sites.append({'site': os.path.basename(path), 'size': _human_kb(kb),
+                          'size_mb': round(kb / 1024, 2)})
+    sites.sort(key=lambda x: x['size_mb'], reverse=True)
+    return sites, _human_kb(total_kb) if sites else ''
 
 
 def predict_disk_full_days():
@@ -3182,6 +3580,36 @@ def get_dashboard_alerts(data, services, pm2, ssl):
     return alerts
 
 
+def _established_remote_peers():
+    """Peer-IP's van alle established TCP-verbindingen, zonder loopback.
+
+    Returns None als `ss` niet werkt. IPv4-mapped IPv6 (::ffff:1.2.3.4)
+    wordt genormaliseerd naar het IPv4-adres.
+    """
+    result = run_cmd_safe(['ss', '-tn', 'state', 'established'], timeout=10)
+    if result.returncode != 0:
+        return None
+    peers = []
+    for line in result.stdout.splitlines():
+        cols = line.split()
+        # Met een state-filter laat ss de State-kolom weg:
+        # Recv-Q Send-Q Local:Port Peer:Port
+        if len(cols) < 4 or not cols[0].isdigit():
+            continue  # header
+        addr = cols[3].rsplit(':', 1)[0].strip('[]')
+        addr = addr.split('%', 1)[0]  # zone-id (fe80::1%eth0)
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            continue
+        if getattr(ip, 'ipv4_mapped', None):
+            ip = ip.ipv4_mapped
+        if ip.is_loopback:
+            continue
+        peers.append(str(ip))
+    return peers
+
+
 @_ttl_cache(60)
 def check_ddos_indicators():
     """Check for DDoS indicators and return alerts"""
@@ -3194,20 +3622,19 @@ def check_ddos_indicators():
     syn_threshold = ddos_cfg.get('syn_threshold', 50)
     single_ip_threshold = ddos_cfg.get('single_ip_threshold', 50)
 
-    # Total established connections
-    result = run_cmd("ss -t state established 2>/dev/null | tail -n +2 | wc -l")
-    if result.returncode == 0:
-        try:
-            total_conn = int(result.stdout.strip())
-            if total_conn > conn_threshold:
-                alerts.append({
-                    'severity': 'warning',
-                    'message': f"High connection count: {total_conn} established",
-                    'link': '/firewall',
-                    'key': 'high_connections',
-                })
-        except ValueError:
-            pass
+    # Established connections, zonder loopback: nginx→PM2/PHP-FPM/redis
+    # keepalives geven anders tientallen tot honderden verbindingen vanaf
+    # 127.0.0.1 en daarmee een vals "Possible DDoS"-alarm.
+    peers = _established_remote_peers()
+    if peers is not None:
+        total_conn = len(peers)
+        if total_conn > conn_threshold:
+            alerts.append({
+                'severity': 'warning',
+                'message': f"High connection count: {total_conn} established",
+                'link': '/firewall',
+                'key': 'high_connections',
+            })
 
     # SYN_RECV count (SYN flood indicator)
     result = run_cmd("ss -t state syn-recv 2>/dev/null | tail -n +2 | wc -l")
@@ -3225,26 +3652,15 @@ def check_ddos_indicators():
             pass
 
     # Connections per IP (top offender)
-    # NB: met een state-filter laat `ss` de State-kolom weg, dus de peer-address
-    # staat in $4 (niet $5); NR>1 slaat de header-regel over.
-    result = run_cmd(
-        "ss -tn state established 2>/dev/null | awk 'NR>1 {print $4}' | sed 's/:[^:]*$//' | sort | uniq -c | sort -rn | head -1"
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        parts = result.stdout.strip().split()
-        if len(parts) >= 2:
-            try:
-                ip_count = int(parts[0])
-                ip_addr = parts[1]
-                if ip_count > single_ip_threshold:
-                    alerts.append({
-                        'severity': 'error',
-                        'message': f"Possible DDoS: {ip_count} connections from {ip_addr}",
-                        'link': '/firewall',
-                        'key': f"ddos_single_ip_{ip_addr}",
-                    })
-            except ValueError:
-                pass
+    if peers:
+        ip_addr, ip_count = Counter(peers).most_common(1)[0]
+        if ip_count > single_ip_threshold:
+            alerts.append({
+                'severity': 'error',
+                'message': f"Possible DDoS: {ip_count} connections from {ip_addr}",
+                'link': '/firewall',
+                'key': f"ddos_single_ip_{ip_addr}",
+            })
 
     return alerts
 
@@ -3253,12 +3669,11 @@ def get_ddos_stats():
     """Get current connection stats for the firewall DDoS card"""
     stats = {'total_connections': 0, 'syn_recv': 0, 'top_ips': []}
 
-    result = run_cmd("ss -t state established 2>/dev/null | tail -n +2 | wc -l")
-    if result.returncode == 0:
-        try:
-            stats['total_connections'] = int(result.stdout.strip())
-        except ValueError:
-            pass
+    # Zelfde telling als check_ddos_indicators (zonder loopback), zodat de
+    # kaart en de alerts dezelfde cijfers tonen.
+    peers = _established_remote_peers() or []
+    stats['total_connections'] = len(peers)
+    stats['top_ips'] = [{'count': c, 'ip': ip} for ip, c in Counter(peers).most_common(5)]
 
     result = run_cmd("ss -t state syn-recv 2>/dev/null | tail -n +2 | wc -l")
     if result.returncode == 0:
@@ -3266,18 +3681,6 @@ def get_ddos_stats():
             stats['syn_recv'] = int(result.stdout.strip())
         except ValueError:
             pass
-
-    result = run_cmd(
-        "ss -tn state established 2>/dev/null | awk 'NR>1 {print $4}' | sed 's/:[^:]*$//' | sort | uniq -c | sort -rn | head -5"
-    )
-    if result.returncode == 0 and result.stdout.strip():
-        for line in result.stdout.strip().split('\n'):
-            parts = line.strip().split()
-            if len(parts) >= 2:
-                try:
-                    stats['top_ips'].append({'count': int(parts[0]), 'ip': parts[1]})
-                except ValueError:
-                    pass
 
     ddos_cfg = CONFIG.get('ddos_detection', {})
     stats['conn_threshold'] = ddos_cfg.get('connection_threshold', 100)
@@ -3306,7 +3709,7 @@ def _audit_check(key, label, status, details='', recommendation=''):
 _EXPECTED_PUBLIC_PORTS = {'22', '80', '443'}
 
 
-@_ttl_cache(120)
+@_ttl_cache(600, stale=3600)
 def get_security_audit():
     """Run a set of hardening checks and return them with a score.
 
@@ -3570,63 +3973,53 @@ def get_network_info():
     return {'interfaces': interfaces, 'ports': ports, 'connections': conn_count}
 
 
-@_ttl_cache(30)
+def _check_site_uptime(domain):
+    """HTTPS met HTTP-fallback, HEAD met GET-fallback."""
+    for scheme in ('https', 'http'):
+        # Try HEAD first, fall back to GET on 405
+        for method in ('HEAD', 'GET'):
+            try:
+                req = urllib.request.Request(f"{scheme}://{domain}", method=method)
+                start = time.time()
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    elapsed = (time.time() - start) * 1000
+                    return {
+                        'domain': domain,
+                        'status_code': resp.status,
+                        'response_ms': round(elapsed),
+                        'is_up': True,
+                    }
+            except urllib.error.HTTPError as e:
+                if e.code == 405 and method == 'HEAD':
+                    continue  # Try GET
+                # Got an HTTP response (even if error), site is reachable
+                return {
+                    'domain': domain,
+                    'status_code': e.code,
+                    'response_ms': 0,
+                    'is_up': e.code < 500,
+                }
+            except Exception:
+                if method == 'HEAD':
+                    continue  # Try GET before giving up on this scheme
+                break  # Fall through to the next scheme
+    return {'domain': domain, 'status_code': 0, 'response_ms': 0, 'is_up': False}
+
+
+@_ttl_cache(60, stale=600)
 def get_uptime_status():
     """Check HTTP status for all sites (HTTPS with HTTP fallback, HEAD with GET fallback)"""
-    sites = get_sites()
-    results = []
-    for site in sites:
+    domains = []
+    for site in get_sites():
         domain = site['domains'][0] if site.get('domains') else None
-        if not domain:
-            continue
-
-        result_entry = None
-        # Try HTTPS first, then HTTP as fallback
-        for scheme in ('https', 'http'):
-            if result_entry:
-                break
-            # Try HEAD first, fall back to GET on 405
-            for method in ('HEAD', 'GET'):
-                try:
-                    req = urllib.request.Request(f"{scheme}://{domain}", method=method)
-                    start = time.time()
-                    with urllib.request.urlopen(req, timeout=5) as resp:
-                        elapsed = (time.time() - start) * 1000
-                        result_entry = {
-                            'domain': domain,
-                            'status_code': resp.status,
-                            'response_ms': round(elapsed),
-                            'is_up': True,
-                        }
-                        break
-                except urllib.error.HTTPError as e:
-                    if e.code == 405 and method == 'HEAD':
-                        continue  # Try GET
-                    # Got an HTTP response (even if error), site is reachable
-                    result_entry = {
-                        'domain': domain,
-                        'status_code': e.code,
-                        'response_ms': 0,
-                        'is_up': e.code < 500,
-                    }
-                    break
-                except Exception:
-                    if scheme == 'https' and method == 'HEAD':
-                        continue  # Try HTTPS GET first
-                    if scheme == 'https':
-                        break  # Fall through to HTTP
-                    # Both schemes failed
-                    pass
-
-        if not result_entry:
-            result_entry = {
-                'domain': domain,
-                'status_code': 0,
-                'response_ms': 0,
-                'is_up': False,
-            }
-        results.append(result_entry)
-    return results
+        if domain and domain not in domains:
+            domains.append(domain)
+    if not domains:
+        return []
+    # Parallel: één onbereikbare site kost tot 4 × 5 s; serieel liep dat bij
+    # een paar kapotte sites op tot minuten (en blokkeerde de monitor).
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(8, len(domains))) as ex:
+        return list(ex.map(_check_site_uptime, domains))
 
 
 def check_uptime_all():
@@ -3655,7 +4048,7 @@ def check_uptime_all():
     return results
 
 
-@_ttl_cache(120)
+@_ttl_cache(600, stale=21600)
 def get_php_info():
     """Get PHP versions, FPM pool status, and per-site PHP mapping"""
     versions = []
@@ -3731,7 +4124,7 @@ def get_dns_records(domain):
     return records
 
 
-@_ttl_cache(120)
+@_ttl_cache(300, stale=3600)
 def get_all_domains():
     """Get all known domains from web server sites"""
     sites = get_sites()
@@ -3799,17 +4192,26 @@ def pwa_manifest():
 # Page routes
 # ---------------------------------------------------------------------------
 
+_dashboard_pool = concurrent.futures.ThreadPoolExecutor(max_workers=6, thread_name_prefix='dashboard')
+
+
 @app.route('/')
 @login_required
 def dashboard():
-    data = get_server_overview()
-    services = get_services_status()
-    pm2 = get_pm2_processes()
-    ssl = get_ssl_info()
+    # De collectors zijn onafhankelijk en vooral wachten op subprocessen:
+    # parallel ophalen maakt een koude dashboard-load zo traag als de
+    # traagste in plaats van de som.
+    futures = {name: _dashboard_pool.submit(fn) for name, fn in (
+        ('data', get_server_overview), ('services', get_services_status),
+        ('pm2', get_pm2_processes), ('ssl', get_ssl_info),
+        ('ddos', check_ddos_indicators), ('backup', check_backup_alerts),
+    )}
+    res = {name: f.result() for name, f in futures.items()}
+    data, services, pm2, ssl = res['data'], res['services'], res['pm2'], res['ssl']
     alerts = get_dashboard_alerts(data, services, pm2, ssl)
     # Add DDoS and backup alerts
-    alerts.extend(check_ddos_indicators())
-    alerts.extend(check_backup_alerts())
+    alerts.extend(res['ddos'])
+    alerts.extend(res['backup'])
     # Re-sort
     alerts.sort(key=lambda a: _SEVERITY_ORDER.get(a['severity'], 99))
     dismissed = CONFIG.get('dismissed_alerts', [])
@@ -3961,9 +4363,12 @@ def ssl_renew():
             timeout=120
         )
     else:
+        # Zonder --force-renewal: certbot vernieuwt dan alleen certificaten
+        # die bijna verlopen. Alles geforceerd vernieuwen raakt snel de Let's
+        # Encrypt duplicate-certificate rate limit.
         result = run_cmd_safe(
-            ["sudo", "certbot", "renew", "--force-renewal"],
-            timeout=120
+            ["sudo", "certbot", "renew"],
+            timeout=300
         )
     output = result.stdout if result.stdout else result.stderr
     if result.returncode == 0:
@@ -4009,6 +4414,7 @@ def service_action(action, name):
     result = run_cmd_safe(["sudo", "systemctl", action, name], timeout=30)
     if result.returncode == 0:
         log_audit(f'service_{action}', {'service': name})
+        _set_manually_stopped(name, action == 'stop')
         _invalidate_cache('get_services_status')
         return jsonify({'status': 'ok', 'message': f"'{name}' {action} successful"})
     return jsonify({'status': 'error', 'message': f"Could not {action} '{name}': {result.stderr}"}), 500
@@ -4124,7 +4530,7 @@ def api_ssh_logs():
         lines = int(request.args.get('lines', 200))
     except (ValueError, TypeError):
         lines = 200
-    lines = min(lines, 2000)
+    lines = max(1, min(lines, 2000))
     filter_type = request.args.get('filter', 'all')
 
     if filter_type == 'failed':
@@ -4208,8 +4614,8 @@ def _is_valid_ip_or_cidr(value):
 def firewall_ban():
     """Permanently ban an IP via fail2ban + UFW"""
     data = request.get_json() or {}
-    ip = data.get('ip', '').strip()
-    jail = data.get('jail', 'sshd').strip()
+    ip = _json_str(data, 'ip', '')
+    jail = _json_str(data, 'jail', 'sshd')
 
     if not ip or not _is_valid_ip(ip):
         return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
@@ -4218,6 +4624,7 @@ def firewall_ban():
 
     # Ban in fail2ban
     result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'banip', ip], timeout=15)
+    _invalidate_cache('get_banned_ips', 'get_firewall_security')
     f2b_ok = result.returncode == 0
     f2b_msg = result.stdout.strip() or result.stderr.strip()
 
@@ -4243,8 +4650,8 @@ def firewall_ban():
 def firewall_unban():
     """Unban an IP from a fail2ban jail and remove UFW deny rule"""
     data = request.get_json() or {}
-    ip = data.get('ip', '').strip()
-    jail = data.get('jail', 'sshd').strip()
+    ip = _json_str(data, 'ip', '')
+    jail = _json_str(data, 'jail', 'sshd')
 
     if not ip or not _is_valid_ip(ip):
         return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
@@ -4252,6 +4659,7 @@ def firewall_unban():
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
     result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'unbanip', ip], timeout=15)
+    _invalidate_cache('get_banned_ips', 'get_firewall_security')
     f2b_ok = result.returncode == 0
     f2b_msg = result.stdout.strip() or result.stderr.strip()
 
@@ -4268,91 +4676,107 @@ def firewall_unban():
     return jsonify({'status': 'error', 'message': f2b_msg or 'Unban failed'}), 500
 
 
+JAIL_LOCAL_PATH = '/etc/fail2ban/jail.local'
+_IGNOREIP_RE = re.compile(r'^ignoreip\s*[=:]\s*(.*)$')
+
+
+def _find_default_ignoreip(lines):
+    """Zoek `ignoreip` in de [DEFAULT]-sectie (incl. ingesprongen
+    vervolgregels). Returns (start, end, values) of None."""
+    section = None
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith('[') and stripped.endswith(']'):
+            section = stripped[1:-1].strip()
+            continue
+        if section != 'DEFAULT' or line[:1].isspace():
+            continue
+        m = _IGNOREIP_RE.match(stripped)
+        if m:
+            values = m.group(1).split()
+            end = i + 1
+            while end < len(lines) and lines[end][:1].isspace() and lines[end].strip():
+                values.extend(lines[end].split())
+                end += 1
+            return i, end, [v for v in values if not v.startswith('#')]
+    return None
+
+
+def _read_jail_local():
+    """Returns (text, error). Een ontbrekend bestand is geen fout."""
+    result = run_cmd_safe(['sudo', 'cat', JAIL_LOCAL_PATH], timeout=10)
+    if result.returncode == 0:
+        return result.stdout, None
+    if 'no such file' in (result.stderr or '').lower():
+        return '', None
+    return None, (result.stderr or '').strip() or 'Could not read jail.local'
+
+
 @app.route('/firewall/whitelist', methods=['GET'])
 @login_required
 def firewall_whitelist_get():
     """Get the fail2ban ignoreip whitelist from jail.local"""
-    try:
-        result = run_cmd("sudo cat /etc/fail2ban/jail.local 2>/dev/null", timeout=10)
-        if result.returncode != 0:
-            return jsonify({'ips': []})
-
-        for line in result.stdout.split('\n'):
-            stripped = line.strip()
-            if stripped.startswith('ignoreip'):
-                # ignoreip = 127.0.0.1/8 ::1 10.0.0.0/24
-                _, _, value = stripped.partition('=')
-                ips = [v.strip() for v in value.strip().split() if v.strip()]
-                return jsonify({'ips': ips})
-        return jsonify({'ips': []})
-    except Exception:
-        return jsonify({'ips': []})
+    text, _ = _read_jail_local()
+    found = _find_default_ignoreip((text or '').split('\n'))
+    return jsonify({'ips': found[2] if found else []})
 
 
 @app.route('/firewall/whitelist', methods=['POST'])
 @login_required
 def firewall_whitelist_set():
     """Update the fail2ban ignoreip whitelist in jail.local"""
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     ips = data.get('ips', [])
 
     if not isinstance(ips, list):
         return jsonify({'status': 'error', 'message': 'ips must be a list'}), 400
 
-    # Validate each entry (allow IPv4, CIDR, and ::1 for IPv6 loopback)
     validated = []
     for entry in ips:
+        if not isinstance(entry, str):
+            return jsonify({'status': 'error', 'message': 'Invalid IP/CIDR entry'}), 400
         entry = entry.strip()
         if not entry:
             continue
-        if entry == '::1':
-            validated.append(entry)
-        elif _is_valid_ip_or_cidr(entry):
+        if entry == '::1' or _is_valid_ip_or_cidr(entry):
             validated.append(entry)
         else:
             return jsonify({'status': 'error', 'message': f'Invalid IP/CIDR: {entry}'}), 400
 
     ignoreip_line = 'ignoreip = ' + ' '.join(validated)
 
-    # Read current jail.local
-    result = run_cmd("sudo cat /etc/fail2ban/jail.local 2>/dev/null", timeout=10)
-    if result.returncode == 0 and result.stdout.strip():
-        lines = result.stdout.split('\n')
-        updated = False
-        new_lines = []
-        for line in lines:
-            if line.strip().startswith('ignoreip'):
-                new_lines.append(ignoreip_line)
-                updated = True
-            else:
-                new_lines.append(line)
-        if not updated:
-            # Insert ignoreip after [DEFAULT] section header
-            final_lines = []
-            inserted = False
-            for line in new_lines:
-                final_lines.append(line)
-                if not inserted and line.strip() == '[DEFAULT]':
-                    final_lines.append(ignoreip_line)
-                    inserted = True
-            if not inserted:
-                final_lines.insert(0, '[DEFAULT]')
-                final_lines.insert(1, ignoreip_line)
-            new_lines = final_lines
-        content = '\n'.join(new_lines)
-    else:
-        content = f'[DEFAULT]\n{ignoreip_line}\n'
+    # Bij een leesfout (sudo, timeout) afbreken: voorheen werd jail.local dan
+    # vervangen door alleen [DEFAULT] + ignoreip, waarmee alle jails verdwenen.
+    text, err = _read_jail_local()
+    if text is None:
+        return jsonify({'status': 'error', 'message': f'Could not read jail.local: {err}'}), 500
 
-    # Write via shell pipe with sudo tee
-    write_result = run_cmd(
-        f"echo {shlex.quote(content)} | sudo tee /etc/fail2ban/jail.local > /dev/null",
-        timeout=10
-    )
+    lines = text.split('\n') if text else []
+    found = _find_default_ignoreip(lines)
+    if found:
+        # Alleen de [DEFAULT]-regel (plus vervolgregels); per-jail ignoreip
+        # blijft zoals de beheerder hem heeft ingesteld.
+        start_i, end_i, _ = found
+        lines[start_i:end_i] = [ignoreip_line]
+    else:
+        idx = next((i for i, line in enumerate(lines) if line.strip() == '[DEFAULT]'), None)
+        if idx is None:
+            lines[0:0] = ['[DEFAULT]', ignoreip_line, '']
+        else:
+            lines.insert(idx + 1, ignoreip_line)
+    content = '\n'.join(lines)
+    if not content.endswith('\n'):
+        content += '\n'
+
+    # Via stdin i.p.v. `echo ... | sudo tee`: dash's echo interpreteert
+    # backslashes (\b, \c, ...) en beschadigde daarmee regexes in jail.local.
+    write_result = run_cmd_safe(['sudo', 'tee', JAIL_LOCAL_PATH], timeout=10, input=content)
     if write_result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Failed to write jail.local'}), 500
 
     # Reload fail2ban
     reload_result = run_cmd_safe(['sudo', 'fail2ban-client', 'reload'], timeout=30)
+    _invalidate_cache('get_firewall_security')
     log_audit('firewall_whitelist', {'ips': validated})
     if reload_result.returncode == 0:
         return jsonify({'status': 'ok', 'message': f'Whitelist updated ({len(validated)} entries), fail2ban reloaded'})
@@ -4373,10 +4797,10 @@ def api_ufw_rules():
 def firewall_ufw_add():
     """Add a UFW rule"""
     data = request.get_json() or {}
-    port = data.get('port', '').strip()
-    proto = data.get('proto', 'tcp').strip().lower()
-    action = data.get('action', 'allow').strip().lower()
-    from_ip = data.get('from_ip', '').strip()
+    port = _json_str(data, 'port', '')
+    proto = _json_str(data, 'proto', 'tcp').lower()
+    action = _json_str(data, 'action', 'allow').lower()
+    from_ip = _json_str(data, 'from_ip', '')
 
     # Validate action
     if action not in ('allow', 'deny'):
@@ -4393,10 +4817,12 @@ def firewall_ufw_add():
             raise ValueError
     except (ValueError, TypeError):
         return jsonify({'status': 'error', 'message': 'Port must be between 1 and 65535'}), 400
+    # int() accepteert ook '22_0' en ' 22'; geef ufw de genormaliseerde waarde
+    port = str(port_num)
 
     # Build the command with comment + timestamp
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-    user_comment = data.get('comment', '').strip()
+    user_comment = _json_str(data, 'comment', '')
     rule_comment = f'{user_comment} ({timestamp})' if user_comment else f'Added {timestamp}'
     if from_ip and from_ip.lower() != 'anywhere':
         if not _is_valid_ip_or_cidr(from_ip):
@@ -4413,6 +4839,7 @@ def firewall_ufw_add():
 
     result = run_cmd_safe(cmd, timeout=15)
     if result.returncode == 0:
+        _invalidate_cache('get_firewall_security')
         log_audit('ufw_add_rule', {'port': port, 'proto': proto, 'action': action, 'from': from_ip or 'anywhere'})
         return jsonify({'status': 'ok', 'message': f'UFW rule added: {action} {port}/{proto}'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or result.stdout.strip() or 'Failed to add rule'}), 500
@@ -4423,7 +4850,7 @@ def firewall_ufw_add():
 def firewall_ufw_delete():
     """Delete a UFW rule by number"""
     data = request.get_json() or {}
-    rule_number = data.get('rule_number', '').strip()
+    rule_number = _json_str(data, 'rule_number', '')
 
     try:
         num = int(rule_number)
@@ -4432,8 +4859,22 @@ def firewall_ufw_delete():
     except (ValueError, TypeError):
         return jsonify({'status': 'error', 'message': 'Invalid rule number'}), 400
 
+    # Regelnummers verschuiven zodra fail2ban of een andere actie regels
+    # toevoegt/verwijdert; controleer dat regel N nog de regel is die de
+    # gebruiker zag, anders kan bijv. de SSH-allow-regel verdwijnen.
+    expected = data.get('expected')
+    if isinstance(expected, dict):
+        current = run_cmd_safe(['sudo', 'ufw', 'status', 'numbered'], timeout=15)
+        rule = next((r for r in parse_ufw_rules(current.stdout) if r['number'] == str(num)), None)
+        fields = ('to', 'action', 'from_addr', 'v6')
+        if rule is None or any(str(rule.get(f)) != str(expected.get(f)) for f in fields if f in expected):
+            return jsonify({'status': 'error',
+                            'message': 'The firewall rules changed since the list was loaded. '
+                                       'The list has been refreshed, please try again.'}), 409
+
     result = run_cmd_safe(['sudo', 'ufw', '--force', 'delete', str(num)], timeout=15)
     if result.returncode == 0:
+        _invalidate_cache('get_firewall_security')
         log_audit('ufw_delete_rule', {'rule_number': str(num)})
         return jsonify({'status': 'ok', 'message': f'UFW rule #{num} deleted'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or result.stdout.strip() or 'Failed to delete rule'}), 500
@@ -4516,6 +4957,13 @@ def lookup_ip_countries(ip_list):
 @login_required
 def firewall_banned_ips():
     """Get structured list of currently banned IPs per jail with timing info"""
+    return jsonify(get_banned_ips())
+
+
+# De firewall-pagina pollt dit; zonder cache kostte elke poll J+1
+# fail2ban-client aanroepen, een kopie van de fail2ban-database en geo-lookups.
+@_ttl_cache(30)
+def get_banned_ips():
     import sqlite3
 
     jails_data = []
@@ -4523,31 +4971,37 @@ def firewall_banned_ips():
     # Get list of active jails
     result = run_cmd("sudo fail2ban-client status 2>/dev/null", timeout=15)
     if result.returncode != 0:
-        return jsonify([])
+        return []
 
     jail_match = re.search(r'Jail list:\s*(.+)', result.stdout)
     if not jail_match:
-        return jsonify([])
+        return []
 
     jail_names = [j.strip() for j in jail_match.group(1).split(',') if j.strip()]
 
     # Read ban timing info from fail2ban SQLite database
     ban_info = {}
     db_path = '/var/lib/fail2ban/fail2ban.sqlite3'
+    tmp_name = None
     try:
         # Copy db to temp location (original is root-owned)
-        import tempfile
         tmp = tempfile.NamedTemporaryFile(suffix='.sqlite3', delete=False)
         tmp.close()
-        cp_result = run_cmd_safe(['sudo', 'cp', db_path, tmp.name], timeout=5)
-        chmod_result = run_cmd_safe(['sudo', 'chmod', '644', tmp.name], timeout=5)
+        tmp_name = tmp.name
+        cp_result = run_cmd_safe(['sudo', 'cp', db_path, tmp_name], timeout=5)
+        chmod_result = run_cmd_safe(['sudo', 'chmod', '644', tmp_name], timeout=5)
         if cp_result.returncode == 0 and chmod_result.returncode == 0:
-            conn = sqlite3.connect(tmp.name)
             now = int(time.time())
-            rows = conn.execute(
-                'SELECT jail, ip, timeofban, bantime, bancount FROM bans ORDER BY timeofban DESC'
-            ).fetchall()
-            conn.close()
+            conn = sqlite3.connect(tmp_name)
+            try:
+                # Alleen nog actieve bans; de tabel bevat de volledige historie
+                rows = conn.execute(
+                    'SELECT jail, ip, timeofban, bantime, bancount FROM bans '
+                    'WHERE bantime < 0 OR timeofban + bantime > ? ORDER BY timeofban DESC',
+                    (now,)
+                ).fetchall()
+            finally:
+                conn.close()
             for jail, ip, timeofban, bantime, bancount in rows:
                 key = f"{jail}:{ip}"
                 if key not in ban_info:
@@ -4557,9 +5011,15 @@ def firewall_banned_ips():
                         'bancount': bancount,
                         'remaining': (timeofban + bantime) - now if bantime > 0 else -1,
                     }
-        os.unlink(tmp.name)
     except Exception:
         logger.debug('Fail2ban parse failed', exc_info=True)
+    finally:
+        if tmp_name:
+            # Root-owned kopie: unlink mag (eigen tmp-dir entry), maar vang fouten af
+            try:
+                os.unlink(tmp_name)
+            except OSError:
+                run_cmd_safe(['sudo', 'rm', '-f', tmp_name], timeout=5)
 
     for jail_name in jail_names:
         jail_result = run_cmd(f"sudo fail2ban-client status {shlex.quote(jail_name)} 2>/dev/null", timeout=10)
@@ -4607,7 +5067,7 @@ def firewall_banned_ips():
                 entry['country'] = geo['country']
                 entry['countryCode'] = geo['countryCode']
 
-    return jsonify(jails_data)
+    return jails_data
 
 
 UPDATES_HISTORY_PATH = DATA_DIR / 'updates_history.json'
@@ -4733,18 +5193,9 @@ def install_updates():
 @login_required
 def update_check():
     """Check GitHub for the latest release and compare with current version"""
-    import urllib.request
-
     current = _get_current_version()
-    url = 'https://api.github.com/repos/martijnrenkema/vps-manager/releases/latest'
-    req = urllib.request.Request(url, headers={
-        'User-Agent': 'VPS-Manager/' + current,
-        'Accept': 'application/vnd.github.v3+json',
-    })
-
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode())
+        data = _fetch_latest_release()
     except Exception as e:
         return jsonify({'status': 'error', 'message': f'Could not reach GitHub: {e}'}), 502
 
@@ -4755,7 +5206,7 @@ def update_check():
     return jsonify({
         'current_version': current,
         'latest_version': latest,
-        'update_available': latest != current,
+        'update_available': _is_newer_version(latest, current),
         'release_notes': data.get('body', ''),
         'published_at': data.get('published_at', ''),
     })
@@ -5116,18 +5567,43 @@ def update_install_stream():
         t = threading.Thread(target=_delayed_restart, daemon=True)
         t.start()
 
-    def generate_with_lock():
-        # Lock pas nemen zodra de stream echt geïtereerd wordt: als de
-        # response nooit start (bijv. een servererror bij het opzetten),
-        # draait een try/finally rond een nog-niet-gestarte generator niet
-        # en zou de lock voor altijd bezet blijven.
-        if not _apt_lock.acquire(blocking=False):
+    # De update draait in een eigen thread; de SSE-stream leest alleen de
+    # voortgang uit een queue. Liep hij in de response-generator, dan brak
+    # een gesloten tab (ClientDisconnected bij de volgende yield) de update
+    # halverwege af: bestanden al gereset, maar geen herstart en geen
+    # rollback-watchdog.
+    if not _apt_lock.acquire(blocking=False):
+        def busy():
             yield f"data: {json.dumps({'type': 'error', 'message': 'Another update operation is already running'})}\n\n"
-            return
+        return Response(busy(), mimetype='text/event-stream')
+
+    events = queue.Queue()
+
+    def worker():
         try:
-            yield from generate()
+            for ev in generate():
+                events.put(ev)
+        except Exception:
+            logger.exception('Self-update failed')
+            events.put(f"data: {json.dumps({'type': 'error', 'message': 'Update failed unexpectedly, see server log'})}\n\n")
         finally:
             _apt_lock.release()
+            events.put(None)
+
+    threading.Thread(target=worker, daemon=True, name='self-update').start()
+
+    def generate_with_lock():
+        while True:
+            try:
+                ev = events.get(timeout=15)
+            except queue.Empty:
+                # SSE-comment als keepalive, zodat proxies de stream niet sluiten
+                # tijdens een lange pip install
+                yield ": keepalive\n\n"
+                continue
+            if ev is None:
+                return
+            yield ev
 
     # NB: geen 'Connection: keep-alive' header — dat is een hop-by-hop
     # header die WSGI-apps niet mogen zetten (PEP 3333). Waitress handhaaft
@@ -5166,7 +5642,7 @@ def api_nginx_log():
         lines = int(request.args.get('lines', 100))
     except (ValueError, TypeError):
         lines = 100
-    lines = min(lines, 500)
+    lines = max(1, min(lines, 500))
 
     # Allowed log directories per web server
     allowed_log_dirs = ('/var/log/caddy/',) if ws == 'caddy' else ('/var/log/nginx/',)
@@ -5268,7 +5744,7 @@ def terminal():
 @login_required
 def terminal_exec():
     data = request.get_json() or {}
-    cmd = data.get('command', '').strip()
+    cmd = _json_str(data, 'command', '')
     cwd = session.get('terminal_cwd', '/')
 
     if not cmd:
@@ -5321,6 +5797,11 @@ def terminal_exec():
         if not tokens:
             continue
         base_cmd = os.path.basename(tokens[0])
+        # Alleen kale commandonamen: met een pad zou /var/www/x/ls (een
+        # geüpload binary met een toegestane naam) de allowlist passeren.
+        if '/' in tokens[0]:
+            log_audit('terminal_blocked', {'command': cmd[:200], 'reason': 'path in command name'})
+            return jsonify({'stdout': '', 'stderr': 'Blocked: use the command name without a path', 'cwd': real_cwd})
         if base_cmd not in TERMINAL_ALLOWED_COMMANDS:
             log_audit('terminal_blocked', {'command': cmd[:200], 'reason': f'not in allowlist: {base_cmd}'})
             return jsonify({'stdout': '', 'stderr': f'Blocked: command not allowed: {base_cmd}', 'cwd': real_cwd})
@@ -5513,7 +5994,7 @@ def files_list():
 def files_mkdir():
     data = request.get_json() or {}
     path = data.get('path', '')
-    name = data.get('name', '').strip()
+    name = _json_str(data, 'name', '')
 
     if not name or '/' in name or name.startswith('.'):
         return jsonify({'status': 'error', 'message': 'Invalid folder name'}), 400
@@ -5591,9 +6072,16 @@ def files_upload():
     if not filename:
         return jsonify({'status': 'error', 'message': 'Invalid filename'}), 400
     dest = os.path.join(norm_path, filename)
+    # Volg geen symlink op de doelnaam: een (bijv. door een gecompromitteerde
+    # site geplaatste) symlink zou de upload buiten de toegestane paden laten
+    # schrijven.
+    if os.path.islink(dest):
+        return jsonify({'status': 'error', 'message': 'Refusing to overwrite a symlink'}), 403
 
     try:
-        file.save(dest)
+        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, 'wb') as out:
+            file.save(out)
         log_audit('file_upload', {'path': dest})
         return jsonify({'status': 'ok', 'message': f"'{filename}' uploaded"})
     except OSError as e:
@@ -5682,7 +6170,7 @@ def files_chmod():
     """Change permissions of a file or directory"""
     data = request.get_json() or {}
     path = data.get('path', '')
-    mode = data.get('mode', '').strip()
+    mode = _json_str(data, 'mode', '')
     recursive = data.get('recursive', False)
 
     norm_path = os.path.realpath(path)
@@ -5986,6 +6474,14 @@ def notification_history():
     return jsonify(list(reversed(history)))
 
 
+@app.route('/api/notifications/unread-count')
+@login_required
+def notification_unread_count():
+    """Goedkoop alternatief voor de volledige history bij elke page load."""
+    history = _load_notification_history()
+    return jsonify({'unread': sum(1 for h in history if not h.get('read'))})
+
+
 @app.route('/api/notifications/read', methods=['POST'])
 @login_required
 def notification_read():
@@ -6013,11 +6509,26 @@ def notification_clear():
 @app.route('/api/notifications/dismiss', methods=['POST'])
 @login_required
 def notification_dismiss():
-    """Dismiss (remove) a single notification by index."""
+    """Dismiss (remove) a single notification by id (or legacy index).
+
+    Op id, niet op positie: de monitor voegt tussendoor entries toe en na
+    elke dismiss verschuiven de posities, waardoor een index-dismiss de
+    verkeerde notificatie kon verwijderen.
+    """
     data = request.get_json() or {}
+    notif_id = data.get('id')
+    if notif_id is not None:
+        with _notif_lock:
+            history = _load_notification_history()
+            remaining = [h for h in history if h.get('id') != str(notif_id)]
+            if len(remaining) == len(history):
+                return jsonify({'status': 'error', 'message': 'Notification not found'}), 404
+            _save_notification_history(remaining)
+        return jsonify({'status': 'ok', 'message': 'Notification dismissed'})
+
     index = data.get('index')
     if index is None:
-        return jsonify({'status': 'error', 'message': 'Missing index'}), 400
+        return jsonify({'status': 'error', 'message': 'Missing id'}), 400
 
     try:
         index = int(index)
@@ -6118,9 +6629,39 @@ def detect_webserver_route():
     })
 
 
+# Top-level keys die via /api/config gezet mogen worden. SMTP, wachtwoord en
+# 2FA hebben eigen endpoints; een onbekende key (of een string waar een object
+# hoort, bijv. {"smtp": "x"}) zou anders elke CONFIG.get(key, {}).get(...)
+# laten crashen.
+_CONFIG_EDITABLE_KEYS = {
+    'web_server', 'thresholds', 'monitor_interval', 'notification_cooldown',
+    'updates_notification_time', 'auth', 'ddos_detection', 'services',
+    'phpmyadmin_path', 'file_browser', 'backup', 'nginx', 'caddy',
+    'vapid_mailto', 'auto_heal',
+}
+
+
+def _is_forbidden_dir(p):
+    try:
+        resolved = os.path.realpath(p)
+    except OSError:
+        resolved = p
+    return resolved.rstrip('/') in FORBIDDEN_ALLOWED_PATHS or resolved == '/' or len(resolved) < 4
+
+
 def validate_config(data):
     """Validate config values. Returns (is_valid, errors)"""
     errors = []
+    if not isinstance(data, dict):
+        return False, ['Config must be an object']
+
+    for key in data:
+        if key not in _CONFIG_EDITABLE_KEYS:
+            errors.append(f'Unknown or read-only setting: {key}')
+        elif isinstance(CONFIG.get(key), dict) and not isinstance(data[key], dict):
+            errors.append(f'{key} must be an object')
+    if errors:
+        return False, errors
 
     if 'thresholds' in data:
         if not isinstance(data['thresholds'], dict):
@@ -6135,6 +6676,14 @@ def validate_config(data):
                 if key in t:
                     if not isinstance(t[key], (int, float)) or t[key] < 1:
                         errors.append(f'{key} must be at least 1')
+            merged = {**CONFIG.get('thresholds', {}), **t}
+            try:
+                if merged['disk_warning'] >= merged['disk_critical']:
+                    errors.append('disk_warning must be lower than disk_critical')
+                if merged['ssl_critical_days'] >= merged['ssl_warning_days']:
+                    errors.append('ssl_critical_days must be lower than ssl_warning_days')
+            except (KeyError, TypeError):
+                pass
 
     if 'monitor_interval' in data:
         if not isinstance(data['monitor_interval'], int) or data['monitor_interval'] < 30:
@@ -6222,6 +6771,19 @@ def validate_config(data):
                     v = data['backup'][key]
                     if not isinstance(v, str) or not v.startswith('/'):
                         errors.append(f'backup.{key} must be an absolute path')
+                    elif key != 'log_path' and _is_forbidden_dir(v):
+                        # /api/backup/download serveert alles onder backup_dir
+                        errors.append(f'backup.{key} is too broad: {v}')
+            if 'webhook_secret' in data['backup'] and not isinstance(data['backup']['webhook_secret'], str):
+                errors.append('backup.webhook_secret must be a string')
+
+    if 'phpmyadmin_path' in data and not isinstance(data['phpmyadmin_path'], str):
+        errors.append('phpmyadmin_path must be a string')
+
+    if isinstance(data.get('file_browser'), dict) and 'default_path' in data['file_browser']:
+        v = data['file_browser']['default_path']
+        if not isinstance(v, str) or not v.startswith('/'):
+            errors.append('file_browser.default_path must be an absolute path')
 
     if 'web_server' in data:
         if data['web_server'] not in ('nginx', 'caddy'):
@@ -6342,6 +6904,7 @@ def change_password():
     except OSError:
         pass
 
+    _bump_session_epoch()
     log_audit('password_change')
     return jsonify({'status': 'ok', 'message': 'Password changed successfully'})
 
@@ -6382,7 +6945,7 @@ def verify_2fa():
         return jsonify({'status': 'error', 'message': 'pyotp not installed'}), 500
 
     data = request.get_json() or {}
-    code = data.get('code', '').strip()
+    code = _json_str(data, 'code', '')
     secret = session.get('pending_totp_secret')
 
     if not secret:
@@ -6399,6 +6962,7 @@ def verify_2fa():
         CONFIG['auth']['tfa_email'] = None
         save_config(CONFIG)
     session.pop('pending_totp_secret', None)
+    _bump_session_epoch()
 
     log_audit('2fa_enable', {'method': 'totp'})
     return jsonify({'status': 'ok', 'message': '2FA enabled successfully'})
@@ -6418,6 +6982,7 @@ def disable_2fa():
         CONFIG['auth']['tfa_method'] = None
         CONFIG['auth']['tfa_email'] = None
         save_config(CONFIG)
+    _bump_session_epoch()
 
     log_audit('2fa_disable')
     return jsonify({'status': 'ok', 'message': '2FA disabled'})
@@ -6432,7 +6997,7 @@ def enable_email_2fa():
         return jsonify({'status': 'error', 'message': 'Configure SMTP settings first'}), 400
 
     data = request.get_json() or {}
-    email = data.get('email', '').strip()
+    email = _json_str(data, 'email', '')
     if not email or not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
         return jsonify({'status': 'error', 'message': 'Invalid email address'}), 400
 
@@ -6462,7 +7027,7 @@ def enable_email_2fa():
 def verify_email_2fa():
     """Verify email 2FA setup code and enable email 2FA"""
     data = request.get_json() or {}
-    code = data.get('code', '').strip()
+    code = _json_str(data, 'code', '')
     pending_email = session.get('pending_tfa_email')
 
     if not pending_email:
@@ -6478,6 +7043,7 @@ def verify_email_2fa():
         CONFIG['auth']['totp_secret'] = None
         save_config(CONFIG)
     session.pop('pending_tfa_email', None)
+    _bump_session_epoch()
 
     log_audit('2fa_enable', {'method': 'email', 'email': pending_email})
     return jsonify({'status': 'ok', 'message': 'Email 2FA enabled successfully'})
@@ -6531,7 +7097,7 @@ def save_smtp_settings():
 def test_smtp():
     """Send a test email to verify SMTP settings"""
     data = request.get_json() or {}
-    recipient = data.get('recipient', '').strip()
+    recipient = _json_str(data, 'recipient', '')
     if not recipient:
         recipient = CONFIG.get('smtp', {}).get('from_address', '')
     if not recipient:
@@ -6609,13 +7175,15 @@ def swap_clear():
             return jsonify({'status': 'error', 'message': f'Not enough free RAM ({avail_mb}MB) to clear swap ({swap_mb}MB)'}), 400
     except (OSError, ValueError):
         return jsonify({'status': 'error', 'message': 'Could not read memory info'}), 500
-    # Disable and re-enable swap
-    result = run_cmd_safe(["sudo", "swapoff", "-a"], timeout=60)
-    if result.returncode != 0:
-        return jsonify({'status': 'error', 'message': f'swapoff failed: {result.stderr}'}), 500
-    result = run_cmd_safe(["sudo", "swapon", "-a"], timeout=10)
-    if result.returncode != 0:
-        return jsonify({'status': 'error', 'message': f'swapon failed: {result.stderr}'}), 500
+    # Disable and re-enable swap. Een paar GB swap leegmaken duurt makkelijk
+    # langer dan een minuut; swapon moet altijd volgen, ook als swapoff faalt
+    # of time-out gaat — anders blijft de server zonder swap tot een reboot.
+    off = run_cmd_safe(["sudo", "swapoff", "-a"], timeout=600)
+    on = run_cmd_safe(["sudo", "swapon", "-a"], timeout=30)
+    if off.returncode != 0:
+        return jsonify({'status': 'error', 'message': f'swapoff failed: {off.stderr}'}), 500
+    if on.returncode != 0:
+        return jsonify({'status': 'error', 'message': f'swapon failed: {on.stderr}'}), 500
     log_audit('swap_clear', {'freed_mb': swap_used // 1024})
     _invalidate_cache('get_server_overview')
     return jsonify({'status': 'ok', 'message': f'Swap cleared ({swap_used // 1024}MB freed)'})
@@ -6657,13 +7225,19 @@ def api_refresh(section):
         'security': get_security_audit,
     }
 
-    if section == 'disk':
-        sites, total = get_disk_per_site()
-        return jsonify({'sites': sites, 'total': total})
+    # Een expliciete refresh wil geen stale cache-entry (zie _ttl_cache);
+    # de vlag is thread-local en waitress hergebruikt threads, dus altijd resetten.
+    _cache_tls.require_fresh = True
+    try:
+        if section == 'disk':
+            sites, total = get_disk_per_site()
+            return jsonify({'sites': sites, 'total': total})
 
-    handler = handlers.get(section)
-    if handler:
-        return jsonify(handler())
+        handler = handlers.get(section)
+        if handler:
+            return jsonify(handler())
+    finally:
+        _cache_tls.require_fresh = False
     return jsonify({'status': 'error', 'message': 'Unknown section'}), 404
 
 
@@ -6706,8 +7280,11 @@ def api_audit():
 @app.route('/api/audit/clear', methods=['POST'])
 @login_required
 def audit_clear():
+    # Eerst leegmaken, dan loggen: andersom werd ook het "cleared"-record
+    # direct weer gewist en was niet meer te zien dat de log geleegd is.
+    with _audit_lock:
+        _atomic_write_json(AUDIT_LOG_PATH, [])
     log_audit('audit_clear')
-    _atomic_write_json(AUDIT_LOG_PATH, [])
     return jsonify({'status': 'ok', 'message': 'Audit log cleared'})
 
 
@@ -6766,8 +7343,12 @@ def files_save():
     path = data.get('path', '')
     content = data.get('content', '')
 
-    if not path:
+    if not path or not isinstance(path, str):
         return jsonify({'status': 'error', 'message': 'No path specified'}), 400
+    # open('w') kapt het bestand al af vóór write(); een niet-string content
+    # zou het bestand dus leeg achterlaten.
+    if not isinstance(content, str):
+        return jsonify({'status': 'error', 'message': 'Invalid content'}), 400
 
     norm_path = os.path.realpath(path)
 
@@ -6804,15 +7385,20 @@ def _parse_crontab_lines(text):
         if '=' in first_word:
             continue
         parts = stripped.split()
-        if len(parts) >= 6:
-            jobs.append({
-                'index': job_idx,
-                'line_num': i,
-                'schedule': ' '.join(parts[:5]),
-                'command': ' '.join(parts[5:]),
-                'human_schedule': _cron_to_human(parts[:5]),
-            })
-            job_idx += 1
+        if parts[0].startswith('@') and len(parts) >= 2:
+            schedule_parts, command_parts = parts[:1], parts[1:]
+        elif len(parts) >= 6:
+            schedule_parts, command_parts = parts[:5], parts[5:]
+        else:
+            continue
+        jobs.append({
+            'index': job_idx,
+            'line_num': i,
+            'schedule': ' '.join(schedule_parts),
+            'command': ' '.join(command_parts),
+            'human_schedule': _cron_to_human(schedule_parts),
+        })
+        job_idx += 1
     return lines, jobs
 
 
@@ -6871,8 +7457,10 @@ def _validate_cron_field(value, min_val, max_val, names_map=None):
 def _validate_cron_schedule(schedule):
     """Validate a full cron schedule string. Returns (is_valid, error_msg)"""
     parts = schedule.split()
+    if len(parts) == 1 and parts[0].lower() in _CRON_SPECIALS:
+        return True, ''
     if len(parts) != 5:
-        return False, 'Schedule must have 5 fields'
+        return False, 'Schedule must have 5 fields (or @daily, @reboot, ...)'
     limits = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
     names_maps = [None, None, None, _MONTH_NAMES, _DOW_NAMES]
     field_names = ['minute', 'hour', 'day of month', 'month', 'day of week']
@@ -6890,41 +7478,100 @@ def api_cronjobs():
     return jsonify(data)
 
 
+def _read_crontab(cron_type):
+    """Lees de crontab. Returns (text, error); een lege crontab is geen fout.
+
+    Voorheen werd elke fout van `crontab -l` als "lege crontab" behandeld,
+    waarna add de bestaande crontab overschreef met alleen de nieuwe regel.
+    """
+    cmd = ['sudo', 'crontab', '-l'] if cron_type == 'root' else ['crontab', '-l']
+    result = run_cmd_safe(cmd, timeout=10)
+    if result.returncode == 0:
+        return result.stdout, None
+    if 'no crontab for' in (result.stderr or '').lower():
+        return '', None
+    return None, (result.stderr or '').strip() or 'Could not read crontab'
+
+
+def _write_crontab(cron_type, content):
+    if content and not content.endswith('\n'):
+        content += '\n'
+    prefix = 'sudo crontab -' if cron_type == 'root' else 'crontab -'
+    result = run_cmd(f"printf %s {shlex.quote(content)} | {prefix}", timeout=10)
+    _invalidate_cache('get_cronjobs')
+    return result
+
+
+def _cron_request():
+    """Parse type/index/expected uit een cron-request en zoek de job op.
+
+    Returns (cron_type, lines, job, error_response). Als de client
+    `expected` meestuurt en de job op die index is inmiddels een andere
+    (crontab extern gewijzigd), dan 409 in plaats van de verkeerde regel te
+    bewerken, verwijderen of als root uit te voeren.
+    """
+    data = request.get_json(silent=True) or {}
+    cron_type = data.get('type', 'user')
+    if cron_type not in ('user', 'root'):
+        return None, None, None, (jsonify({'status': 'error', 'message': 'Invalid crontab type'}), 400)
+    try:
+        index = int(data.get('index'))
+    except (ValueError, TypeError):
+        return None, None, None, (jsonify({'status': 'error', 'message': 'Invalid index'}), 400)
+
+    text, err = _read_crontab(cron_type)
+    if text is None:
+        return None, None, None, (jsonify({'status': 'error', 'message': err}), 500)
+    lines, jobs = _parse_crontab_lines(text)
+    if index < 0 or index >= len(jobs):
+        return None, None, None, (jsonify({'status': 'error', 'message': 'Job index out of range, reload the page'}), 409)
+    job = jobs[index]
+
+    expected = data.get('expected')
+    if isinstance(expected, dict):
+        if (str(expected.get('schedule', '')).split() != job['schedule'].split()
+                or str(expected.get('command', '')).split() != job['command'].split()):
+            return None, None, None, (jsonify({
+                'status': 'error',
+                'message': 'The crontab changed since the page was loaded. The list has been refreshed, please try again.',
+            }), 409)
+    return cron_type, lines, job, None
+
+
+def _cron_input(data):
+    schedule = data.get('schedule')
+    command = data.get('command')
+    schedule = schedule.strip() if isinstance(schedule, str) else ''
+    command = command.strip() if isinstance(command, str) else ''
+    if '\n' in command or '\r' in command:
+        return schedule, command, 'Command must be a single line'
+    if not schedule or not command:
+        return schedule, command, 'Schedule and command are required'
+    ok, err = _validate_cron_schedule(schedule)
+    return schedule, command, (None if ok else err)
+
+
 @app.route('/api/cronjobs/add', methods=['POST'])
 @login_required
 def cronjobs_add():
     """Add a new cron entry"""
-    data = request.get_json() or {}
-    schedule = data.get('schedule', '').strip()
-    command = data.get('command', '').strip()
+    data = request.get_json(silent=True) or {}
     cron_type = data.get('type', 'user')
-
-    if not schedule or not command:
-        return jsonify({'status': 'error', 'message': 'Schedule and command are required'}), 400
-
-    is_valid, err = _validate_cron_schedule(schedule)
-    if not is_valid:
+    if cron_type not in ('user', 'root'):
+        return jsonify({'status': 'error', 'message': 'Invalid crontab type'}), 400
+    schedule, command, err = _cron_input(data)
+    if err:
         return jsonify({'status': 'error', 'message': err}), 400
 
-    new_line = f'{schedule} {command}'
+    current, err = _read_crontab(cron_type)
+    if current is None:
+        return jsonify({'status': 'error', 'message': err}), 500
 
-    if cron_type == 'root':
-        result = run_cmd("sudo crontab -l 2>/dev/null")
-        current = result.stdout if result.returncode == 0 else ''
-    else:
-        result = run_cmd("crontab -l 2>/dev/null")
-        current = result.stdout if result.returncode == 0 else ''
-
-    # Append new line
     if current and not current.endswith('\n'):
         current += '\n'
-    current += new_line + '\n'
+    current += f'{schedule} {command}\n'
 
-    if cron_type == 'root':
-        write_result = run_cmd(f"printf %s {shlex.quote(current)} | sudo crontab -", timeout=10)
-    else:
-        write_result = run_cmd(f"printf %s {shlex.quote(current)} | crontab -", timeout=10)
-
+    write_result = _write_crontab(cron_type, current)
     if write_result.returncode == 0:
         log_audit('cronjob_add', {'type': cron_type, 'schedule': schedule, 'command': command})
         return jsonify({'status': 'ok', 'message': 'Cronjob added'})
@@ -6935,50 +7582,17 @@ def cronjobs_add():
 @login_required
 def cronjobs_edit():
     """Edit an existing cron entry by index"""
-    data = request.get_json() or {}
-    index = data.get('index')
-    schedule = data.get('schedule', '').strip()
-    command = data.get('command', '').strip()
-    cron_type = data.get('type', 'user')
-
-    if index is None or not schedule or not command:
-        return jsonify({'status': 'error', 'message': 'Index, schedule, and command are required'}), 400
-
-    is_valid, err = _validate_cron_schedule(schedule)
-    if not is_valid:
+    schedule, command, err = _cron_input(request.get_json(silent=True) or {})
+    if err:
         return jsonify({'status': 'error', 'message': err}), 400
+    cron_type, lines, job, error = _cron_request()
+    if error:
+        return error
 
-    try:
-        index = int(index)
-    except (ValueError, TypeError):
-        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
-
-    if cron_type == 'root':
-        result = run_cmd("sudo crontab -l 2>/dev/null")
-    else:
-        result = run_cmd("crontab -l 2>/dev/null")
-
-    if result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Could not read crontab'}), 500
-
-    lines, jobs = _parse_crontab_lines(result.stdout)
-
-    if index < 0 or index >= len(jobs):
-        return jsonify({'status': 'error', 'message': 'Job index out of range'}), 400
-
-    job = jobs[index]
     lines[job['line_num']] = f'{schedule} {command}'
-    new_content = '\n'.join(lines)
-    if not new_content.endswith('\n'):
-        new_content += '\n'
-
-    if cron_type == 'root':
-        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | sudo crontab -", timeout=10)
-    else:
-        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | crontab -", timeout=10)
-
+    write_result = _write_crontab(cron_type, '\n'.join(lines))
     if write_result.returncode == 0:
-        log_audit('cronjob_edit', {'type': cron_type, 'index': index, 'schedule': schedule, 'command': command})
+        log_audit('cronjob_edit', {'type': cron_type, 'index': job['index'], 'schedule': schedule, 'command': command})
         return jsonify({'status': 'ok', 'message': 'Cronjob updated'})
     return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to edit cronjob'}), 500
 
@@ -6987,45 +7601,15 @@ def cronjobs_edit():
 @login_required
 def cronjobs_delete():
     """Delete a cron entry by index"""
-    data = request.get_json() or {}
-    index = data.get('index')
-    cron_type = data.get('type', 'user')
+    cron_type, lines, job, error = _cron_request()
+    if error:
+        return error
 
-    if index is None:
-        return jsonify({'status': 'error', 'message': 'Index is required'}), 400
-
-    try:
-        index = int(index)
-    except (ValueError, TypeError):
-        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
-
-    if cron_type == 'root':
-        result = run_cmd("sudo crontab -l 2>/dev/null")
-    else:
-        result = run_cmd("crontab -l 2>/dev/null")
-
-    if result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Could not read crontab'}), 500
-
-    lines, jobs = _parse_crontab_lines(result.stdout)
-
-    if index < 0 or index >= len(jobs):
-        return jsonify({'status': 'error', 'message': 'Job index out of range'}), 400
-
-    job = jobs[index]
     deleted_cmd = lines[job['line_num']]
     del lines[job['line_num']]
-    new_content = '\n'.join(lines)
-    if not new_content.endswith('\n'):
-        new_content += '\n'
-
-    if cron_type == 'root':
-        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | sudo crontab -", timeout=10)
-    else:
-        write_result = run_cmd(f"printf %s {shlex.quote(new_content)} | crontab -", timeout=10)
-
+    write_result = _write_crontab(cron_type, '\n'.join(lines))
     if write_result.returncode == 0:
-        log_audit('cronjob_delete', {'type': cron_type, 'index': index, 'entry': deleted_cmd.strip()})
+        log_audit('cronjob_delete', {'type': cron_type, 'index': job['index'], 'entry': deleted_cmd.strip()})
         return jsonify({'status': 'ok', 'message': 'Cronjob deleted'})
     return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to delete cronjob'}), 500
 
@@ -7034,32 +7618,9 @@ def cronjobs_delete():
 @login_required
 def cronjobs_run():
     """Run a cron job command immediately"""
-    data = request.get_json() or {}
-    index = data.get('index')
-    cron_type = data.get('type', 'user')
-
-    if index is None:
-        return jsonify({'status': 'error', 'message': 'Index is required'}), 400
-
-    try:
-        index = int(index)
-    except (ValueError, TypeError):
-        return jsonify({'status': 'error', 'message': 'Invalid index'}), 400
-
-    if cron_type == 'root':
-        result = run_cmd("sudo crontab -l 2>/dev/null")
-    else:
-        result = run_cmd("crontab -l 2>/dev/null")
-
-    if result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Could not read crontab'}), 500
-
-    lines, jobs = _parse_crontab_lines(result.stdout)
-
-    if index < 0 or index >= len(jobs):
-        return jsonify({'status': 'error', 'message': 'Job index out of range'}), 400
-
-    job = jobs[index]
+    cron_type, _lines, job, error = _cron_request()
+    if error:
+        return error
     command = job['command']
 
     if cron_type == 'root':
@@ -7444,7 +8005,7 @@ def _ensure_caddy_site_logs(config_file):
     return True
 
 
-@_ttl_cache(60)
+@_ttl_cache(60, stale=900)
 def get_caddy_sites():
     """Get Caddy sites with HTTP status"""
     caddy_cfg = CONFIG.get('caddy', {})
@@ -7568,7 +8129,7 @@ def _parse_caddy_log_line(line):
         return {'timestamp': '', 'level': 'unknown', 'message': line[:120], 'raw': line}
 
 
-@_ttl_cache(30)
+@_ttl_cache(60, stale=600)
 def get_caddy_logs():
     """Get Caddy log information"""
     caddy_cfg = CONFIG.get('caddy', {})
@@ -7687,7 +8248,7 @@ def get_caddy_logs():
     return data
 
 
-@_ttl_cache(120)
+@_ttl_cache(600, stale=21600)
 def get_caddy_certificates():
     """Get SSL certificate info from Caddy auto-HTTPS"""
     caddy_cfg = CONFIG.get('caddy', {})
@@ -8184,6 +8745,17 @@ if __name__ == '__main__':
     # Start background push notification monitor
     monitor = threading.Thread(target=_monitor_loop, daemon=True)
     monitor.start()
+
+    # Vul de trage caches (apt, certbot, HTTP-checks) op de achtergrond, zodat
+    # de eerste dashboard-load na een (her)start er niet op hoeft te wachten.
+    def _warm_caches():
+        for fn in (get_available_features, get_system_updates, get_ssl_info,
+                   get_sites, check_app_update_alert):
+            try:
+                fn()
+            except Exception:
+                logger.debug('Cache warm-up of %s failed', fn.__name__, exc_info=True)
+    threading.Thread(target=_warm_caches, daemon=True, name='cache-warmup').start()
     port = int(os.environ.get('VPS_MANAGER_PORT', 5050))
     # Bind standaard op loopback: nginx proxyt lokaal naar deze poort, dus de
     # server hoeft niet extern bereikbaar te zijn. Override met
@@ -8201,4 +8773,6 @@ if __name__ == '__main__':
         logger.info("Serving with waitress on %s:%s", host, port)
         # send_bytes=1: SSE-events (update-voortgang) moeten per event
         # doorgestuurd worden, niet gebufferd tot de standaard 18KB.
-        serve(app, host=host, port=port, threads=8, send_bytes=1)
+        # 16 threads: trage requests (apt, certbot, SSE-updatestream) mogen
+        # niet de hele app laten wachten, ook niet op static files.
+        serve(app, host=host, port=port, threads=16, send_bytes=1)

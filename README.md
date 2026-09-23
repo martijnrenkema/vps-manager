@@ -93,7 +93,10 @@ for uptime monitoring, PM2 health checks, or reverse proxy checks.
 
 Self-updates installed via the Updates page are guarded by a watchdog: if the
 freshly restarted app fails its health check, the update is automatically
-rolled back to the previous version and a notification is recorded.
+rolled back to the previous version and a notification is recorded. The
+watchdog probes the address from `VPS_MANAGER_HOST`/`VPS_MANAGER_PORT`
+(loopback when unset or `0.0.0.0`), health-checks the rolled-back version too,
+and only one watchdog runs at a time.
 
 ## Updating
 
@@ -257,6 +260,10 @@ What it backs up:
 - VPS Manager state (`data/` with `config.json`, secret key, VAPID keys) — these are not in git, so this tarball is the only way to recover 2FA and push subscriptions.
 - A daily checksum manifest covering current-day DB/config files and all mirrored site files.
 
+If the `mysql` client is installed but listing the databases fails (MariaDB down, no credentials in `/root/.my.cnf`), the backup is reported as failed instead of succeeding with 0 dumps. Set `MYSQL_BACKUP=no` in `.backup_env` on hosts that only have the client installed.
+
+Backup files are not world-readable: site mirrors (which include each site's `.env`) are `640` with group = the primary group of `BACKUP_READ_USER` (root if unset); database dumps and configs are `640`, owned by `BACKUP_READ_USER`. Directories stay `755` so the dashboard can show backup sizes. When the NAS pulls as a non-root SSH user, set `BACKUP_READ_USER` to that user in `.backup_env` and make sure its primary group is not shared with other users.
+
 ### Remote Pull Script (NAS / offsite)
 
 Install the NAS-side script on Synology:
@@ -284,7 +291,8 @@ The NAS script:
 - Uses a lock file to prevent overlapping runs.
 - Verifies the latest checksum manifest and reports failure if any checksum fails.
 - Creates daily hard-link snapshots in `/volume1/Backup/vps/snapshots/YYYYMMDD`.
-- Keeps snapshots for 14 days by default (`RETENTION_DAYS=14`).
+- Keeps snapshots for 14 days by default (`RETENTION_DAYS=14`), but always keeps the newest 3 (`KEEP_MIN_SNAPSHOTS=3`), so a long VPS outage never prunes every snapshot.
+- Reports failure when the newest VPS checksum manifest is older than 2 days (`MAX_BACKUP_AGE_DAYS=2`, `0` disables), i.e. the VPS backup itself stopped running.
 
 ### Restore Checklist
 
