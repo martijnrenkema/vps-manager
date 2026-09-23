@@ -2162,72 +2162,279 @@ def get_server_overview():
     }
 
 
+def _nginx_parse(content):
+    """Minimal nginx config parser (directives + blocks, comment/quote aware).
+
+    Returns (directives, blocks). Elke directive is een dict met name, args,
+    depth, parents (tuple van omsluitende blocknamen), server (index van het
+    omsluitende top-level server-block of None), line en end_line (0-based).
+    Blocks hebben daarnaast brace_line/brace_col (positie van de '{').
+    Commentaar ('# ...' aan het begin van een token) wordt genegeerd, dus een
+    uitgecommentarieerde '# access_log ...' telt niet mee, en '${var}' wordt
+    niet als block-opening gezien.
+    """
+    directives = []
+    blocks = []
+    stack = []
+    tokens = []
+    word = []
+    stmt_line = None
+    line = 0
+    col = 0
+    server_count = 0
+    i = 0
+    n = len(content)
+
+    def _flush():
+        if word:
+            tokens.append(''.join(word))
+            word.clear()
+
+    def _current_server():
+        for b in stack:
+            if b['server'] is not None:
+                return b['server']
+        return None
+
+    while i < n:
+        ch = content[i]
+        if ch in ' \t\r\n':
+            _flush()
+            if ch == '\n':
+                line += 1
+                col = 0
+            else:
+                col += 1
+            i += 1
+            continue
+        if ch == '#' and not word:
+            while i < n and content[i] != '\n':
+                i += 1
+            continue
+        if stmt_line is None and not tokens and not word:
+            stmt_line = line
+        if ch in '"\'' and not word:
+            quote = ch
+            i += 1
+            col += 1
+            buf = []
+            while i < n and content[i] != quote:
+                if content[i] == '\\' and i + 1 < n:
+                    buf.append(content[i + 1])
+                    i += 2
+                    col += 2
+                    continue
+                if content[i] == '\n':
+                    line += 1
+                    col = 0
+                else:
+                    col += 1
+                buf.append(content[i])
+                i += 1
+            tokens.append(''.join(buf))
+            i += 1
+            col += 1
+            continue
+        if ch == '$' and i + 1 < n and content[i + 1] == '{':
+            end = content.find('}', i)
+            if end == -1 or '\n' in content[i:end]:
+                end = i + 1
+            word.append(content[i:end + 1])
+            col += end + 1 - i
+            i = end + 1
+            continue
+        if ch == ';':
+            _flush()
+            if tokens:
+                directives.append({
+                    'name': tokens[0],
+                    'args': tokens[1:],
+                    'depth': len(stack),
+                    'parents': tuple(b['name'] for b in stack),
+                    'server': _current_server(),
+                    'line': stmt_line if stmt_line is not None else line,
+                    'end_line': line,
+                })
+            tokens = []
+            stmt_line = None
+        elif ch == '{':
+            _flush()
+            name = tokens[0] if tokens else ''
+            parents = tuple(b['name'] for b in stack)
+            server_idx = None
+            if name == 'server' and _current_server() is None and 'upstream' not in parents:
+                server_idx = server_count
+                server_count += 1
+            block = {
+                'name': name,
+                'args': tokens[1:],
+                'depth': len(stack),
+                'parents': parents,
+                'server': server_idx if server_idx is not None else _current_server(),
+                'line': stmt_line if stmt_line is not None else line,
+                'brace_line': line,
+                'brace_col': col,
+            }
+            blocks.append(block)
+            stack.append(block)
+            tokens = []
+            stmt_line = None
+        elif ch == '}':
+            _flush()
+            tokens = []
+            stmt_line = None
+            if stack:
+                stack.pop()
+        else:
+            word.append(ch)
+        i += 1
+        col += 1
+
+    return directives, blocks
+
+
+def _nginx_site_log_paths(content):
+    """(access_log, error_log) paden uit een nginx site-config, of None.
+
+    'access_log off' telt niet als logpad (exact argument, geen substring:
+    een pad als /var/log/nginx/coffee-access.log is gewoon een logpad).
+    """
+    access_log_path = None
+    error_log_path = None
+    directives, _ = _nginx_parse(content)
+    for d in directives:
+        if not d['args']:
+            continue
+        if d['name'] == 'access_log' and d['args'][0] != 'off':
+            access_log_path = d['args'][0]
+        elif d['name'] == 'error_log':
+            error_log_path = d['args'][0]
+    return access_log_path, error_log_path
+
+
+def _nginx_add_site_logs(content, domain):
+    """Return content with access_log/error_log added to the main server block,
+    or None when nothing needs to change (or no safe insert point exists).
+
+    Het doel-block is het eerste top-level server-block dat content serveert
+    (root/*_pass), bij voorkeur met het domein in server_name; anders het
+    eerste server-block. Alleen directives op server-niveau tellen: een
+    expliciete 'access_log off' op server-niveau wordt gerespecteerd.
+    De regels worden direct na 'server {' ingevoegd, dus altijd op
+    server-niveau en nooit binnen een location-block.
+    """
+    safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain or '')
+    if not safe_domain:
+        return None
+    directives, blocks = _nginx_parse(content)
+    servers = [b for b in blocks if b['name'] == 'server' and b['server'] is not None
+               and 'server' not in b['parents']]
+    if not servers:
+        return None
+
+    serving_names = ('root', 'proxy_pass', 'fastcgi_pass', 'uwsgi_pass', 'grpc_pass', 'scgi_pass')
+
+    def _serves(srv):
+        return any(d['server'] == srv['server'] and d['name'] in serving_names for d in directives)
+
+    def _has_domain(srv):
+        return any(d['server'] == srv['server'] and d['name'] == 'server_name' and domain in d['args']
+                   for d in directives)
+
+    candidates = [s for s in servers if _serves(s)] or servers
+    target = next((s for s in candidates if _has_domain(s)), candidates[0])
+
+    level = [d for d in directives
+             if d['server'] == target['server'] and d['depth'] == target['depth'] + 1]
+    has_access_log = any(d['name'] == 'access_log' for d in level)
+    has_error_log = any(d['name'] == 'error_log' for d in level)
+    if has_access_log and has_error_log:
+        return None
+
+    lines = content.split('\n')
+    brace_line = target['brace_line']
+    if brace_line >= len(lines):
+        return None
+    rest = lines[brace_line][target['brace_col'] + 1:].strip()
+    if rest and not rest.startswith('#'):
+        # 'server { listen 80; ... }' op één regel: geen veilige invoegplek
+        return None
+
+    indent = None
+    for d in level:
+        if d['line'] > brace_line:
+            src = lines[d['line']]
+            indent = src[:len(src) - len(src.lstrip())]
+            break
+    if not indent:
+        base = lines[target['line']]
+        indent = base[:len(base) - len(base.lstrip())] + '    '
+
+    new_lines = []
+    if not has_access_log:
+        new_lines.append(f'{indent}access_log /var/log/nginx/{safe_domain}-access.log;')
+    if not has_error_log:
+        new_lines.append(f'{indent}error_log /var/log/nginx/{safe_domain}-error.log;')
+    lines[brace_line + 1:brace_line + 1] = new_lines
+    return '\n'.join(lines)
+
+
+# Auto-log toevoegen gebeurt hooguit één keer per bestand per versie (mtime)
+# per proces. Zonder deze rem herschreef elke cache-ronde (pagina of monitor)
+# de live config en herlaadde de webserver, ook als het de vorige keer faalde.
+_autolog_attempted = set()
+_autolog_lock = threading.Lock()
+
+
+def _autolog_key(path):
+    try:
+        return (path, os.stat(path).st_mtime_ns)
+    except OSError:
+        return (path, None)
+
+
+def _autolog_should_attempt(path):
+    """True als voor deze versie van het bestand nog geen poging is gedaan."""
+    key = _autolog_key(path)
+    with _autolog_lock:
+        if key in _autolog_attempted:
+            return False
+        _autolog_attempted.add(key)
+    return True
+
+
+def _autolog_mark_done(path):
+    """Markeer de huidige versie (na een eigen schrijfactie) als afgehandeld."""
+    with _autolog_lock:
+        _autolog_attempted.add(_autolog_key(path))
+
+
 def _ensure_nginx_site_logs(config_path, domain):
     """Auto-add access_log and error_log directives to an nginx config that lacks them.
-    Inserts after the first 'server_name' line in the first HTTPS server block.
+
+    Idempotent en niet-lussend: één poging per bestandsversie per proces,
+    schrijven/valideren/herladen via _sudo_write_validated (met rollback),
+    en alleen een audit-entry als er daadwerkelijk iets is gewijzigd.
     Returns True if the config was modified."""
+    if not _autolog_should_attempt(config_path):
+        return False
     result = run_cmd_safe(["sudo", "cat", config_path], timeout=5)
     if result.returncode != 0:
         return False
 
-    lines = result.stdout.split('\n')
-    has_error_log = any('error_log' in l for l in lines)
-    has_access_log = any('access_log' in l and 'off' not in l for l in lines)
-
-    if has_error_log and has_access_log:
+    new_content = _nginx_add_site_logs(result.stdout, domain)
+    if new_content is None:
         return False
 
-    # Find the first 'server_name' line that is NOT inside an 'if' block or port-80 redirect
-    # We look for the server_name in the main HTTPS block (after listen 443 or after root)
-    insert_idx = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if stripped.startswith('root ') or (stripped.startswith('server_name') and i > 0):
-            # Check if this is in the main block (not the redirect block)
-            # Use 'root' as anchor since redirect blocks don't have it
-            if stripped.startswith('root '):
-                insert_idx = i + 1
-                break
-
-    if insert_idx is None:
-        # Fallback: insert after first server_name
-        for i, line in enumerate(lines):
-            if line.strip().startswith('server_name') and 'if' not in lines[max(0, i-1)]:
-                insert_idx = i + 1
-                break
-
-    if insert_idx is None:
+    res = _sudo_write_validated(config_path, new_content, validate_nginx,
+                                lambda: run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15))
+    _autolog_mark_done(config_path)
+    if not res['written']:
+        logger.warning("Auto-adding nginx logs to %s failed (%s): %s",
+                       config_path, res['stage'], res['output'] or res['message'])
         return False
-
-    # Build log directives to insert
-    safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain)
-    new_lines = []
-    if not has_access_log:
-        new_lines.append(f'    access_log /var/log/nginx/{safe_domain}-access.log;')
-    if not has_error_log:
-        new_lines.append(f'    error_log /var/log/nginx/{safe_domain}-error.log;')
-
-    # Insert the new lines
-    for offset, new_line in enumerate(new_lines):
-        lines.insert(insert_idx + offset, new_line)
-
-    new_content = '\n'.join(lines)
-
-    # Write via temp file
-    temp_path = str(DATA_DIR / f'nginx_autolog_{safe_domain}')
-    try:
-        with open(temp_path, 'w') as f:
-            f.write(new_content)
-        cp_result = run_cmd_safe(["sudo", "cp", temp_path, config_path], timeout=5)
-        if cp_result.returncode != 0:
-            return False
-    except OSError:
-        return False
-    finally:
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+    if not res['ok']:
+        logger.warning("Nginx reload failed after auto-adding logs to %s: %s", config_path, res['output'])
 
     log_audit('nginx_auto_add_logs', {'config': os.path.basename(config_path), 'domain': domain})
     return True
@@ -2268,15 +2475,15 @@ def _check_http_statuses(domains):
     return statuses
 
 
-def _nginx_directive_value(line, directive):
-    """First value of an nginx directive line, or None.
-
-    Guard tegen een directive zonder waarde (bijv. 'access_log;'):
-    .split()[0] op een lege lijst zou anders de hele sitelijst laten
-    crashen met een IndexError.
-    """
-    parts = line.replace(directive, '', 1).rstrip(';').strip().split()
-    return parts[0] if parts else None
+def _read_nginx_site_config(config_path):
+    """Lees een nginx site-config (zonder sudo als het bestand leesbaar is)."""
+    try:
+        with open(config_path, encoding='utf-8', errors='replace') as f:
+            return f.read()
+    except OSError:
+        pass
+    result = run_cmd_safe(["sudo", "cat", config_path], timeout=5)
+    return result.stdout if result.returncode == 0 else None
 
 
 @_ttl_cache(60, stale=900)
@@ -2290,58 +2497,42 @@ def get_nginx_sites():
     configs = [s.strip() for s in result.stdout.strip().split('\n')
                if s.strip() and s.strip() != 'default']
     sites = []
-    configs_modified = False
 
     for config in configs:
         config_path = os.path.join(sites_dir, config)
-        info_result = run_cmd_safe(
-            ["grep", "-E", "server_name|root |proxy_pass|access_log |error_log ", config_path]
-        )
-        if info_result.returncode != 0:
+        content = _read_nginx_site_config(config_path)
+        if content is None:
             continue
 
         domains = []
         doc_root = None
         proxy = None
-        access_log_path = None
-        error_log_path = None
 
-        for line in info_result.stdout.strip().split('\n'):
-            line = line.strip()
-            if line.startswith('server_name'):
-                names = line.replace('server_name', '').rstrip(';').strip().split()
-                for name in names:
+        # Echte directive-parsing: uitgecommentarieerde regels tellen niet mee
+        directives, _ = _nginx_parse(content)
+        for d in directives:
+            if d['name'] == 'server_name':
+                for name in d['args']:
                     name = name.strip()
                     if name and name != '_' and name != 'localhost':
                         domains.append(name)
-            elif line.startswith('root '):
-                doc_root = line.replace('root ', '').rstrip(';').strip()
-            elif 'proxy_pass' in line:
-                proxy = line.replace('proxy_pass', '').rstrip(';').strip()
-            elif line.startswith('access_log') and 'off' not in line:
-                access_log_path = _nginx_directive_value(line, 'access_log')
-            elif line.startswith('error_log'):
-                error_log_path = _nginx_directive_value(line, 'error_log')
+            elif d['name'] == 'root' and d['args']:
+                doc_root = d['args'][0]
+            elif d['name'] == 'proxy_pass' and d['args']:
+                proxy = d['args'][0]
+        access_log_path, error_log_path = _nginx_site_log_paths(content)
 
         # Deduplicate domains (certbot creates 2 server blocks per config)
         domains = list(dict.fromkeys(domains))
 
         if domains:
-            # Auto-add log directives if missing
+            # Auto-add log directives if missing (één poging per bestandsversie,
+            # valideert en herlaadt zelf; zie _ensure_nginx_site_logs)
             if not access_log_path or not error_log_path:
                 if _ensure_nginx_site_logs(config_path, domains[0]):
-                    configs_modified = True
-                    # Re-read the updated config
-                    info_result = run_cmd_safe(
-                        ["grep", "-E", "access_log |error_log ", config_path]
-                    )
-                    if info_result.returncode == 0:
-                        for line in info_result.stdout.strip().split('\n'):
-                            line = line.strip()
-                            if line.startswith('access_log') and 'off' not in line:
-                                access_log_path = _nginx_directive_value(line, 'access_log')
-                            elif line.startswith('error_log'):
-                                error_log_path = _nginx_directive_value(line, 'error_log')
+                    updated = _read_nginx_site_config(config_path)
+                    if updated is not None:
+                        access_log_path, error_log_path = _nginx_site_log_paths(updated)
 
             sites.append({
                 'config': config,
@@ -2361,14 +2552,6 @@ def get_nginx_sites():
     for s in sites:
         if s['domains']:
             s['http_status'] = statuses.get(s['domains'][0], '---')
-
-    # Reload nginx if we modified any configs
-    if configs_modified:
-        valid = run_cmd_safe(["sudo", "nginx", "-t"], timeout=10)
-        if valid.returncode == 0:
-            run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=10)
-        else:
-            logger.warning("Nginx config invalid after auto-adding logs, skipping reload")
 
     return sites
 
@@ -7679,52 +7862,121 @@ def validate_nginx():
 # Caddy backend functions
 # ---------------------------------------------------------------------------
 
-def _parse_caddyfile(content, sites_dir=None):
+_CADDY_GLOB_CHARS = '*?['
+_CADDY_LOG_RE = re.compile(r'^\s*log(\s|\{|$)')
+
+
+def _caddy_strip_comment(line):
+    """Strip a Caddyfile comment ('#' at the start of a token)."""
+    m = re.search(r'(^|\s)#', line)
+    return line[:m.start()] if m else line
+
+
+def _caddy_brace_delta(line):
+    code = _caddy_strip_comment(line)
+    return code.count('{') - code.count('}')
+
+
+def _caddy_skip_block(lines, i):
+    """Skip the block starting at lines[i] (brace on that line or the next).
+
+    Telt accolades tot het block sluit, dus geneste blocks (header { },
+    @matcher { }, handle { }) horen bij het block. Returns de index van de
+    regel na de sluitende accolade.
+    """
+    code = _caddy_strip_comment(lines[i])
+    depth = code.count('{') - code.count('}')
+    i += 1
+    if '{' not in code and i < len(lines) and lines[i].strip().startswith('{'):
+        depth += _caddy_brace_delta(lines[i])
+        i += 1
+    while i < len(lines) and depth > 0:
+        depth += _caddy_brace_delta(lines[i])
+        i += 1
+    return i
+
+
+def _caddy_import_specs(content, caddyfile_dir):
+    """File imports of a Caddyfile within /etc/caddy/.
+
+    Returns [(base_dir, pattern)] for glob imports and [(path, None)] for
+    single-file imports. Relatieve paden worden, net als in Caddy, opgelost
+    tegen de map van de Caddyfile.
+    """
+    specs = []
+    for m in re.finditer(r'^\s*import\s+(\S+)\s*$', content, re.MULTILINE):
+        import_path = m.group(1)
+        # Skip snippet imports (no path chars, no glob)
+        if '/' not in import_path and not any(c in import_path for c in _CADDY_GLOB_CHARS):
+            continue
+        if not import_path.startswith('/'):
+            import_path = os.path.join(caddyfile_dir, import_path)
+        import_path = os.path.normpath(import_path)
+        base_dir, pattern = os.path.split(import_path)
+        if any(c in pattern for c in _CADDY_GLOB_CHARS):
+            # Caddy staat maar één wildcard toe; een glob in de map zelf niet ondersteund
+            if any(c in base_dir for c in _CADDY_GLOB_CHARS):
+                continue
+            if not _is_caddy_path_safe(os.path.join(base_dir, '_')):
+                continue
+            specs.append((base_dir, pattern))
+        elif _is_caddy_path_safe(import_path):
+            specs.append((import_path, None))
+    return specs
+
+
+def _caddy_glob_match(pattern, fname):
+    """Match a file name like Caddy's import glob does.
+
+    fnmatch op de basename; verborgen bestanden worden overgeslagen als het
+    patroon met '*' begint (Caddy doet dat ook). Let op: 'sites/*' matcht dus
+    ook 'foo.disabled'.
+    """
+    import fnmatch
+    if pattern.startswith('*') and fname.startswith('.'):
+        return False
+    return fnmatch.fnmatchcase(fname, pattern)
+
+
+def _caddy_import_files(content, caddyfile_dir):
+    """Paths of the files a Caddyfile imports (glob-aware, only within /etc/caddy/)."""
+    files = []
+    for base, pattern in _caddy_import_specs(content, caddyfile_dir):
+        if pattern is None:
+            files.append(base)
+            continue
+        result = run_cmd_safe(["sudo", "ls", base], timeout=5)
+        if result.returncode != 0:
+            continue
+        for fname in result.stdout.split('\n'):
+            fname = fname.strip()
+            if not fname or not _caddy_glob_match(pattern, fname):
+                continue
+            fpath = os.path.join(base, fname)
+            if _is_caddy_path_safe(fpath):
+                files.append(fpath)
+    return list(dict.fromkeys(files))
+
+
+def _parse_caddyfile(content, sites_dir=None, config_file=None):
     """Parse a Caddyfile and extract site blocks.
     Returns list of dicts with keys: address, root, proxy, file_server, tls, log_output.
     """
     sites = []
 
-    # Expand imports: if we see 'import sites/*' or 'import /path/to/dir/*', load those files
+    # Expand file imports ('import sites/*', 'import sites/*.caddy', 'import /etc/caddy/x'):
+    # alleen de bestanden die het glob-patroon matcht, zoals Caddy zelf ook doet.
     expanded = content
     # Resolve relative imports against the Caddyfile's directory (not sites_dir)
-    caddyfile_dir = os.path.dirname(sites_dir.rstrip('/')) if sites_dir else '/etc/caddy'
+    if config_file:
+        caddyfile_dir = os.path.dirname(config_file)
+    else:
+        caddyfile_dir = os.path.dirname(sites_dir.rstrip('/')) if sites_dir else '/etc/caddy'
 
-    import_pattern = re.compile(r'^\s*import\s+(\S+)\s*$', re.MULTILINE)
-    for m in import_pattern.finditer(content):
-        import_path = m.group(1)
-        # Skip snippet imports (no path chars, no glob)
-        if '/' not in import_path and '*' not in import_path:
-            continue
-        # Resolve relative paths against the Caddyfile's parent directory
-        if not import_path.startswith('/'):
-            import_path = os.path.join(caddyfile_dir, import_path)
-        # Security: only expand paths within /etc/caddy/
-        clean_path = import_path.replace('*', '').rstrip('/')
-        if not _is_caddy_path_safe(clean_path if clean_path else caddyfile_dir):
-            continue
-        # Expand glob patterns
-        if '*' in import_path:
-            base_dir = os.path.dirname(import_path)  # e.g. /etc/caddy/sites from /etc/caddy/sites/*
-            if not base_dir or not _is_caddy_path_safe(base_dir):
-                continue
-            result = run_cmd_safe(["sudo", "ls", base_dir], timeout=5)
-            if result.returncode == 0:
-                for fname in result.stdout.strip().split('\n'):
-                    fname = fname.strip()
-                    if fname and not fname.endswith('.disabled'):
-                        fpath = os.path.join(base_dir, fname)
-                        if not _is_caddy_path_safe(fpath):
-                            continue
-                        file_result = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
-                        if file_result.returncode == 0:
-                            expanded += '\n' + file_result.stdout
-        else:
-            # Direct file import (no glob)
-            if _is_caddy_path_safe(import_path):
-                file_result = run_cmd_safe(["sudo", "cat", import_path], timeout=5)
-                if file_result.returncode == 0:
-                    expanded += '\n' + file_result.stdout
+    for fpath in _caddy_import_files(content, caddyfile_dir):
+        file_result = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
+        if file_result.returncode == 0:
+            expanded += '\n' + file_result.stdout
 
     # Parse site blocks: address { ... }
     # Simple brace-counting parser
@@ -7736,28 +7988,14 @@ def _parse_caddyfile(content, sites_dir=None):
         if not line or line.startswith('#'):
             i += 1
             continue
-        # Skip snippet blocks: (name) { ... }
+        # Skip snippet blocks: (name) { ... }, inclusief geneste blocks
         if line.startswith('('):
-            depth = 0
-            # Count braces on current line; if none, look ahead for opening brace
-            depth += lines[i].count('{') - lines[i].count('}')
-            i += 1
-            if depth == 0 and i < len(lines):
-                # Opening brace might be on the next line
-                depth += lines[i].count('{') - lines[i].count('}')
-                i += 1
-            while i < len(lines) and depth > 0:
-                depth += lines[i].count('{') - lines[i].count('}')
-                i += 1
+            i = _caddy_skip_block(lines, i)
             continue
 
         # Check for global options block
         if line == '{':
-            depth = 1
-            i += 1
-            while i < len(lines) and depth > 0:
-                depth += lines[i].count('{') - lines[i].count('}')
-                i += 1
+            i = _caddy_skip_block(lines, i)
             continue
 
         # Check for site address (domain/host followed by { on same or next line)
@@ -7792,17 +8030,17 @@ def _parse_caddyfile(content, sites_dir=None):
         depth = 0
         # Find opening brace
         if '{' in lines[i]:
-            depth = lines[i].count('{') - lines[i].count('}')
+            depth = _caddy_brace_delta(lines[i])
             i += 1
         else:
             i += 1
             if i < len(lines) and '{' in lines[i]:
-                depth = lines[i].count('{') - lines[i].count('}')
+                depth = _caddy_brace_delta(lines[i])
                 i += 1
 
         while i < len(lines) and depth > 0:
             block_lines.append(lines[i])
-            depth += lines[i].count('{') - lines[i].count('}')
+            depth += _caddy_brace_delta(lines[i])
             i += 1
 
         # Parse block directives
@@ -7890,31 +8128,44 @@ def _parse_caddyfile(content, sites_dir=None):
     return sites
 
 
-def _ensure_caddy_site_logs(config_file):
-    """Auto-add log blocks to Caddy site blocks that lack them.
-    Modifies the Caddyfile in place. Returns True if changes were made."""
-    result = run_cmd_safe(["sudo", "cat", config_file], timeout=5)
-    if result.returncode != 0:
-        return False
+def _caddy_log_snippets(content):
+    """Names of snippets in content whose body contains a log directive."""
+    names = set()
+    lines = content.split('\n')
+    i = 0
+    while i < len(lines):
+        m = re.match(r'^\s*\(([^)\s]+)\)', lines[i])
+        if m:
+            end = _caddy_skip_block(lines, i)
+            if any(_CADDY_LOG_RE.match(_caddy_strip_comment(bl)) for bl in lines[i + 1:end]):
+                names.add(m.group(1))
+            i = end
+            continue
+        i += 1
+    return names
 
-    lines = result.stdout.split('\n')
-    new_lines = list(lines)
-    insertions = []  # (line_index, domain) - collect first, insert later
+
+def _caddy_add_site_logs(content, log_snippets=()):
+    """Add a log block to site blocks without one.
+
+    Returns (new_content, [domains]) or (None, []) when nothing changes.
+    Snippets '(name) { ... }' worden in hun geheel overgeslagen (incl. geneste
+    header/@matcher/handle-blocks), net als het globale options-block. Een
+    site die een snippet met log importeert telt als 'heeft log'.
+    """
+    lines = content.split('\n')
+    log_snippets = set(log_snippets) | _caddy_log_snippets(content)
+    insertions = []  # (close_line_index, domain, indent)
 
     i = 0
     while i < len(lines):
-        line = lines[i].strip()
-
-        # Skip empty, comments, snippets, global options
-        if not line or line.startswith('#') or line.startswith('('):
+        line = _caddy_strip_comment(lines[i]).strip()
+        if not line:
             i += 1
             continue
-        if line == '{':
-            depth = 1
-            i += 1
-            while i < len(lines) and depth > 0:
-                depth += lines[i].count('{') - lines[i].count('}')
-                i += 1
+        # Snippet of global options block: hele block overslaan
+        if line.startswith('(') or line == '{':
+            i = _caddy_skip_block(lines, i)
             continue
 
         # Detect site address
@@ -7924,34 +8175,26 @@ def _ensure_caddy_site_logs(config_file):
         elif i + 1 < len(lines) and lines[i + 1].strip() == '{':
             address = line
 
-        if not address or address == '}':
+        if not address or address.startswith('}'):
             i += 1
             continue
 
-        # Find the block boundaries
-        depth = 0
-        if '{' in lines[i]:
-            depth = lines[i].count('{') - lines[i].count('}')
-            i += 1
-        else:
-            i += 1
-            if i < len(lines) and '{' in lines[i]:
-                depth = lines[i].count('{') - lines[i].count('}')
-                i += 1
+        header = i
+        end = _caddy_skip_block(lines, i)
+        close = end - 1
+        i = end
+        # Alleen invoegen als de sluitende '}' op een eigen regel staat
+        if close <= header or _caddy_strip_comment(lines[close]).strip() != '}':
+            continue
 
-        block_content_start = i
-        while i < len(lines) and depth > 0:
-            depth += lines[i].count('{') - lines[i].count('}')
-            i += 1
-        block_end = i  # line after closing brace
-
-        # Check if this block has a log directive
-        has_log = False
-        for j in range(block_content_start, block_end):
-            if lines[j].strip().startswith('log'):
-                has_log = True
-                break
-
+        body = [_caddy_strip_comment(bl) for bl in lines[header + 1:close]]
+        has_log = any(_CADDY_LOG_RE.match(bl) for bl in body)
+        if not has_log:
+            for bl in body:
+                m = re.match(r'^\s*import\s+(\S+)', bl)
+                if m and m.group(1) in log_snippets:
+                    has_log = True
+                    break
         if has_log:
             continue
 
@@ -7963,44 +8206,53 @@ def _ensure_caddy_site_logs(config_file):
         domain = clean_addr.split()[0].split(':')[0].strip(',') if clean_addr.split() else None
         if not domain or domain in ('localhost', '*', ':'):
             continue
-
-        # Insert before the closing brace (block_end - 1)
-        insertions.append((block_end - 1, domain))
+        safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain)
+        if not safe_domain:
+            continue
+        head = lines[header]
+        indent = head[:len(head) - len(head.lstrip())] + '    '
+        insertions.append((close, safe_domain, indent))
 
     if not insertions:
-        return False
+        return None, []
 
     # Insert in reverse order so line indices stay valid
-    for insert_idx, domain in reversed(insertions):
-        safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain)
-        log_block = [
-            '    log {',
-            f'        output file /var/log/caddy/{safe_domain}.log',
-            '    }',
+    for close, safe_domain, indent in reversed(insertions):
+        lines[close:close] = [
+            f'{indent}log {{',
+            f'{indent}    output file /var/log/caddy/{safe_domain}.log',
+            f'{indent}}}',
         ]
-        for offset, log_line in enumerate(log_block):
-            new_lines.insert(insert_idx + offset, log_line)
+    return '\n'.join(lines), [d for _, d, _ in insertions]
 
-    new_content = '\n'.join(new_lines)
 
-    # Write via temp file
-    safe_name = os.path.basename(config_file).replace('/', '')
-    temp_path = str(DATA_DIR / f'caddy_autolog_{safe_name}')
-    try:
-        with open(temp_path, 'w') as f:
-            f.write(new_content)
-        cp_result = run_cmd_safe(["sudo", "cp", temp_path, config_file], timeout=5)
-        if cp_result.returncode != 0:
-            return False
-    except OSError:
+def _ensure_caddy_site_logs(config_file, log_snippets=()):
+    """Auto-add log blocks to Caddy site blocks that lack them.
+
+    Eén poging per bestandsversie per proces; schrijven, valideren en
+    herladen via _sudo_write_validated (rollback bij ongeldige config) en
+    alleen een audit-entry als er echt iets is gewijzigd.
+    Returns True if changes were made."""
+    if not _autolog_should_attempt(config_file):
         return False
-    finally:
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
+    result = run_cmd_safe(["sudo", "cat", config_file], timeout=5)
+    if result.returncode != 0:
+        return False
 
-    domains_added = [d for _, d in insertions]
+    new_content, domains_added = _caddy_add_site_logs(result.stdout, log_snippets)
+    if new_content is None:
+        return False
+
+    res = _sudo_write_validated(config_file, new_content, validate_caddy,
+                                lambda: run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=15))
+    _autolog_mark_done(config_file)
+    if not res['written']:
+        logger.warning("Auto-adding Caddy logs to %s failed (%s), rolled back: %s",
+                       config_file, res['stage'], res['output'] or res['message'])
+        return False
+    if not res['ok']:
+        logger.warning("Caddy reload failed after auto-adding logs to %s: %s", config_file, res['output'])
+
     log_audit('caddy_auto_add_logs', {'config': os.path.basename(config_file), 'domains': domains_added})
     return True
 
@@ -8016,52 +8268,14 @@ def get_caddy_sites():
     if result.returncode != 0:
         return []
 
-    # Auto-add log blocks to sites missing them (with backup/rollback)
+    # Auto-add log blocks to sites missing them: alleen bestanden die Caddy
+    # daadwerkelijk importeert, één poging per bestandsversie per proces
+    # (valideert, herlaadt en rolt zelf terug; zie _ensure_caddy_site_logs).
+    log_snippets = _caddy_log_snippets(result.stdout)
     configs_modified = False
-    modified_files = []  # [(path, backup_content), ...]
-
-    def _try_add_logs(fpath):
-        """Try to add logs, keeping backup for rollback"""
-        backup = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
-        if backup.returncode != 0:
-            return False
-        if _ensure_caddy_site_logs(fpath):
-            modified_files.append((fpath, backup.stdout))
-            return True
-        return False
-
-    _try_add_logs(config_file)
-    if sites_dir and _is_caddy_path_safe(sites_dir):
-        ls_result = run_cmd_safe(["sudo", "ls", sites_dir], timeout=5)
-        if ls_result.returncode == 0 and ls_result.stdout.strip():
-            for fname in ls_result.stdout.strip().split('\n'):
-                fname = fname.strip()
-                if fname and not fname.endswith('.disabled'):
-                    fpath = os.path.join(sites_dir, fname)
-                    if _is_caddy_path_safe(fpath):
-                        _try_add_logs(fpath)
-
-    if modified_files:
-        valid = run_cmd_safe(["sudo", "caddy", "validate", "--config", config_file], timeout=10)
-        if valid.returncode == 0:
-            run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=10)
+    for fpath in [config_file] + _caddy_import_files(result.stdout, os.path.dirname(config_file)):
+        if _ensure_caddy_site_logs(fpath, log_snippets):
             configs_modified = True
-        else:
-            # Rollback all modified files
-            logger.warning("Caddy config invalid after auto-adding logs, rolling back")
-            for fpath, backup_content in modified_files:
-                tmp = str(DATA_DIR / 'caddy_rollback_tmp')
-                try:
-                    with open(tmp, 'w') as f:
-                        f.write(backup_content)
-                    run_cmd_safe(["sudo", "cp", tmp, fpath], timeout=5)
-                except OSError:
-                    pass
-                finally:
-                    try:
-                        os.remove(tmp)
-                    except OSError:
-                        pass
 
     if configs_modified:
         # Re-read config after modifications
@@ -8069,7 +8283,7 @@ def get_caddy_sites():
         if result.returncode != 0:
             return []
 
-    parsed = _parse_caddyfile(result.stdout, sites_dir=sites_dir)
+    parsed = _parse_caddyfile(result.stdout, sites_dir=sites_dir, config_file=config_file)
     sites = []
 
     for site in parsed:
@@ -8383,6 +8597,102 @@ def nginx_config_read():
     return jsonify({'status': 'error', 'message': 'Could not read config'}), 500
 
 
+# Serialiseert schrijf-/valideer-/reload-cycli van webserverconfigs, zodat
+# twee gelijktijdige saves (of een save en de auto-log-toevoeging) elkaars
+# validatie of rollback niet doorkruisen.
+_webconfig_write_lock = threading.RLock()
+# Backups staan bewust buiten /etc/nginx en /etc/caddy: een '<naam>.backup'
+# in sites-enabled/ of sites/ wordt door 'include sites-enabled/*' resp.
+# 'import sites/*' meegeladen (dubbele server/site-definities).
+CONFIG_BACKUP_DIR = DATA_DIR / 'config-backups'
+
+
+def _sudo_run(args, data=None, timeout=15):
+    """Run a command with bytes stdin/stdout; returns None on timeout/OS error."""
+    try:
+        return subprocess.run(args, input=data, capture_output=True, timeout=timeout)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
+def _sudo_write_validated(path, content, validate_fn, reload_fn):
+    """Write a root-owned web server config, validate it and reload.
+
+    - Het vorige bestand gaat naar DATA_DIR/config-backups/ (nooit naast de
+      config in een include-map) en blijft in het geheugen voor rollback.
+    - Schrijven via 'sudo tee', zodat eigenaar/rechten van een bestaand bestand
+      behouden blijven en een symlink (sites-enabled -> sites-available)
+      gevolgd wordt.
+    - Validatie mislukt: vorige inhoud terugzetten, of een nieuw aangemaakt
+      bestand weer verwijderen.
+    - Reload mislukt: gemeld als fout (de geldige nieuwe config blijft staan).
+
+    Returns dict: ok, written (nieuwe inhoud staat op schijf), stage
+    ('write' | 'validate' | 'reload' | None), message, output, code.
+    """
+    data = content.encode('utf-8') if isinstance(content, str) else content
+
+    def _fail(stage, message, output='', code=500, written=False):
+        return {'ok': False, 'written': written, 'stage': stage,
+                'message': message, 'output': output, 'code': code}
+
+    with _webconfig_write_lock:
+        link = _sudo_run(["sudo", "test", "-L", path], timeout=5)
+        exists = _sudo_run(["sudo", "test", "-e", path], timeout=5)
+        if link is None or exists is None:
+            return _fail('write', 'Could not check config path')
+        existed = exists.returncode == 0
+        if link.returncode == 0 and not existed:
+            return _fail('write', 'Config path is a dangling symlink', code=409)
+
+        old = None
+        backup_path = None
+        if existed:
+            read = _sudo_run(["sudo", "cat", path], timeout=10)
+            if read is None or read.returncode != 0:
+                return _fail('write', 'Could not read current config for backup')
+            old = read.stdout
+            backup_path = CONFIG_BACKUP_DIR / (path.strip('/').replace('/', '_') + '.bak')
+            try:
+                CONFIG_BACKUP_DIR.mkdir(mode=0o700, exist_ok=True)
+                fd = os.open(str(backup_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(old)
+            except OSError as e:
+                return _fail('write', f'Could not write backup: {e}')
+
+        def _restore():
+            if existed:
+                r = _sudo_run(["sudo", "tee", path], data=old, timeout=15)
+            else:
+                r = _sudo_run(["sudo", "rm", "-f", path], timeout=10)
+            return r is not None and r.returncode == 0
+
+        def _restore_note():
+            if _restore():
+                return 'previous version restored' if existed else 'new file removed'
+            if existed:
+                return f'RESTORE FAILED, previous version saved at {backup_path}'
+            return f'could not remove new file {path}'
+
+        write = _sudo_run(["sudo", "tee", path], data=data, timeout=15)
+        if write is None or write.returncode != 0:
+            # tee kan het bestand al afgekapt hebben: altijd terugzetten
+            err = (write.stderr.decode('utf-8', 'replace').strip() if write is not None else 'timeout')
+            return _fail('write', f'Failed to write config ({_restore_note()})', err)
+
+        is_valid, output = validate_fn()
+        if not is_valid:
+            return _fail('validate', f'Config test failed ({_restore_note()})', output, code=400)
+
+        reload_result = reload_fn()
+        if reload_result.returncode != 0:
+            return _fail('reload', 'Config saved and valid, but reload failed',
+                         (reload_result.stderr or '').strip(), written=True)
+
+    return {'ok': True, 'written': True, 'stage': None, 'message': '', 'output': '', 'code': 200}
+
+
 @app.route('/api/nginx/config/save', methods=['POST'])
 @login_required
 def nginx_config_save():
@@ -8400,46 +8710,22 @@ def nginx_config_save():
 
     path = f'/etc/nginx/sites-{config_type}/{name}'
 
-    # Backup current config
-    run_cmd(f"sudo cp {shlex.quote(path)} {shlex.quote(path + '.backup')} 2>/dev/null", timeout=10)
+    res = _sudo_write_validated(
+        path, content, validate_nginx,
+        lambda: run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15))
 
-    # Write content via temp file
-    temp_path = str(DATA_DIR / f'nginx_temp_{name}')
-    try:
-        with open(temp_path, 'w') as f:
-            f.write(content)
-    except OSError as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    if res['written']:
+        log_audit('nginx_config_save', {'name': name, 'type': config_type})
+        _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
 
-    # Copy to nginx dir
-    cp_result = run_cmd(f"sudo cp {shlex.quote(temp_path)} {shlex.quote(path)}", timeout=10)
-    try:
-        os.remove(temp_path)
-    except OSError:
-        pass
-
-    if cp_result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Failed to write config'}), 500
-
-    # Validate nginx config
-    is_valid, output = validate_nginx()
-    if not is_valid:
-        # Restore backup
-        run_cmd(f"sudo cp {shlex.quote(path + '.backup')} {shlex.quote(path)} 2>/dev/null", timeout=10)
-        run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
-        return jsonify({'status': 'error', 'message': 'Nginx config test failed', 'output': output}), 400
-
-    # Reload nginx
-    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
-    # Clean up backup
-    run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
-
-    log_audit('nginx_config_save', {'name': name, 'type': config_type})
-    _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
-
-    if reload_result.returncode == 0:
+    if res['ok']:
         return jsonify({'status': 'ok', 'message': 'Config saved and nginx reloaded'})
-    return jsonify({'status': 'ok', 'message': 'Config saved but nginx reload failed'})
+    if res['stage'] == 'validate':
+        return jsonify({'status': 'error', 'message': f"Nginx {res['message']}", 'output': res['output']}), 400
+    if res['stage'] == 'reload':
+        return jsonify({'status': 'error', 'message': 'Config saved but nginx reload failed',
+                        'output': res['output']}), 500
+    return jsonify({'status': 'error', 'message': res['message'], 'output': res['output']}), res['code']
 
 
 @app.route('/api/nginx/config/enable', methods=['POST'])
@@ -8456,25 +8742,42 @@ def nginx_config_enable():
     enabled = f'/etc/nginx/sites-enabled/{name}'
 
     # Check if available exists
-    check = run_cmd(f"sudo test -f {shlex.quote(available)} && echo ok", timeout=5)
-    if 'ok' not in check.stdout:
+    check = run_cmd_safe(["sudo", "test", "-f", available], timeout=5)
+    if check.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Config not found in sites-available'}), 404
 
-    result = run_cmd(f"sudo ln -sf {shlex.quote(available)} {shlex.quote(enabled)}", timeout=10)
+    # Nooit iets in sites-enabled overschrijven: een regulier bestand daar
+    # heeft mogelijk geen kopie in sites-available.
+    if run_cmd_safe(["sudo", "test", "-L", enabled], timeout=5).returncode == 0:
+        try:
+            target = os.path.realpath(enabled)
+        except OSError:
+            target = None
+        if target == os.path.realpath(available):
+            return jsonify({'status': 'ok', 'message': f'{name} is already enabled'})
+        return jsonify({'status': 'error', 'message':
+                        f'sites-enabled/{name} is a symlink to another file; remove it first'}), 409
+    if run_cmd_safe(["sudo", "test", "-e", enabled], timeout=5).returncode == 0:
+        return jsonify({'status': 'error', 'message':
+                        f'sites-enabled/{name} is a regular file, not a symlink; refusing to overwrite it'}), 409
+
+    result = run_cmd_safe(["sudo", "ln", "-s", available, enabled], timeout=10)
     if result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Failed to create symlink'}), 500
+        return jsonify({'status': 'error', 'message': 'Failed to create symlink',
+                        'output': (result.stderr or '').strip()}), 500
 
     # Validate and reload
     is_valid, output = validate_nginx()
     if not is_valid:
-        run_cmd(f"sudo rm -f {shlex.quote(enabled)}", timeout=10)
+        # Alleen de symlink die deze aanroep zelf heeft aangemaakt verwijderen
+        run_cmd_safe(["sudo", "rm", "-f", enabled], timeout=10)
         return jsonify({'status': 'error', 'message': 'Nginx config test failed after enabling', 'output': output}), 400
 
     reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
-    if reload_result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Nginx reload failed after enabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_enable', {'name': name})
     _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
+    if reload_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Nginx reload failed after enabling', 'output': reload_result.stderr.strip()}), 500
     return jsonify({'status': 'ok', 'message': f'{name} enabled and nginx reloaded'})
 
 
@@ -8489,15 +8792,38 @@ def nginx_config_disable():
         return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
 
     enabled = f'/etc/nginx/sites-enabled/{name}'
-    result = run_cmd(f"sudo rm -f {shlex.quote(enabled)}", timeout=10)
+
+    # Alleen symlinks verwijderen: een regulier bestand in sites-enabled heeft
+    # mogelijk geen kopie in sites-available en zou dan verloren gaan.
+    if run_cmd_safe(["sudo", "test", "-L", enabled], timeout=5).returncode != 0:
+        if run_cmd_safe(["sudo", "test", "-e", enabled], timeout=5).returncode == 0:
+            return jsonify({'status': 'error', 'message':
+                            f'sites-enabled/{name} is a regular file, not a symlink; move it to '
+                            'sites-available and enable it from there before disabling'}), 409
+        return jsonify({'status': 'error', 'message': f'{name} is not enabled'}), 404
+
+    try:
+        link_target = os.readlink(enabled)
+    except OSError:
+        link_target = None
+
+    result = run_cmd_safe(["sudo", "rm", "-f", enabled], timeout=10)
     if result.returncode != 0:
         return jsonify({'status': 'error', 'message': 'Failed to remove symlink'}), 500
 
+    is_valid, output = validate_nginx()
+    if not is_valid:
+        # Bijv. een upstream uit deze site die elders gebruikt wordt: link terugzetten
+        if link_target:
+            run_cmd_safe(["sudo", "ln", "-s", link_target, enabled], timeout=10)
+        return jsonify({'status': 'error', 'message': 'Nginx config test failed after disabling'
+                        + ('; symlink restored' if link_target else ''), 'output': output}), 400
+
     reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "nginx"], timeout=15)
-    if reload_result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Nginx reload failed after disabling', 'output': reload_result.stderr.strip()}), 500
     log_audit('nginx_config_disable', {'name': name})
     _invalidate_cache('get_nginx_sites', 'get_nginx_logs')
+    if reload_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': 'Nginx reload failed after disabling', 'output': reload_result.stderr.strip()}), 500
     return jsonify({'status': 'ok', 'message': f'{name} disabled and nginx reloaded'})
 
 
@@ -8551,6 +8877,27 @@ def caddy_config_read():
     return jsonify({'status': 'error', 'message': 'Could not read config'}), 500
 
 
+def _caddy_site_import_patterns(sites_dir):
+    """Import patterns (basenames) with which the main Caddyfile loads files from sites_dir.
+
+    Returns None als de Caddyfile niet leesbaar is. Een enkel bestand-import
+    levert de exacte bestandsnaam op (matcht dan alleen zichzelf).
+    """
+    caddy_cfg = CONFIG.get('caddy', {})
+    config_file = caddy_cfg.get('config_file', '/etc/caddy/Caddyfile')
+    result = run_cmd_safe(["sudo", "cat", config_file], timeout=10)
+    if result.returncode != 0:
+        return None
+    target = os.path.realpath(sites_dir.rstrip('/'))
+    patterns = []
+    for base, pattern in _caddy_import_specs(result.stdout, os.path.dirname(config_file)):
+        if pattern is None:
+            base, pattern = os.path.split(base)
+        if os.path.realpath(base) == target:
+            patterns.append(pattern)
+    return patterns
+
+
 @app.route('/api/caddy/config/save', methods=['POST'])
 @login_required
 def caddy_config_save():
@@ -8577,47 +8924,22 @@ def caddy_config_save():
     if not _is_caddy_path_safe(path):
         return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
 
-    # Backup current config
-    run_cmd(f"sudo cp {shlex.quote(path)} {shlex.quote(path + '.backup')} 2>/dev/null", timeout=10)
+    res = _sudo_write_validated(
+        path, content, validate_caddy,
+        lambda: run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=15))
 
-    # Write content via temp file
-    safe_name = name if name and is_safe_name(name) else 'Caddyfile'
-    temp_path = str(DATA_DIR / f'caddy_temp_{safe_name}')
-    try:
-        with open(temp_path, 'w') as f:
-            f.write(content)
-    except OSError as e:
-        return jsonify({'status': 'error', 'message': str(e)}), 500
+    if res['written']:
+        log_audit('caddy_config_save', {'name': name or 'Caddyfile', 'type': config_type})
+        _invalidate_cache('get_caddy_sites', 'get_caddy_logs', 'get_caddy_certificates')
 
-    # Copy to caddy dir
-    cp_result = run_cmd(f"sudo cp {shlex.quote(temp_path)} {shlex.quote(path)}", timeout=10)
-    try:
-        os.remove(temp_path)
-    except OSError:
-        pass
-
-    if cp_result.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Failed to write config'}), 500
-
-    # Validate caddy config
-    is_valid, output = validate_caddy()
-    if not is_valid:
-        # Restore backup
-        run_cmd(f"sudo cp {shlex.quote(path + '.backup')} {shlex.quote(path)} 2>/dev/null", timeout=10)
-        run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
-        return jsonify({'status': 'error', 'message': 'Caddy config validation failed', 'output': output}), 400
-
-    # Reload caddy
-    reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=15)
-    # Clean up backup
-    run_cmd(f"sudo rm -f {shlex.quote(path + '.backup')}", timeout=10)
-
-    log_audit('caddy_config_save', {'name': name or 'Caddyfile', 'type': config_type})
-    _invalidate_cache('get_caddy_sites', 'get_caddy_logs', 'get_caddy_certificates')
-
-    if reload_result.returncode == 0:
+    if res['ok']:
         return jsonify({'status': 'ok', 'message': 'Config saved and Caddy reloaded'})
-    return jsonify({'status': 'ok', 'message': 'Config saved but Caddy reload failed'})
+    if res['stage'] == 'validate':
+        return jsonify({'status': 'error', 'message': f"Caddy {res['message']}", 'output': res['output']}), 400
+    if res['stage'] == 'reload':
+        return jsonify({'status': 'error', 'message': 'Config saved but Caddy reload failed',
+                        'output': res['output']}), 500
+    return jsonify({'status': 'error', 'message': res['message'], 'output': res['output']}), res['code']
 
 
 @app.route('/api/caddy/config/toggle', methods=['POST'])
@@ -8633,21 +8955,43 @@ def caddy_config_toggle():
         return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
     if action not in ('enable', 'disable'):
         return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
+    if (action == 'disable') == name.endswith('.disabled'):
+        return jsonify({'status': 'error', 'message': f'{name} is already {action}d'}), 400
 
     caddy_cfg = CONFIG.get('caddy', {})
     sites_dir = caddy_cfg.get('sites_dir', '/etc/caddy/sites/')
 
+    old_path = os.path.join(sites_dir, name)
     if action == 'disable':
-        old_path = os.path.join(sites_dir, name)
         new_path = os.path.join(sites_dir, name + '.disabled')
     else:
-        old_path = os.path.join(sites_dir, name)
-        new_path = os.path.join(sites_dir, name.removesuffix('.disabled'))
+        new_path = os.path.join(sites_dir, base_name)
 
     if not _is_caddy_path_safe(old_path) or not _is_caddy_path_safe(new_path):
         return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
 
-    result = run_cmd(f"sudo mv {shlex.quote(old_path)} {shlex.quote(new_path)}", timeout=10)
+    # Caddy's import-glob bepaalt of '.disabled' echt uitschakelt: 'import sites/*'
+    # laadt ook 'foo.disabled', dan zou de UI 'disabled' tonen terwijl de site live blijft.
+    warning = ''
+    patterns = _caddy_site_import_patterns(sites_dir)
+    if patterns is not None:
+        new_name = os.path.basename(new_path)
+        loaded = any(_caddy_glob_match(p, new_name) for p in patterns)
+        if action == 'disable' and loaded:
+            shown = ', '.join(f"'{p}'" for p in patterns)
+            return jsonify({'status': 'error', 'message':
+                            f'Cannot disable {name}: the Caddyfile imports {shown} from the sites directory, '
+                            f'which also loads {new_name}, so the site would stay active. Use an import pattern '
+                            "that skips .disabled files (e.g. 'import sites/*.caddy' with site files named "
+                            '*.caddy), or remove the site file.'}), 409
+        if action == 'enable' and not loaded:
+            warning = ' (warning: the Caddyfile does not import this file, so the site is not active)'
+
+    if run_cmd_safe(["sudo", "test", "-e", new_path], timeout=5).returncode == 0:
+        return jsonify({'status': 'error', 'message':
+                        f'{os.path.basename(new_path)} already exists; refusing to overwrite it'}), 409
+
+    result = run_cmd_safe(["sudo", "mv", old_path, new_path], timeout=10)
     if result.returncode != 0:
         return jsonify({'status': 'error', 'message': f'Failed to {action} config'}), 500
 
@@ -8655,16 +8999,17 @@ def caddy_config_toggle():
     is_valid, output = validate_caddy()
     if not is_valid:
         # Revert
-        run_cmd(f"sudo mv {shlex.quote(new_path)} {shlex.quote(old_path)}", timeout=10)
+        run_cmd_safe(["sudo", "mv", new_path, old_path], timeout=10)
         return jsonify({'status': 'error', 'message': f'Caddy validation failed after {action}', 'output': output}), 400
 
     reload_result = run_cmd_safe(["sudo", "systemctl", "reload", "caddy"], timeout=15)
     log_audit(f'caddy_config_{action}', {'name': name})
     _invalidate_cache('get_caddy_sites', 'get_caddy_logs', 'get_caddy_certificates')
 
-    if reload_result.returncode == 0:
-        return jsonify({'status': 'ok', 'message': f'Site {action}d and Caddy reloaded'})
-    return jsonify({'status': 'ok', 'message': f'Site {action}d but Caddy reload failed'})
+    if reload_result.returncode != 0:
+        return jsonify({'status': 'error', 'message': f'Site {action}d but Caddy reload failed{warning}',
+                        'output': (reload_result.stderr or '').strip()}), 500
+    return jsonify({'status': 'ok', 'message': f'Site {action}d and Caddy reloaded{warning}'})
 
 
 @app.route('/api/caddy/validate', methods=['POST'])
