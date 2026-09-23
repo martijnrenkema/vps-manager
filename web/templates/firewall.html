@@ -13,8 +13,8 @@
         <div class="card-body">
             {% if data.ufw_rules %}
             <div class="table-wrap">
-                <table class="table-responsive-cards">
-                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:60px"></th></tr></thead>
+                <table class="table-responsive-cards" id="ufwRulesTable">
+                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:60px"><span class="sr-only">Actions</span></th></tr></thead>
                     <tbody>
                         {% for rule in data.ufw_rules %}
                         <tr>
@@ -33,7 +33,7 @@
                             </td>
                             <td data-label="From">{{ rule.from_addr }}</td>
                             <td data-label="Comment"><span style="color:var(--text-muted);font-size:12px">{{ rule.comment }}</span></td>
-                            <td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('{{ rule.number }}')">{{ icon('trash') }}</button></td>
+                            <td data-label=""><button type="button" class="btn btn-sm btn-red" aria-label="Delete rule {{ rule.number }}" title="Delete rule" data-rule="{{ rule.number }}" data-to="{{ rule.to }}" data-action="{{ rule.action }}" data-from="{{ rule.from_addr }}" data-v6="{{ '1' if rule.v6 else '0' }}" onclick="deleteUfwRule(this)">{{ icon('trash') }}</button></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -47,7 +47,7 @@
 
             <!-- Add Rule Form -->
             <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Add Rule</div>
+                <div style="font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px">Add rule</div>
                 <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
                     <div class="form-group" style="margin-bottom:0;min-width:90px">
                         <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Port</label>
@@ -76,7 +76,7 @@
                         <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Comment (optional)</label>
                         <input type="text" id="ufwComment" class="form-control" placeholder="e.g. Nginx reverse proxy">
                     </div>
-                    <button class="btn btn-green" onclick="addUfwRule()">+ Add</button>
+                    <button type="button" class="btn btn-green" onclick="addUfwRule(this)">+ Add</button>
                 </div>
             </div>
         </div>
@@ -250,7 +250,7 @@
                     {% endif %}
                 </select>
             </div>
-            <button class="btn btn-red" onclick="banIp()" id="banBtn">{{ icon('ban') }} Ban</button>
+            <button type="button" class="btn btn-red" onclick="banIp()" id="banBtn">{{ icon('ban') }} Ban</button>
         </div>
     </div>
 </div>
@@ -266,12 +266,12 @@
                 <option value="50">50</option>
                 <option value="100">100</option>
             </select>
-            <button class="btn btn-sm" onclick="loadBannedIps()">{{ icon('refresh') }}</button>
+            <button type="button" class="btn btn-sm" onclick="loadBannedIps()" aria-label="Refresh banned IPs" title="Refresh">{{ icon('refresh') }}</button>
         </div>
     </div>
     <div class="card-body">
         <div id="bannedIpsContainer">
-            <div class="empty-state">Loading...</div>
+            <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
         </div>
         <div style="display:flex;justify-content:center;gap:8px;margin-top:16px" id="bannedPagination"></div>
     </div>
@@ -285,14 +285,14 @@
     </div>
     <div class="card-body">
         <div id="whitelistContainer">
-            <div class="empty-state">Loading...</div>
+            <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
         </div>
         <div style="display:flex;gap:12px;align-items:flex-end;margin-top:16px;flex-wrap:wrap">
             <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
                 <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Add IP / CIDR</label>
                 <input type="text" id="whitelistInput" class="form-control" placeholder="e.g. 192.168.1.0/24">
             </div>
-            <button class="btn" onclick="addWhitelistIp()">+ Add</button>
+            <button type="button" class="btn" onclick="addWhitelistIp()">+ Add</button>
             <button class="btn btn-green" onclick="saveWhitelist()" id="saveWhitelistBtn">{{ icon('save') }} Save</button>
         </div>
     </div>
@@ -305,7 +305,7 @@
     let whitelistIps = [];
 
     // --- UFW Rules ---
-    async function addUfwRule() {
+    async function addUfwRule(btn) {
         const port = document.getElementById('ufwPort').value.trim();
         const proto = document.getElementById('ufwProto').value;
         const from_ip = document.getElementById('ufwFrom').value.trim();
@@ -316,41 +316,22 @@
         if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
             showToast('Port must be between 1 and 65535', 'error'); return;
         }
-        try {
-            const res = await fetch('/firewall/ufw/add', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                body: JSON.stringify({port, proto, from_ip, action, comment}),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                showToast(data.message, 'success');
-                document.getElementById('ufwPort').value = '';
-                document.getElementById('ufwFrom').value = '';
-                document.getElementById('ufwComment').value = '';
-                refreshUfwTable();
-            } else {
-                showToast(data.message || 'Failed to add rule', 'error');
-            }
-        } catch (e) {
-            showToast('Connection error', 'error');
-        }
-    }
-
-    async function deleteUfwRule(ruleNumber) {
-        showConfirm('Delete UFW Rule', `Delete rule #${ruleNumber}?`, async function() {
+        await withBusy(btn, async function() {
             try {
-                const res = await fetch('/firewall/ufw/delete', {
+                const res = await fetch('/firewall/ufw/add', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: JSON.stringify({rule_number: ruleNumber}),
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({port, proto, from_ip, action, comment}),
                 });
                 const data = await res.json();
                 if (res.ok) {
                     showToast(data.message, 'success');
+                    document.getElementById('ufwPort').value = '';
+                    document.getElementById('ufwFrom').value = '';
+                    document.getElementById('ufwComment').value = '';
                     refreshUfwTable();
                 } else {
-                    showToast(data.message || 'Failed to delete rule', 'error');
+                    showToast(data.message || 'Failed to add rule', 'error');
                 }
             } catch (e) {
                 showToast('Connection error', 'error');
@@ -358,12 +339,48 @@
         });
     }
 
+    // Rule numbers shift when ufw/fail2ban change rules, so we send the rule as
+    // we last saw it; the server answers 409 if rule N no longer matches.
+    async function deleteUfwRule(btn) {
+        const d = btn.dataset;
+        const ruleNumber = d.rule;
+        const expected = { to: d.to, action: d.action, from_addr: d.from, v6: d.v6 === '1' };
+        const desc = `#${ruleNumber}: ${d.action} ${d.to} from ${d.from}${expected.v6 ? ' (v6)' : ''}`;
+        showConfirm('Delete UFW rule', `Delete rule ${desc}?`, async function() {
+            await withBusy(btn, async function() {
+                try {
+                    const res = await fetch('/firewall/ufw/delete', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({rule_number: ruleNumber, expected: expected}),
+                    });
+                    let data = {};
+                    try { data = await res.json(); } catch (e) { data = {}; }
+                    if (res.ok && data.status !== 'error') {
+                        showToast(data.message || 'Rule deleted', 'success');
+                        refreshUfwTable();
+                    } else if (res.status === 409) {
+                        showToast(data.message || 'The firewall rules changed in the meantime. The list has been reloaded; please try again.', 'warning');
+                        refreshUfwTable();
+                    } else {
+                        showToast(data.message || 'Failed to delete rule', 'error');
+                    }
+                } catch (e) {
+                    showToast('Connection error', 'error');
+                }
+            });
+        });
+    }
+
+    const TRASH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+
     async function refreshUfwTable() {
         try {
             const res = await fetch('/api/firewall/ufw-rules');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const rules = await res.json();
-            const tbody = document.querySelector('.card:first-child table tbody');
-            if (!tbody) return;
+            const tbody = document.querySelector('#ufwRulesTable tbody');
+            if (!tbody) { location.reload(); return; }
             tbody.innerHTML = rules.map(r => {
                 let badge = 'badge';
                 if (r.action === 'ALLOW') badge = 'badge badge-green';
@@ -371,7 +388,9 @@
                 else if (r.action === 'LIMIT') badge = 'badge badge-yellow';
                 const v6 = r.v6 ? ' <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>' : '';
                 const comment = r.comment ? `<span style="color:var(--text-muted);font-size:12px">${escHtml(r.comment)}</span>` : '';
-                return `<tr><td>${escHtml(String(r.number))}</td><td><code>${escHtml(r.to)}</code>${v6}</td><td><span class="${badge}">${escHtml(r.action)}</span></td><td>${escHtml(r.from_addr)}</td><td>${comment}</td><td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('${escHtml(String(r.number))}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>`;
+                const num = escHtml(String(r.number));
+                return `<tr><td data-label="#">${num}</td><td data-label="To"><code>${escHtml(r.to)}</code>${v6}</td><td data-label="Action"><span class="${badge}">${escHtml(r.action)}</span></td><td data-label="From">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
+                    `<td data-label=""><button type="button" class="btn btn-sm btn-red" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
             }).join('');
         } catch (e) {
             showToast('Could not refresh firewall rules', 'error');
@@ -392,7 +411,7 @@
             try {
                 const res = await fetch('/firewall/ban', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ip, jail}),
                 });
                 const data = await res.json();
@@ -430,7 +449,7 @@
         return `${m}m`;
     }
 
-    let bannedIpsInterval = null;
+    let bannedIpsPoller = null;
     let allBannedIps = [];
     let bannedPage = 1;
     let bannedPerPage = 25;
@@ -452,6 +471,7 @@
         const container = document.getElementById('bannedIpsContainer');
         try {
             const res = await fetch('/firewall/banned-ips');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const jails = await res.json();
 
             // Flatten to single array
@@ -473,11 +493,14 @@
 
             renderBannedIps();
 
-            if (allBannedIps.length > 0 && !bannedIpsInterval) {
-                bannedIpsInterval = setInterval(loadBannedIps, 30000);
-            } else if (allBannedIps.length === 0 && bannedIpsInterval) {
-                clearInterval(bannedIpsInterval);
-                bannedIpsInterval = null;
+            // Keep "remaining" times fresh while there are bans; the server caches
+            // this list for ~30s, so polling faster than 60s gains nothing.
+            // Pauses while the tab is hidden and refreshes when it is shown again.
+            if (allBannedIps.length > 0 && !bannedIpsPoller) {
+                bannedIpsPoller = startVisiblePolling(loadBannedIps, 60000);
+            } else if (allBannedIps.length === 0 && bannedIpsPoller) {
+                bannedIpsPoller.stop();
+                bannedIpsPoller = null;
             }
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Failed to load banned IPs</div>';
@@ -521,7 +544,7 @@
         pageItems.forEach(entry => {
             const duration = entry.duration != null ? formatBanDuration(entry.duration) : '-';
             const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
-            const countBadge = entry.bancount > 1 ? ` <span class="badge badge-red" title="Banned ${entry.bancount} times" style="font-size:10px">${entry.bancount}x</span>` : '';
+            const countBadge = entry.bancount > 1 ? ` <span class="badge badge-red" title="Banned ${escHtml(entry.bancount)} times" style="font-size:10px">${escHtml(entry.bancount)}x</span>` : '';
             const flag = entry.countryCode ? countryFlag(entry.countryCode) + ' ' : '';
             const countryTitle = entry.country ? ` title="${escHtml(entry.country)}"` : '';
             const reason = jailReasons[entry.jail] || entry.jail;
@@ -532,7 +555,7 @@
                 <td style="font-size:12px;color:var(--text-muted)">${escHtml(entry.banned_at)}</td>
                 <td style="font-size:12px">${duration}</td>
                 <td>${remaining}</td>
-                <td><button class="btn btn-sm btn-green" onclick="unbanIp('${escHtml(entry.ip)}', '${escHtml(entry.jail)}')">Unban</button></td>
+                <td><button type="button" class="btn btn-sm btn-green" data-ip="${escHtml(entry.ip)}" data-jail="${escHtml(entry.jail)}" onclick="unbanIp(this.dataset.ip, this.dataset.jail, this)">Unban</button></td>
             </tr>`;
         });
         html += '</tbody></table></div>';
@@ -550,25 +573,27 @@
         }
     }
 
-    async function unbanIp(ip, jail) {
+    async function unbanIp(ip, jail, btn) {
         showConfirm('Unban IP', `Unban ${ip} from jail "${jail}"?`, async function() {
-            try {
-                const res = await fetch('/firewall/unban', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: JSON.stringify({ip, jail}),
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    showToast(data.message, 'success');
-                    loadBannedIps();
-                } else {
-                    showToast(data.message || 'Unban failed', 'error');
+            await withBusy(btn, async function() {
+                try {
+                    const res = await fetch('/firewall/unban', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ip, jail}),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        showToast(data.message, 'success');
+                        loadBannedIps();
+                    } else {
+                        showToast(data.message || 'Unban failed', 'error');
+                    }
+                } catch (e) {
+                    showToast('Connection error', 'error');
                 }
-            } catch (e) {
-                showToast('Connection error', 'error');
-            }
-        });
+            });
+        }, { destructive: false, confirmLabel: 'Unban' });
     }
 
     // --- Whitelist ---
@@ -576,6 +601,7 @@
         const container = document.getElementById('whitelistContainer');
         try {
             const res = await fetch('/firewall/whitelist');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const data = await res.json();
             whitelistIps = data.ips || [];
             renderWhitelist();
@@ -594,7 +620,7 @@
         whitelistIps.forEach((ip, idx) => {
             html += `<tr>
                 <td><code>${escHtml(ip)}</code></td>
-                <td><button class="btn btn-sm btn-red" onclick="removeWhitelistIp(${idx})">{{ icon('trash') }} Del</button></td>
+                <td><button type="button" class="btn btn-sm btn-red" aria-label="Remove ${escHtml(ip)} from whitelist" onclick="removeWhitelistIp(${idx})">{{ icon('trash') }} Del</button></td>
             </tr>`;
         });
         html += '</tbody></table></div>';
@@ -630,7 +656,7 @@
         try {
             const res = await fetch('/firewall/whitelist', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ips: whitelistIps}),
             });
             const data = await res.json();

@@ -36,7 +36,7 @@
                     </tr>
                 </thead>
                 <tbody id="auditTableBody">
-                    <tr><td colspan="5" class="empty-state">Loading...</td></tr>
+                    <tr><td colspan="5"><div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div></td></tr>
                 </tbody>
             </table>
         </div>
@@ -164,7 +164,8 @@ function renderAuditLog() {
 
 async function clearAuditLog() {
     showConfirm('Clear Audit Log', 'Are you sure you want to clear the entire audit log?', async () => {
-        await apiCall('/api/audit/clear', 'POST');
+        const data = await apiCall('/api/audit/clear', 'POST');
+        if (!data) return;
         auditData = [];
         renderAuditLog();
     });

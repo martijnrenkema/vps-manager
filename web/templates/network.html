@@ -5,17 +5,17 @@
 
 {% block content %}
 <div class="stats-grid">
-    <div class="stat-card" style="border-top-color:var(--accent)">
+    <div class="stat-card" style="--tone:var(--accent)">
         <div class="label">Active Connections</div>
         <div class="value">{{ connections }}</div>
         <div class="sub">Established TCP</div>
     </div>
-    <div class="stat-card" style="border-top-color:var(--green)">
+    <div class="stat-card" style="--tone:var(--green)">
         <div class="label">Interfaces</div>
         <div class="value">{{ interfaces|length }}</div>
         <div class="sub">Network interfaces</div>
     </div>
-    <div class="stat-card" style="border-top-color:var(--purple)">
+    <div class="stat-card" style="--tone:var(--purple)">
         <div class="label">Listening Ports</div>
         <div class="value">{{ ports|length }}</div>
         <div class="sub">Open ports</div>

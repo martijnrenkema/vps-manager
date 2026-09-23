@@ -12,7 +12,7 @@
             <table class="table-responsive-cards">
                 <thead>
                     <tr>
-                        <th style="width:32px"><input type="checkbox" class="bulk-check" onchange="toggleSelectAll(this, 'pm2')"></th>
+                        <th style="width:32px"><input type="checkbox" class="bulk-check" aria-label="Select all processes" onchange="toggleSelectAll(this, 'pm2')"></th>
                         <th>ID</th>
                         <th>Process</th>
                         <th>Status</th>
@@ -26,7 +26,7 @@
                 <tbody>
                     {% for p in processes %}
                     <tr>
-                        <td><input type="checkbox" class="bulk-check" data-name="{{ p.name }}" data-group="pm2" onchange="updateBulkBar('pm2')"></td>
+                        <td><input type="checkbox" class="bulk-check" data-name="{{ p.name }}" data-group="pm2" aria-label="Select {{ p.name }}" onchange="updateBulkBar('pm2')"></td>
                         <td data-label="ID">{{ p.pm_id }}</td>
                         <td data-label="Process"><strong>{{ p.name }}</strong></td>
                         <td data-label="Status">
@@ -44,13 +44,13 @@
                         <td data-label="Restarts">{{ p.restarts }}</td>
                         <td data-label="Actions">
                             <div class="btn-group">
-                                <button class="btn btn-sm btn-green" onclick="pm2Action('restart', {{ p.name | tojson | forceescape }}, this)">Restart</button>
+                                <button type="button" class="btn btn-sm btn-green" data-name="{{ p.name }}" onclick="pm2Action('restart', this.dataset.name, this)">Restart</button>
                                 {% if p.status == 'online' %}
-                                    <button class="btn btn-sm btn-yellow" onclick="pm2Action('stop', {{ p.name | tojson | forceescape }}, this)">Stop</button>
+                                    <button type="button" class="btn btn-sm btn-yellow" data-name="{{ p.name }}" onclick="pm2Action('stop', this.dataset.name, this)">Stop</button>
                                 {% else %}
-                                    <button class="btn btn-sm btn-green" onclick="pm2Action('start', {{ p.name | tojson | forceescape }}, this)">Start</button>
+                                    <button type="button" class="btn btn-sm btn-green" data-name="{{ p.name }}" onclick="pm2Action('start', this.dataset.name, this)">Start</button>
                                 {% endif %}
-                                <button class="btn btn-sm" onclick="showLogs({{ p.name | tojson | forceescape }})">Logs</button>
+                                <button type="button" class="btn btn-sm" data-name="{{ p.name }}" onclick="showLogs(this.dataset.name)">Logs</button>
                             </div>
                         </td>
                     </tr>
@@ -61,8 +61,8 @@
         <div class="bulk-bar" id="pm2BulkBar" style="display:none">
             <span id="pm2BulkCount">0 selected</span>
             <div class="btn-group">
-                <button class="btn btn-sm btn-green" onclick="bulkPm2Action('restart')">Restart All</button>
-                <button class="btn btn-sm btn-yellow" onclick="bulkPm2Action('stop')">Stop All</button>
+                <button type="button" class="btn btn-sm btn-green" onclick="bulkPm2Action('restart')">Restart selected</button>
+                <button type="button" class="btn btn-sm btn-yellow" onclick="bulkPm2Action('stop')">Stop selected</button>
             </div>
         </div>
         {% else %}
@@ -92,16 +92,21 @@ function updateBulkBar(group) {
     }
 }
 
+const PM2_VERBS = { restart: 'restarted', stop: 'stopped', start: 'started' };
+
 async function bulkPm2Action(action) {
     var cbs = document.querySelectorAll('input.bulk-check[data-group="pm2"]:checked');
     if (!cbs.length) return;
     var names = Array.from(cbs).map(function(cb) { return cb.dataset.name; });
-    showConfirm('Bulk ' + action, action.charAt(0).toUpperCase() + action.slice(1) + ' ' + names.length + ' processes?', async function() {
-        for (var i = 0; i < names.length; i++) {
-            await apiCall('/pm2/' + action + '/' + encodeURIComponent(names[i]), 'POST');
-        }
-        showToast(names.length + ' processes ' + action + 'ed', 'success');
-        setTimeout(function() { location.reload(); }, 1000);
+    var label = action.charAt(0).toUpperCase() + action.slice(1);
+    showConfirm(label + ' processes', label + ' ' + names.length + ' process' + (names.length === 1 ? '' : 'es') + '?\n' + names.join(', '), async function() {
+        var buttons = Array.from(document.querySelectorAll('#pm2BulkBar button'));
+        var result = await withBusy(buttons, function() {
+            return runBulkRequests(names, function(n) { return '/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(n); });
+        });
+        if (!result) return;
+        bulkSummaryToast(result, PM2_VERBS[action] || action, names.length === 1 ? 'process' : 'processes');
+        setTimeout(function() { location.reload(); }, 1500);
     });
 }
 </script>

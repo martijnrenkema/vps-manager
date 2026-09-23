@@ -68,7 +68,7 @@
             </div>
             <div class="form-group" style="max-width:200px">
                 <label for="verify_code">Enter 6-digit code to verify</label>
-                <input type="text" id="verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+                <input type="text" id="verify_code" class="form-control" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
             </div>
             <div style="display:flex;gap:8px">
                 <button class="btn btn-green" onclick="verify2FA()">Verify & Enable</button>
@@ -89,7 +89,7 @@
             <div id="emailVerifyStep" style="display:none;margin-top:16px">
                 <div class="form-group" style="max-width:200px">
                     <label for="email_verify_code">Enter 6-digit code from email</label>
-                    <input type="text" id="email_verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+                    <input type="text" id="email_verify_code" class="form-control" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
                 </div>
                 <button class="btn btn-green" onclick="verifyEmail2FA()">Verify & Enable</button>
             </div>
@@ -447,7 +447,11 @@ async function enable2FA() {
         const res = await fetch('/settings/2fa/enable', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
         const data = await res.json();
         if (res.ok) {
-            document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr_code}" alt="QR Code" style="border-radius:8px">`;
+            const qr = document.createElement('img');
+            qr.src = data.qr_code;
+            qr.alt = 'QR code for authenticator app';
+            qr.style.borderRadius = '8px';
+            document.getElementById('qrCodeContainer').replaceChildren(qr);
             document.getElementById('totpSecret').textContent = data.secret;
         } else {
             showToast(data.message, 'error');
@@ -663,12 +667,35 @@ async function detectWebServer() {
         const res = await fetch('/api/webserver/detect');
         const data = await res.json();
         const resultDiv = document.getElementById('detectedWebServerResult');
-        let html = `Detected: <strong>${data.detected}</strong>`;
-        html += ` (Nginx: ${data.nginx_installed ? 'installed' : 'not found'}, Caddy: ${data.caddy_installed ? 'installed' : 'not found'})`;
-        if (data.detected !== data.current) {
-            html += `<br><button class="btn btn-sm btn-green" style="margin-top:8px" onclick="document.getElementById('cfg_web_server').value='${data.detected}';toggleWebServerFields();document.getElementById('detectedWebServer').style.display='none';showToast('Web server changed to ${data.detected} - save settings to apply','success')">Switch to ${data.detected}</button>`;
+        if (!res.ok) {
+            showToast(data.message || 'Detection failed', 'error');
+            btn.disabled = false;
+            return;
         }
-        resultDiv.innerHTML = html;
+        // Built with DOM APIs: the detected name is server data and must not be
+        // interpolated into HTML or into an inline handler.
+        const detected = String(data.detected || '');
+        resultDiv.textContent = '';
+        resultDiv.append('Detected: ');
+        const strong = document.createElement('strong');
+        strong.textContent = detected || 'none';
+        resultDiv.append(strong);
+        resultDiv.append(` (Nginx: ${data.nginx_installed ? 'installed' : 'not found'}, Caddy: ${data.caddy_installed ? 'installed' : 'not found'})`);
+        if (detected && data.detected !== data.current) {
+            resultDiv.append(document.createElement('br'));
+            const switchBtn = document.createElement('button');
+            switchBtn.type = 'button';
+            switchBtn.className = 'btn btn-sm btn-green';
+            switchBtn.style.marginTop = '8px';
+            switchBtn.textContent = 'Switch to ' + detected;
+            switchBtn.addEventListener('click', function() {
+                document.getElementById('cfg_web_server').value = detected;
+                toggleWebServerFields();
+                document.getElementById('detectedWebServer').style.display = 'none';
+                showToast('Web server changed to ' + detected + ' - save settings to apply', 'success');
+            });
+            resultDiv.append(switchBtn);
+        }
         document.getElementById('detectedWebServer').style.display = 'block';
     } catch (e) {
         showToast('Connection error', 'error');

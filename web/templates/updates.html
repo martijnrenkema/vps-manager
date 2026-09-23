@@ -460,7 +460,7 @@ async function loadHistory() {
             const statusColor = entry.status === 'success' ? 'var(--green)' : 'var(--red)';
             const statusText = entry.status === 'success' ? 'OK' : 'FAIL';
             html += '<tr>';
-            html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + time + '</td>';
+            html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + escHtml(time) + '</td>';
             html += '<td style="padding:8px 16px">' + sourceBadge + '</td>';
             html += '<td style="padding:8px 16px"><span style="color:' + statusColor + ';font-weight:500">' + statusText + '</span></td>';
             html += '<td style="padding:8px 16px;color:var(--text-secondary)">' + escHtml((entry.details || '-').substring(0, 120)) + '</td>';

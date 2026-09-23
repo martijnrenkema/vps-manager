@@ -10,27 +10,27 @@
         <div class="card" style="margin-bottom:0;height:100%">
             <div class="card-header">{{ icon('file-text') }} Caddyfile <span class="tooltip-icon" data-bs-toggle="tooltip" title="Caddy configuration files. The main Caddyfile is always active. Site files in the sites/ directory can be enabled/disabled.">?</span></div>
             <div class="card-body" style="padding:8px">
-                <div style="font-size:10px;text-transform:uppercase;color:var(--green);font-weight:600;letter-spacing:0.8px;padding:8px 8px 4px">Main Config</div>
+                <div style="font-size:12px;font-weight:500;color:var(--green);padding:8px 8px 4px">Main Config</div>
                 <div id="mainConfig">
-                    <div class="nginx-config-item" data-name="{{ configs.main }}" data-type="main" onclick="loadConfig('{{ configs.main }}', 'main')">
+                    <div class="nginx-config-item" data-name="{{ configs.main }}" data-type="main" onclick="loadConfig(this.dataset.name, this.dataset.type)">
                         <span class="badge-dot green"></span> {{ configs.main }}
                     </div>
                 </div>
                 {% if configs.sites %}
-                <div style="font-size:10px;text-transform:uppercase;color:var(--accent);font-weight:600;letter-spacing:0.8px;padding:12px 8px 4px">Site Files</div>
+                <div style="font-size:12px;font-weight:500;color:var(--accent);padding:12px 8px 4px">Site Files</div>
                 <div id="siteConfigs">
                     {% for name in configs.sites %}
-                    <div class="nginx-config-item" data-name="{{ name }}" data-type="site" onclick="loadConfig('{{ name }}', 'site')">
+                    <div class="nginx-config-item" data-name="{{ name }}" data-type="site" onclick="loadConfig(this.dataset.name, this.dataset.type)">
                         <span class="badge-dot green"></span> {{ name }}
                     </div>
                     {% endfor %}
                 </div>
                 {% endif %}
                 {% if configs.disabled %}
-                <div style="font-size:10px;text-transform:uppercase;color:var(--text-muted);font-weight:600;letter-spacing:0.8px;padding:12px 8px 4px">Disabled</div>
+                <div style="font-size:12px;font-weight:500;color:var(--text-muted);padding:12px 8px 4px">Disabled</div>
                 <div id="disabledConfigs">
                     {% for name in configs.disabled %}
-                    <div class="nginx-config-item" data-name="{{ name }}" data-type="site" onclick="loadConfig('{{ name }}', 'site')">
+                    <div class="nginx-config-item" data-name="{{ name }}" data-type="site" onclick="loadConfig(this.dataset.name, this.dataset.type)">
                         <span class="badge-dot" style="background:var(--text-muted)"></span> {{ name }}
                     </div>
                     {% endfor %}
@@ -73,10 +73,10 @@
 
 <!-- Validation output modal -->
 <div class="modal-overlay" id="validateModal">
-    <div class="vps-modal" style="max-width:600px">
+    <div class="vps-modal" style="max-width:600px" role="dialog" aria-modal="true" aria-labelledby="validateTitle">
         <div class="vps-modal-header">
             <h3 id="validateTitle">Caddy Config Test</h3>
-            <button class="vps-modal-close" onclick="document.getElementById('validateModal').style.display='none'">&times;</button>
+            <button type="button" class="vps-modal-close" aria-label="Close" onclick="document.getElementById('validateModal').style.display='none'">&times;</button>
         </div>
         <div class="vps-modal-body">
             <pre id="validateOutput" style="max-height:300px"></pre>
@@ -288,7 +288,7 @@ window.addEventListener('beforeunload', function(e) {
 {% if selected %}
 document.addEventListener('DOMContentLoaded', function() {
     const selectName = {{ selected|tojson }};
-    let item = document.querySelector(`.nginx-config-item[data-name="${selectName}"]`);
+    let item = document.querySelector(`.nginx-config-item[data-name="${CSS.escape(selectName)}"]`);
     if (item) {
         loadConfig(selectName, item.dataset.type);
     }

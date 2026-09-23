@@ -4,8 +4,7 @@
 {% block page_title %}Dashboard{% endblock %}
 
 {% block head_extra %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}?v={{ asset_v }}" defer></script>
 {% endblock %}
 
 {% block content %}
@@ -35,7 +34,7 @@
                 {% if alert.link %}
                 </a>
                 {% endif %}
-                <button class="alert-dismiss" onclick="dismissAlert(this)" title="Dismiss">&times;</button>
+                <button type="button" class="alert-dismiss" onclick="dismissAlert(this)" title="Dismiss" aria-label="Dismiss alert">&times;</button>
             </div>
             {% endfor %}
         </div>
@@ -44,23 +43,23 @@
 
     <div class="stats-grid">
         {% if health %}
-        <div class="stat-card" style="border-top-color:var(--{{ health.color }})">
+        <div class="stat-card" style="--tone:var(--{{ health.color }})">
             <div class="label">Health Score <span class="tooltip-icon" data-bs-toggle="tooltip" title="Overall server health based on active alerts: errors weigh heaviest, warnings less. 100 = no active alerts." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
             <div class="value" style="color:var(--{{ health.color }})">{{ health.score }}<span style="font-size:14px;color:var(--text-muted)">/100</span></div>
             <div class="sub">{{ health.label }}</div>
         </div>
         {% endif %}
-        <div class="stat-card" style="border-top-color:var(--accent)">
+        <div class="stat-card" style="--tone:var(--accent)">
             <div class="label">Hostname</div>
             <div class="value" style="font-size:18px">{{ data.hostname }}</div>
             <div class="sub">{{ data.os }}</div>
         </div>
-        <div class="stat-card" style="border-top-color:var(--green)">
+        <div class="stat-card" style="--tone:var(--green)">
             <div class="label">Uptime</div>
             <div class="value" style="font-size:18px">{{ data.uptime }}</div>
             <div class="sub">{{ data.cpu_model }} ({{ data.cpu_cores }} cores)</div>
         </div>
-        <div class="stat-card" style="border-top-color:var(--purple)">
+        <div class="stat-card" style="--tone:var(--purple)">
             <div class="label">Load Average <span class="tooltip-icon" data-bs-toggle="tooltip" title="The average number of processes waiting to run. Values below your CPU core count (e.g. 4) are normal." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
             <div class="value" style="font-size:18px">{{ data.load }}</div>
             <div class="sub">1 / 5 / 15 min</div>
@@ -70,28 +69,28 @@
     <div class="stats-grid">
         <div class="stat-card">
             <div class="label">Memory</div>
-            <div class="value">{{ data.mem_pct }}%</div>
+            <div class="value" id="memValue">{{ data.mem_pct }}%</div>
             <div class="sub">{{ data.mem_used_gb }}G / {{ data.mem_total_gb }}G (free: {{ data.mem_avail_gb }}G)</div>
             <div class="progress-wrap">
                 <div class="progress-bar-bg">
-                    <div class="progress-bar-fill {% if data.mem_pct > 80 %}red{% elif data.mem_pct > 60 %}yellow{% else %}green{% endif %}" style="width:{{ data.mem_pct }}%"></div>
+                    <div class="progress-bar-fill {% if data.mem_pct > 80 %}red{% elif data.mem_pct > 60 %}yellow{% else %}green{% endif %}" id="memBar" style="width:{{ data.mem_pct }}%"></div>
                 </div>
             </div>
         </div>
         <div class="stat-card">
             <div class="label">Disk /</div>
-            <div class="value">{{ data.disk_pct }}%</div>
+            <div class="value" id="diskValue">{{ data.disk_pct }}%</div>
             <div class="sub">{{ data.disk_used }} / {{ data.disk_size }} (free: {{ data.disk_avail }})</div>
             <div class="progress-wrap">
                 <div class="progress-bar-bg">
-                    <div class="progress-bar-fill {% if data.disk_pct > 80 %}red{% elif data.disk_pct > 60 %}yellow{% else %}green{% endif %}" style="width:{{ data.disk_pct }}%"></div>
+                    <div class="progress-bar-fill {% if data.disk_pct > 80 %}red{% elif data.disk_pct > 60 %}yellow{% else %}green{% endif %}" id="diskBar" style="width:{{ data.disk_pct }}%"></div>
                 </div>
             </div>
         </div>
         <div class="stat-card">
             <div class="label" style="display:flex;align-items:center;justify-content:space-between">
                 <span>Swap <span class="tooltip-icon" data-bs-toggle="tooltip" title="Virtual memory on disk, used when RAM is full. High swap usage may indicate insufficient RAM." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></span>
-                {% if data.swap_pct > 0 %}<button class="btn btn-sm" id="swapClearBtn" onclick="clearSwap(this)" style="padding:1px 8px;font-size:11px">Clear</button>{% endif %}
+                {% if data.swap_pct > 0 %}<button type="button" class="btn btn-sm" id="swapClearBtn" onclick="clearSwap(this)" style="min-height:24px;padding:0 8px;font-size:11px">Clear</button>{% endif %}
             </div>
             <div class="value" id="swapValue">{{ data.swap_pct }}%</div>
             <div class="sub" id="swapSub">{{ data.swap }}</div>
@@ -105,7 +104,7 @@
 
     <div class="charts-grid">
         <div class="chart-card">
-            <div class="chart-title">CPU Load (1 min avg)</div>
+            <div class="chart-title"><span class="chart-dot" style="background:var(--chart-1)"></span>CPU Load (1 min avg)</div>
             <div class="chart-value" id="chartCpuValue">--</div>
             <div class="chart-wrap">
                 <canvas id="chartCpu"></canvas>
@@ -113,7 +112,7 @@
             </div>
         </div>
         <div class="chart-card">
-            <div class="chart-title">Memory Usage</div>
+            <div class="chart-title"><span class="chart-dot" style="background:var(--chart-2)"></span>Memory Usage</div>
             <div class="chart-value" id="chartMemValue">--</div>
             <div class="chart-wrap">
                 <canvas id="chartMem"></canvas>
@@ -121,7 +120,7 @@
             </div>
         </div>
         <div class="chart-card">
-            <div class="chart-title">Disk Usage</div>
+            <div class="chart-title"><span class="chart-dot" style="background:var(--chart-3)"></span>Disk Usage</div>
             <div class="chart-value" id="chartDiskValue">--</div>
             <div class="chart-wrap">
                 <canvas id="chartDisk"></canvas>
@@ -129,7 +128,7 @@
             </div>
         </div>
         <div class="chart-card">
-            <div class="chart-title">Network I/O <span class="tooltip-icon" data-bs-toggle="tooltip" title="Incoming (RX) and outgoing (TX) network traffic in bytes per second." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
+            <div class="chart-title"><span class="chart-dot" style="background:var(--chart-4)"></span>Network I/O <span class="tooltip-icon" data-bs-toggle="tooltip" title="Incoming (RX) and outgoing (TX) network traffic in bytes per second." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
             <div class="chart-value" id="chartNetValue">--</div>
             <div class="chart-wrap">
                 <canvas id="chartNet"></canvas>
@@ -179,7 +178,7 @@
                                         <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
                                     {% endif %}
                                 </td>
-                                <td><button class="btn btn-sm" onclick="dashServiceRestart({{ svc.name|tojson }}, this)">Restart</button></td>
+                                <td><button type="button" class="btn btn-sm" data-name="{{ svc.name }}" onclick="dashServiceRestart(this.dataset.name, this)">Restart</button></td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -197,7 +196,7 @@
                             {% for p in pm2 %}
                             <tr>
                                 <td>{{ p.name }}</td>
-                                <td>
+                                <td data-label="Status">
                                     {% if p.status == 'online' %}
                                         <span class="badge badge-green"><span class="badge-dot green"></span>online</span>
                                     {% elif p.status == 'stopped' %}
@@ -206,8 +205,8 @@
                                         <span class="badge badge-red"><span class="badge-dot red"></span>{{ p.status }}</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ p.memory }} MB</td>
-                                <td><button class="btn btn-sm" onclick="pm2Action('restart', {{ p.name|tojson }}, this)">Restart</button></td>
+                                <td class="tnum">{{ p.memory }} MB</td>
+                                <td><button type="button" class="btn btn-sm" data-name="{{ p.name }}" onclick="pm2Action('restart', this.dataset.name, this)">Restart</button></td>
                             </tr>
                             {% endfor %}
                         </tbody>
@@ -218,7 +217,7 @@
     </div>
 
     <div style="margin-top:32px;text-align:right">
-        <button class="btn btn-red" onclick="showConfirm('Server Reboot', 'Are you sure you want to reboot the VPS? All services will be temporarily unavailable.', doReboot)">{{ icon('refresh') }} Server Reboot</button>
+        <button type="button" class="btn btn-red" onclick="confirmReboot()">{{ icon('refresh') }} Reboot server…</button>
     </div>
 {% else %}
     <div class="empty-state"><p>Unable to retrieve server data.</p></div>
@@ -230,10 +229,9 @@
 async function doReboot() { await apiCall('/reboot', 'POST'); }
 
 async function clearSwap(btn) {
-    btn.disabled = true;
     btn.textContent = 'Clearing…';
-    var data = await apiCall('/swap/clear', 'POST');
-    if (data && data.status === 'ok') {
+    var data = await withBusy(btn, function() { return apiCall('/swap/clear', 'POST'); });
+    if (data) {
         document.getElementById('swapValue').textContent = '0%';
         document.getElementById('swapSub').textContent = '0.0G / ' + document.getElementById('swapSub').textContent.split('/').pop().trim();
         var bar = document.getElementById('swapBar');
@@ -241,173 +239,162 @@ async function clearSwap(btn) {
         bar.className = 'progress-bar-fill green';
         btn.style.display = 'none';
     } else {
-        btn.disabled = false;
         btn.textContent = 'Clear';
     }
 }
 
-// --- Charts ---
+// --- Charts (Chart.js is loaded with `defer`, so everything below waits for DOMContentLoaded) ---
 const chartInstances = {};
-const chartColors = {
-    cpu: { border: '#58a6ff', bg: [0.3, 0.0] },
-    mem: { border: '#3fb950', bg: [0.3, 0.0] },
-    disk: { border: '#bc8cff', bg: [0.3, 0.0] },
-    netRx: { border: '#39d2c0' },
-    netTx: { border: '#d29922' },
-};
-
-function makeGradient(ctx, canvas, r, g, b, stops) {
-    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight);
-    gradient.addColorStop(0, `rgba(${r},${g},${b},${stops[0]})`);
-    gradient.addColorStop(1, `rgba(${r},${g},${b},${stops[1]})`);
-    return gradient;
-}
-
-function baseChartOpts(yLabel, yMax) {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { intersect: false, mode: 'index' },
-        plugins: {
-            legend: { display: false },
-            tooltip: {
-                backgroundColor: '#21262d',
-                borderColor: '#30363d',
-                borderWidth: 1,
-                titleColor: '#e6edf3',
-                bodyColor: '#b1bac4',
-                padding: 10,
-                titleFont: { size: 12 },
-                bodyFont: { size: 12 },
-            },
-        },
-        scales: {
-            x: {
-                type: 'time',
-                time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }, tooltipFormat: 'HH:mm' },
-                grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
-                ticks: { color: '#8b949e', font: { size: 11 }, maxTicksLimit: 8 },
-            },
-            y: {
-                min: 0,
-                max: yMax || undefined,
-                grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
-                ticks: { color: '#8b949e', font: { size: 11 } },
-                title: { display: !!yLabel, text: yLabel || '', color: '#8b949e', font: { size: 11 } },
-            },
-        },
-        elements: {
-            line: { tension: 0.4, borderWidth: 2 },
-            point: { radius: 0, hoverRadius: 4 },
-        },
-    };
-}
+const pageRenderedAt = Date.now() / 1000;
 
 function formatBytes(bytes) {
-    if (bytes < 1024) return bytes + ' B/s';
+    if (bytes < 1024) return Math.round(bytes) + ' B/s';
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB/s';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB/s';
 }
 
+function makeGradient(ctx, canvas, color) {
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight || 180);
+    gradient.addColorStop(0, hexToRgba(color, 0.28));
+    gradient.addColorStop(1, hexToRgba(color, 0));
+    return gradient;
+}
+
+function baseChartOpts(theme, yLabel, yMax) {
+    return {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: false,
+        normalized: true,
+        parsing: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+            legend: { display: false },
+            tooltip: baseTooltip(theme),
+            decimation: { enabled: true, algorithm: 'lttb', samples: 120, threshold: 150 },
+        },
+        scales: {
+            x: timeAxis(theme),
+            y: {
+                min: 0,
+                max: yMax || undefined,
+                grid: { color: theme.grid },
+                border: { display: false },
+                ticks: { color: theme.tick, font: { size: 11 }, maxTicksLimit: 5 },
+                title: { display: !!yLabel, text: yLabel || '', color: theme.tick, font: { size: 11 } },
+            },
+        },
+        elements: {
+            line: { tension: 0, borderWidth: 1.75 },
+            point: { radius: 0, hoverRadius: 3, hitRadius: 6 },
+        },
+    };
+}
+
+function lineChart(canvasId, theme, color, yLabel, yMax) {
+    const canvas = document.getElementById(canvasId);
+    const ctx = canvas.getContext('2d');
+    return new Chart(ctx, {
+        type: 'line',
+        data: { datasets: [{ fill: true, backgroundColor: makeGradient(ctx, canvas, color), borderColor: color, data: [] }] },
+        options: baseChartOpts(theme, yLabel, yMax),
+    });
+}
+
 function initCharts() {
-    // CPU
-    const cpuCanvas = document.getElementById('chartCpu');
-    const cpuCtx = cpuCanvas.getContext('2d');
-    chartInstances.cpu = new Chart(cpuCtx, {
-        type: 'line',
-        data: { datasets: [{ fill: true, backgroundColor: makeGradient(cpuCtx, cpuCanvas, 88, 166, 255, [0.3, 0.0]), borderColor: chartColors.cpu.border, data: [] }] },
-        options: baseChartOpts('Load'),
-    });
-
-    // Memory
-    const memCanvas = document.getElementById('chartMem');
-    const memCtx = memCanvas.getContext('2d');
-    chartInstances.mem = new Chart(memCtx, {
-        type: 'line',
-        data: { datasets: [{ fill: true, backgroundColor: makeGradient(memCtx, memCanvas, 63, 185, 80, [0.3, 0.0]), borderColor: chartColors.mem.border, data: [] }] },
-        options: baseChartOpts('%', 100),
-    });
-
-    // Disk
-    const diskCanvas = document.getElementById('chartDisk');
-    const diskCtx = diskCanvas.getContext('2d');
-    chartInstances.disk = new Chart(diskCtx, {
-        type: 'line',
-        data: { datasets: [{ fill: true, backgroundColor: makeGradient(diskCtx, diskCanvas, 188, 140, 255, [0.3, 0.0]), borderColor: chartColors.disk.border, data: [] }] },
-        options: baseChartOpts('%', 100),
-    });
+    const theme = chartTheme();
+    const c = theme.palette;
+    chartInstances.cpu = lineChart('chartCpu', theme, c[0], 'Load');
+    chartInstances.mem = lineChart('chartMem', theme, c[1], '%', 100);
+    chartInstances.disk = lineChart('chartDisk', theme, c[2], '%', 100);
 
     // Network (two lines)
-    const netCanvas = document.getElementById('chartNet');
-    const netCtx = netCanvas.getContext('2d');
-    const netOpts = baseChartOpts('');
-    netOpts.plugins.legend = { display: true, labels: { color: '#8b949e', boxWidth: 12, font: { size: 11 } } };
+    const netOpts = baseChartOpts(theme, '');
+    netOpts.plugins.legend = { display: true, align: 'end', labels: { color: theme.tick, boxWidth: 8, boxHeight: 8, usePointStyle: true, pointStyle: 'circle', font: { size: 11 } } };
     netOpts.scales.y.ticks.callback = function(val) { return formatBytes(val); };
-    netOpts.plugins.tooltip.callbacks = { label: function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y); } };
-    chartInstances.net = new Chart(netCtx, {
+    netOpts.plugins.tooltip.callbacks.label = function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y); };
+    chartInstances.net = new Chart(document.getElementById('chartNet').getContext('2d'), {
         type: 'line',
         data: {
             datasets: [
-                { label: 'RX', fill: false, borderColor: chartColors.netRx.border, data: [] },
-                { label: 'TX', fill: false, borderColor: chartColors.netTx.border, data: [] },
+                { label: 'RX', fill: false, borderColor: c[3], backgroundColor: c[3], data: [] },
+                { label: 'TX', fill: false, borderColor: c[4], backgroundColor: c[4], data: [] },
             ],
         },
         options: netOpts,
     });
 }
 
-function updateCharts(metrics) {
-    if (!metrics || !metrics.length) return;
+function pctClass(pct, warn, crit) {
+    return pct > crit ? 'red' : pct > warn ? 'yellow' : 'green';
+}
 
-    // Hide empty states
-    ['Cpu', 'Mem', 'Disk', 'Net'].forEach(n => {
+// Refresh the stat cards from the newest sample, but only if that sample is
+// newer than the server-rendered values on this page.
+function updateStatCards(last) {
+    if (!last || !last.ts || last.ts <= pageRenderedAt) return;
+    const set = function(valueId, barId, pct, warn, crit) {
+        const v = document.getElementById(valueId);
+        const b = document.getElementById(barId);
+        if (pct == null || isNaN(pct)) return;
+        const rounded = Math.round(pct);
+        if (v) v.textContent = rounded + '%';
+        if (b) { b.style.width = rounded + '%'; b.className = 'progress-bar-fill ' + pctClass(rounded, warn, crit); }
+    };
+    set('memValue', 'memBar', last.mem, 60, 80);
+    set('diskValue', 'diskBar', last.disk, 60, 80);
+    set('swapValue', 'swapBar', last.swap, 50, 80);
+}
+
+function updateCharts(metrics) {
+    if (!Array.isArray(metrics) || !metrics.length) return;
+    const last = metrics[metrics.length - 1];
+    updateStatCards(last);
+
+    document.getElementById('chartCpuValue').textContent = Number(last.cpu || 0).toFixed(2);
+    document.getElementById('chartMemValue').textContent = Number(last.mem || 0).toFixed(1) + '%';
+    document.getElementById('chartDiskValue').textContent = (last.disk || 0) + '%';
+    document.getElementById('chartNetValue').textContent = formatBytes(last.net_rx || 0) + ' / ' + formatBytes(last.net_tx || 0);
+
+    if (!chartInstances.cpu) return;
+
+    ['Cpu', 'Mem', 'Disk', 'Net'].forEach(function(n) {
         const el = document.getElementById('chart' + n + 'Empty');
         if (el) el.style.display = 'none';
     });
 
-    const last = metrics[metrics.length - 1];
-
-    // Update current values
-    document.getElementById('chartCpuValue').textContent = last.cpu.toFixed(2);
-    document.getElementById('chartMemValue').textContent = last.mem.toFixed(1) + '%';
-    document.getElementById('chartDiskValue').textContent = last.disk + '%';
-    document.getElementById('chartNetValue').textContent = formatBytes(last.net_rx) + ' / ' + formatBytes(last.net_tx);
-
-    // Map to chart data
-    const cpuData = metrics.map(m => ({ x: m.ts * 1000, y: m.cpu }));
-    const memData = metrics.map(m => ({ x: m.ts * 1000, y: m.mem }));
-    const diskData = metrics.map(m => ({ x: m.ts * 1000, y: m.disk }));
-    const rxData = metrics.map(m => ({ x: m.ts * 1000, y: m.net_rx }));
-    const txData = metrics.map(m => ({ x: m.ts * 1000, y: m.net_tx }));
-
-    chartInstances.cpu.data.datasets[0].data = cpuData;
-    chartInstances.mem.data.datasets[0].data = memData;
-    chartInstances.disk.data.datasets[0].data = diskData;
-    chartInstances.net.data.datasets[0].data = rxData;
-    chartInstances.net.data.datasets[1].data = txData;
-
-    chartInstances.cpu.update('none');
-    chartInstances.mem.update('none');
-    chartInstances.disk.update('none');
-    chartInstances.net.update('none');
+    const pts = function(key) { return metrics.map(function(m) { return { x: m.ts * 1000, y: Number(m[key]) || 0 }; }); };
+    chartInstances.cpu.data.datasets[0].data = pts('cpu');
+    chartInstances.mem.data.datasets[0].data = pts('mem');
+    chartInstances.disk.data.datasets[0].data = pts('disk');
+    chartInstances.net.data.datasets[0].data = pts('net_rx');
+    chartInstances.net.data.datasets[1].data = pts('net_tx');
+    Object.keys(chartInstances).forEach(function(k) {
+        fitTimeAxis(chartInstances[k]);
+        chartInstances[k].update('none');
+    });
 }
 
 async function fetchMetrics() {
     try {
         const res = await fetch('/api/metrics');
-        if (res.ok) {
-            const data = await res.json();
-            updateCharts(data);
-        }
+        if (res.ok) updateCharts(await res.json());
     } catch (e) {}
 }
 
-// Init charts and start polling
-if (typeof Chart !== 'undefined') {
-    initCharts();
-    fetchMetrics();
-    setInterval(fetchMetrics, 60000);
-}
+document.addEventListener('DOMContentLoaded', function() {
+    if (!document.getElementById('chartCpu')) return;
+    if (typeof Chart !== 'undefined') {
+        initCharts();
+    } else {
+        ['Cpu', 'Mem', 'Disk', 'Net'].forEach(function(n) {
+            const el = document.getElementById('chart' + n + 'Empty');
+            if (el) el.textContent = 'Charts unavailable';
+        });
+    }
+    // Metrics are sampled every 5 minutes; poll every 60s while the tab is visible.
+    startVisiblePolling(fetchMetrics, 60000, { immediate: true });
+});
 
 // Alert dismiss logic
 function dismissAlert(btn) {
@@ -416,8 +403,10 @@ function dismissAlert(btn) {
     // Persist dismiss via API
     fetch('/api/alerts/dismiss', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({key: key}),
+    }).then(function(res) {
+        if (!res.ok) showToast('Could not save alert dismissal', 'warning');
     }).catch(function() {});
     // Animate out
     item.style.transition = 'opacity 0.2s, max-height 0.3s';
@@ -447,7 +436,9 @@ function updateAlertsBadge() {
 
 // Dashboard service restart
 async function dashServiceRestart(name, btn) {
-    var data = await apiCall('/services/restart/' + encodeURIComponent(name), 'POST');
+    var data = await withBusy(btn, function() {
+        return apiCall('/services/restart/' + encodeURIComponent(name), 'POST');
+    });
     if (!data) return;
     var row = btn.closest('tr');
     if (row) {

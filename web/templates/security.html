@@ -5,22 +5,22 @@
 
 {% block content %}
 <div class="stats-grid">
-    <div class="stat-card" style="border-top-color:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+    <div class="stat-card" style="--tone:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
         <div class="label">Security Score <span class="tooltip-icon" data-bs-toggle="tooltip" title="Percentage of hardening checks that pass. Warnings count half; informational checks are not scored.">?</span></div>
         <div class="value" style="color:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">{{ data.score }}<span style="font-size:14px;color:var(--text-muted)">/100</span></div>
         <div class="sub">Checked at {{ data.generated_at }}</div>
     </div>
-    <div class="stat-card" style="border-top-color:var(--green)">
+    <div class="stat-card" style="--tone:var(--green)">
         <div class="label">Passed</div>
         <div class="value" style="color:var(--green)">{{ data.summary.ok }}</div>
         <div class="sub">checks OK</div>
     </div>
-    <div class="stat-card" style="border-top-color:var(--yellow)">
+    <div class="stat-card" style="--tone:var(--yellow)">
         <div class="label">Warnings</div>
         <div class="value" style="color:{% if data.summary.warn %}var(--yellow){% else %}var(--text-muted){% endif %}">{{ data.summary.warn }}</div>
         <div class="sub">recommendations</div>
     </div>
-    <div class="stat-card" style="border-top-color:var(--red)">
+    <div class="stat-card" style="--tone:var(--red)">
         <div class="label">Failed</div>
         <div class="value" style="color:{% if data.summary.fail %}var(--red){% else %}var(--text-muted){% endif %}">{{ data.summary.fail }}</div>
         <div class="sub">need action</div>

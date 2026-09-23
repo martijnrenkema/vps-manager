@@ -139,10 +139,18 @@
         xhr.open('POST', '/terminal/exec');
         xhr.setRequestHeader('Content-Type', 'application/json');
         xhr.setRequestHeader('X-CSRFToken', csrfToken);
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
         xhr.onload = function() {
             try {
                 var data = JSON.parse(xhr.responseText);
-                if (data.clear) {
+                if (xhr.status === 401 && data.login_url) {
+                    addLine('Session expired. Redirecting to login...', 'err');
+                    setTimeout(function() { location.href = data.login_url; }, 800);
+                } else if (data.csrf_expired) {
+                    addLine('Session security token expired — reload the page', 'err');
+                } else if (xhr.status >= 400 && data.message && !data.stdout && !data.stderr) {
+                    addLine(data.message, 'err');
+                } else if (data.clear) {
                     outputEl.innerHTML = '';
                 } else {
                     if (data.stdout) {

@@ -23,7 +23,7 @@
                     {% for v in versions %}
                     <tr>
                         <td><strong>PHP {{ v.version }}</strong></td>
-                        <td>
+                        <td data-label="Status">
                             {% if v.fpm_status == 'active' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                             {% elif v.fpm_status == 'inactive' %}
@@ -35,7 +35,7 @@
                         <td><code>{{ v.pm }}</code></td>
                         <td>{{ v.max_children }}</td>
                         <td>
-                            <button class="btn btn-sm btn-yellow" onclick="restartPhp({{ v.version|tojson }}, this)">Restart FPM</button>
+                            <button type="button" class="btn btn-sm btn-yellow" data-version="{{ v.version }}" onclick="restartPhp(this.dataset.version, this)">Restart FPM</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -53,7 +53,7 @@
 <div class="card" style="margin-bottom:24px">
     <div class="card-header d-flex align-items-center justify-content-between">
         <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="badge badge-muted" style="font-weight:normal">{{ v.extensions|length }}</span></span>
-        <button class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" style="font-size:.8rem">Show</button>
+        <button type="button" class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" aria-expanded="false">Show</button>
     </div>
     <div class="card-body" style="display:none">
         <div style="display:flex;flex-wrap:wrap;gap:6px">
@@ -104,18 +104,22 @@ function toggleExtensions(btn) {
     if (body.style.display === 'none') {
         body.style.display = '';
         btn.textContent = 'Hide';
+        btn.setAttribute('aria-expanded', 'true');
     } else {
         body.style.display = 'none';
         btn.textContent = 'Show';
+        btn.setAttribute('aria-expanded', 'false');
     }
 }
 async function restartPhp(version, btn) {
     showConfirm('Restart PHP-FPM', 'Restart PHP ' + version + '-FPM? This may briefly interrupt PHP sites.', async function() {
-        var data = await apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
+        var data = await withBusy(btn, function() {
+            return apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
+        });
         if (!data) return;
         var row = btn ? btn.closest('tr') : null;
         if (row) {
-            var statusCell = row.querySelector('td:nth-child(2)');
+            var statusCell = row.querySelector('td[data-label="Status"]');
             if (statusCell) statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
         }
     });

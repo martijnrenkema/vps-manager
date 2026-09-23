@@ -4,8 +4,7 @@
 {% block page_title %}Uptime Monitoring{% endblock %}
 
 {% block head_extra %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}?v={{ asset_v }}" defer></script>
 {% endblock %}
 
 {% block content %}
@@ -15,17 +14,17 @@
 </div>
 
 <div class="stats-grid">
-    <div class="stat-card" style="border-top-color:var(--green)">
+    <div class="stat-card" style="--tone:var(--green)">
         <div class="label">Sites Up</div>
         <div class="value">{{ up_count }} / {{ total }}</div>
         <div class="sub">Currently responding</div>
     </div>
-    <div class="stat-card" style="border-top-color:var(--accent)">
+    <div class="stat-card" style="--tone:var(--accent)">
         <div class="label">Avg Response</div>
         <div class="value">{{ avg_response }} ms</div>
         <div class="sub">Across all sites</div>
     </div>
-    <div class="stat-card" style="border-top-color:{% if up_count == total %}var(--green){% else %}var(--red){% endif %}">
+    <div class="stat-card" style="--tone:{% if up_count == total %}var(--green){% else %}var(--red){% endif %}">
         <div class="label">Status</div>
         <div class="value">{% if up_count == total %}All Up{% else %}{{ total - up_count }} Down{% endif %}</div>
         <div class="sub">{% if up_count == total %}All sites operational{% else %}Issues detected{% endif %}</div>
@@ -49,7 +48,7 @@
                 <tbody>
                     {% for s in status %}
                     <tr>
-                        <td><a href="https://{{ s.domain }}" target="_blank" style="color:var(--accent);text-decoration:none"><strong>{{ s.domain }}</strong></a></td>
+                        <td><a href="https://{{ s.domain }}" target="_blank" rel="noopener noreferrer" style="color:var(--accent);text-decoration:none"><strong>{{ s.domain }}</strong></a></td>
                         <td>
                             {% if s.is_up %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>Up</span>
@@ -95,7 +94,9 @@
 <div class="card">
     <div class="card-header">{{ icon('bar-chart') }} Response Time History (24h)</div>
     <div class="card-body">
-        <canvas id="responseChart" height="100"></canvas>
+        <div class="chart-wrap" id="responseChartWrap" style="height:280px">
+            <canvas id="responseChart" aria-label="Response time history chart" role="img"></canvas>
+        </div>
         <div class="empty-state" id="noHistoryMsg" style="display:none">No history data yet. Data is collected every 5 minutes.</div>
     </div>
 </div>
@@ -103,61 +104,77 @@
 
 {% block scripts %}
 <script>
-(async function() {
+// Chart.js is loaded with `defer`; build the chart once the DOM (and it) are ready.
+document.addEventListener('DOMContentLoaded', async function() {
+    const wrap = document.getElementById('responseChartWrap');
+    const msg = document.getElementById('noHistoryMsg');
+    function showEmpty(text) {
+        wrap.style.display = 'none';
+        if (text) msg.textContent = text;
+        msg.style.display = 'block';
+    }
     try {
         const res = await fetch('/api/uptime/history');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
         const history = await res.json();
-        const domains = Object.keys(history);
-        if (!domains.length) {
-            document.getElementById('noHistoryMsg').style.display = 'block';
-            return;
-        }
+        const domains = Object.keys(history || {});
+        if (!domains.length) { showEmpty(); return; }
+        if (typeof Chart === 'undefined') { showEmpty('Chart could not be loaded.'); return; }
 
-        const colors = ['#4f8ff7', '#34d399', '#f59e0b', '#ef4444', '#a78bfa', '#ec4899', '#06b6d4', '#f97316'];
-        const datasets = domains.map((domain, i) => {
-            const points = history[domain].map(p => ({
-                x: new Date(p.timestamp),
-                y: p.response_ms
-            }));
+        const theme = chartTheme();
+        const colors = theme.palette.length ? theme.palette : ['#58a6ff'];
+        const datasets = domains.map(function(domain, i) {
+            const points = (history[domain] || [])
+                .map(function(p) { return { x: new Date(p.timestamp).getTime(), y: Number(p.response_ms) || 0 }; })
+                .filter(function(p) { return !isNaN(p.x); })
+                .sort(function(a, b) { return a.x - b.x; });
             return {
                 label: domain,
                 data: points,
                 borderColor: colors[i % colors.length],
-                backgroundColor: 'transparent',
-                borderWidth: 2,
+                backgroundColor: colors[i % colors.length],
+                borderWidth: 1.5,
                 pointRadius: 0,
-                tension: 0.3,
+                pointHoverRadius: 3,
+                tension: 0,
             };
         });
 
-        new Chart(document.getElementById('responseChart'), {
+        const tooltip = baseTooltip(theme);
+        tooltip.callbacks.label = function(ctx) { return ctx.dataset.label + ': ' + Math.round(ctx.parsed.y) + ' ms'; };
+
+        const chart = new Chart(document.getElementById('responseChart'), {
             type: 'line',
-            data: { datasets },
+            data: { datasets: datasets },
             options: {
                 responsive: true,
-                interaction: { mode: 'index', intersect: false },
+                maintainAspectRatio: false,
+                animation: false,
+                normalized: true,
+                parsing: false,
+                interaction: { mode: 'nearest', axis: 'x', intersect: false },
                 scales: {
-                    x: {
-                        type: 'time',
-                        time: { unit: 'hour', displayFormats: { hour: 'HH:mm' } },
-                        grid: { color: 'rgba(255,255,255,0.06)' },
-                        ticks: { color: 'rgba(255,255,255,0.5)' },
-                    },
+                    x: timeAxis(theme),
                     y: {
                         beginAtZero: true,
-                        title: { display: true, text: 'ms', color: 'rgba(255,255,255,0.5)' },
-                        grid: { color: 'rgba(255,255,255,0.06)' },
-                        ticks: { color: 'rgba(255,255,255,0.5)' },
+                        title: { display: true, text: 'ms', color: theme.tick, font: { size: 11 } },
+                        grid: { color: theme.grid },
+                        border: { display: false },
+                        ticks: { color: theme.tick, font: { size: 11 } },
                     }
                 },
                 plugins: {
-                    legend: { labels: { color: 'rgba(255,255,255,0.7)' } },
+                    legend: { labels: { color: theme.textSecondary, usePointStyle: true, pointStyle: 'circle', boxWidth: 8, boxHeight: 8, font: { size: 12 } } },
+                    tooltip: tooltip,
+                    decimation: { enabled: true, algorithm: 'lttb', samples: 150, threshold: 200 },
                 }
             }
         });
+        fitTimeAxis(chart);
+        chart.update('none');
     } catch (e) {
-        document.getElementById('noHistoryMsg').style.display = 'block';
+        showEmpty();
     }
-})();
+});
 </script>
 {% endblock %}

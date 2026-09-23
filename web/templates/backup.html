@@ -172,7 +172,7 @@
                     <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ s.size }}</td>
                     <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ s.modified }}</td>
                     <td style="padding:8px 16px;white-space:nowrap">
-                        <a href="/api/backup/download?path={{ s.path|urlencode }}" class="btn btn-sm btn-outline-primary" title="Download as .tar.gz">{{ icon('download') }}</a>
+                        <a href="/api/backup/download?path={{ s.path|urlencode }}" class="btn btn-sm btn-outline-primary" title="Download as .tar.gz" aria-label="Download as .tar.gz">{{ icon('download') }}</a>
                     </td>
                 </tr>
                 {% endfor %}
@@ -205,7 +205,7 @@
                         <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ f.size }}</td>
                         <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ f.modified }}</td>
                         <td style="padding:8px 16px;white-space:nowrap">
-                            <a href="/api/backup/download?path={{ f.path|urlencode }}" class="btn btn-sm btn-outline-primary" title="Download">{{ icon('download') }}</a>
+                            <a href="/api/backup/download?path={{ f.path|urlencode }}" class="btn btn-sm btn-outline-primary" title="Download" aria-label="Download">{{ icon('download') }}</a>
                         </td>
                     </tr>
                     {% endfor %}

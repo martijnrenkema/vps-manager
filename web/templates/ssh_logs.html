@@ -44,7 +44,7 @@
                             <td><code>{{ attacker.ip }}</code></td>
                             <td>{% if attacker.countryCode %}<span class="country-flag">{{ attacker.countryCode | country_flag }}</span> {{ attacker.country }}{% else %}<span style="color:var(--text-muted)">-</span>{% endif %}</td>
                             <td><span class="badge badge-{% if attacker.count > 100 %}red{% elif attacker.count > 20 %}yellow{% else %}blue{% endif %}">{{ attacker.count }}</span></td>
-                            <td><button class="btn btn-sm btn-red" onclick="banIp('{{ attacker.ip }}')" title="Ban this IP">{{ icon('shield') }} Ban</button></td>
+                            <td><button type="button" class="btn btn-sm btn-red" data-ip="{{ attacker.ip }}" onclick="banIp(this.dataset.ip, this)" title="Ban this IP">{{ icon('shield') }} Ban</button></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -203,23 +203,26 @@ async function viewFullLog(filter) {
     }
 }
 
-async function banIp(ip) {
-    if (!confirm('Ban IP ' + ip + ' via fail2ban + UFW?')) return;
-    try {
-        var res = await fetch('/firewall/ban', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({ip: ip, jail: 'sshd'})
+function banIp(ip, btn) {
+    showConfirm('Ban IP', 'Ban IP ' + ip + ' via fail2ban + UFW?', function() {
+        withBusy(btn, async function() {
+            try {
+                var res = await fetch('/firewall/ban', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ip: ip, jail: 'sshd'})
+                });
+                var data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || 'IP banned', 'success');
+                } else {
+                    showToast(data.message || 'Failed to ban IP', 'error');
+                }
+            } catch (e) {
+                showToast('Connection error', 'error');
+            }
         });
-        var data = await res.json();
-        if (res.ok) {
-            showToast(data.message || 'IP banned', 'success');
-        } else {
-            showToast(data.message || 'Failed to ban IP', 'error');
-        }
-    } catch (e) {
-        showToast('Connection error', 'error');
-    }
+    }, { confirmLabel: 'Ban' });
 }
 </script>
 {% endblock %}

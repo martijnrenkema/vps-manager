@@ -56,7 +56,7 @@
                         <td data-label="RSS"><span style="color:var(--text-secondary)">{{ (p.rss / 1024)|round(1) }} MB</span></td>
                         <td data-label="Command"><code style="color:var(--text-muted);max-width:400px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ p.command }}</code></td>
                         <td data-label="Actions">
-                            <button class="btn btn-sm btn-red" onclick="killProcess({{ p.pid|tojson }}, this)">Kill</button>
+                            <button type="button" class="btn btn-sm btn-red" data-pid="{{ p.pid }}" onclick="killProcess(this.dataset.pid, this)">Kill</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -74,7 +74,9 @@
 <script>
 function killProcess(pid, btn) {
     showConfirm('Kill Process', 'Are you sure you want to kill PID ' + pid + '?', async function() {
-        var data = await apiCall('/processes/kill/' + pid, 'POST');
+        var data = await withBusy(btn, function() {
+            return apiCall('/processes/kill/' + encodeURIComponent(pid), 'POST');
+        });
         if (!data) return;
         var row = btn ? btn.closest('tr') : null;
         if (row) {
