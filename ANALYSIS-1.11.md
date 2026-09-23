@@ -79,7 +79,63 @@ Zie de commit "Modernise UI". In het kort:
 - **Toegankelijkheid:** `:focus-visible`, `aria-label`s, `prefers-reduced-motion` en de iOS safe area.
 - **Reboot:** zat verstopt achter de "Online"-statuschip en is nu een expliciete actie.
 
-## 4. Nog open (aanbevelingen)
+## 4. Regressiecheck en tweede bugronde
+
+Na de eerste ronde is de volledige diff sinds v1.10.2 op regressies gecontroleerd. Dat gebeurde via code-review en met tests waarbij v1.10.2 en de nieuwe versie naast elkaar draaiden, plus een end-to-end browserrun van alle pagina's op desktop en mobiel. Daarna volgde een tweede bugronde over de **hele** codebase: backend in twee helften, frontend, scripts en CI.
+
+**Regressies (gevonden en opgelost):**
+- **Inloggen mislukte als er een andere tab openstond.** `login_required` wiste bij elke onbevoegde poll de sessiecookie, inclusief het CSRF-token en de half afgeronde 2FA. Nu wordt alleen een ingelogde sessie met een verouderde epoch opgeruimd.
+- **Het commandopalet voerde acties uit zonder bevestiging.** Palet + Enter voerde "Reboot" direct uit, omdat dezelfde Enter-toets ook het bevestigingsvenster bevestigde.
+- **Niet-UTF-8-output gaf een 500.** Dat gold voor `/ssh-logs`, de terminal, logs en configs. De command runner decodeert nu met `errors='replace'`.
+- **De fail2ban-whitelist negeerde `ignoreip` in een jail-sectie** zoals `[sshd]`.
+- **SMTP-certificaatcontrole blokkeerde e-mail-2FA** bij een self-signed mailserver. Er is nu een instelling "Verify TLS certificate" met een duidelijke foutmelding.
+- **Backup-downloads faalden bij 640-bestanden.** Er is nu een fallback via `sudo cp`/`sudo tar`.
+- **Auto-heal sloeg een eenmaal gestopte service voorgoed over.** De markering vervalt nu zodra de service weer actief is.
+- **`vps-backup.sh` faalde op hosts met alleen een MySQL-client**, en `nas-pull-backup.sh` meldde elke wekelijkse backup als te oud.
+- **Kleinere punten:**
+  - bulkacties toonden de foutreden niet meer;
+  - de update-fallback gaf "already running";
+  - enkele caches werden niet geïnvalideerd na een wijziging.
+
+**Tweede bugronde (opgelost):**
+- **Terminal: `sudo` gaf nog steeds een root-shell.** Voorbeelden: `apt-get -o APT::Update::Pre-Invoke`, `certbot --pre-hook`, `sort -o`, `curl -o`, `ip netns exec`, `crontab <bestand>`, `systemctl link`. Met sudo mogen nu alleen alleen-lezen commando's en subcommando's (bijv. `sudo cat`, `sudo systemctl status`). Opties die schrijven zijn geblokkeerd (`journalctl --vacuum`, `ss -K`, `systemctl -H`). De output is begrensd op 1 MB, en een timeout geeft een melding.
+- **Geheimen via de browser:**
+  - de file browser kon `data/.secret_key`, `config.json` en `.env` van de manager zelf downloaden en `app.py` overschrijven;
+  - het webhook-secret stond in de HTML van de instellingenpagina;
+  - een gewijzigde SMTP-host kreeg het opgeslagen wachtwoord mee.
+- **Self-update:** een mislukte copy of pip install wordt nu teruggerold naar de vorige commit.
+- **Dismiss van een alert** verborg die alert voorgoed; nu alleen zolang hij actief is.
+- **`apt upgrade` vanuit de UI:** nu non-interactief (conffile-vragen), met een ruime timeout en met de output bij fouten.
+- **Configvalidatie:**
+  - systeemmappen als backup-map worden geweigerd, inclusief submappen;
+  - paden worden genormaliseerd (`/etc/nginx/../../`);
+  - `monitor_interval` heeft een bovengrens (een te grote waarde crashte de monitor-thread);
+  - NaN wordt geweigerd;
+  - `config.json` met een verkeerde structuur crasht de app niet meer;
+  - schrijven gebeurt met `fsync`.
+- **PM2-monitoring werd stil blind** als `pm2 jlist` waarschuwingen vóór de JSON printte.
+- **Uptime-historie van verwijderde sites** gaf een permanente "Site is down"-alert; wildcard-servernamen telden als down.
+- **Certbot:** oude, dubbele lineages (`-0001`) gaven valse alerts, verlopen certificaten stonden op "0 dagen", en Renew gebruikte de verkeerde `--cert-name`.
+- **SSH-logs** toonden de eigen sudo-regels van de app als sshd-regels, en het fail2ban-actiefilter matchte elke regel.
+- **Login:** de rate limit werkt per IPv6-/64, een golf mislukte logins kan de audit trail niet meer wegdrukken, en de 2FA-resend respecteert de verloop- en epoch-checks.
+- **Robuustheid:**
+  - 500-fouten door onverwachte JSON-types (arrays, getallen) en superscript-cijfers in een pid;
+  - Caddy-logregels die geen object zijn;
+  - het webhook-secret met niet-ASCII tekens;
+  - `/reboot` controleert nu of het commando echt gelukt is;
+  - de PM2-daemon kan niet via Processes gekilld worden.
+- **Frontend:**
+  - de editors konden een bestand leeg of met de inhoud van een ander bestand overschrijven;
+  - de syntax-highlighting van de nginx/Caddy-editor was kapot;
+  - uploads konden in de verkeerde map belanden;
+  - de rechten-dialoog zette recursief 755 op alle bestanden;
+  - Stop had geen bevestiging, ook niet voor de webserver waar het panel zelf achter draait;
+  - `@daily`-cronjobs waren niet te bewerken;
+  - "Check for updates" in het palet meldde altijd "up to date".
+- **Scripts:** `vps-backup.sh` verwijderde de kopieën van `wp-config.php`/`.env` in dezelfde run waarin ze gemaakt werden (`cp -p` + mtime-retentie). Het webhook-secret staat niet meer op de curl-commandline.
+- **CI:** `bash -n a b c` controleerde alleen het eerste script. De release-workflow controleert nu ook de tag tegen `VERSION`.
+
+## 5. Nog open (aanbevelingen)
 
 1. **`app.py` opsplitsen** (nu ~8.700 regels) in blueprints: auth, monitor/notify, collectors, webserver, files, firewall. Dit kan incrementeel, per release één blueprint.
 2. **Tests.** Een eerste set pytest-tests voor de pure parsers: `_parse_crontab_lines`, `parse_ufw_rules`, `_find_default_ignoreip`, de nginx/Caddy-parsers, `validate_config` en `_version_tuple`. Voor de meeste bestaan in deze branch al fixture-achtige voorbeelden.

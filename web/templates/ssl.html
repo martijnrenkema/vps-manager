@@ -42,7 +42,7 @@
                         </td>
                         <td data-label="Action">
                             {% if web_server != 'caddy' %}
-                            <button type="button" class="btn btn-sm" data-domain="{{ cert.domain.split(' ')[0] }}" onclick="renewCert(this.dataset.domain, this)">Renew</button>
+                            <button type="button" class="btn btn-sm" data-domain="{{ cert.name or cert.domain.split(' ')[0] }}" onclick="renewCert(this.dataset.domain, this)">Renew</button>
                             {% else %}
                             <span style="font-size:12px;color:var(--text-muted)">Auto</span>
                             {% endif %}
@@ -121,7 +121,7 @@ async function refreshSslTable() {
                 : days > 7 ? '<span class="badge badge-yellow">Expiring soon</span>'
                 : '<span class="badge badge-red">Critical!</span>';
             const domain = cert.domain || '';
-            const firstDomain = domain.split(' ')[0];
+            const firstDomain = cert.name || domain.split(' ')[0];
             {% if web_server == 'caddy' %}
             const actionCol = '<span style="font-size:12px;color:var(--text-muted)">Auto</span>';
             {% else %}

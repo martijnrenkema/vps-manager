@@ -409,6 +409,13 @@ async function installAppUpdateFallback(installBtn, stepperEl) {
             setTimeout(function() { location.reload(); }, 8000);
             return;
         }
+        if (res.status === 409 && data.running) {
+            // De update draait al (gestart door de stream die wegviel):
+            // wachten tot de app herstart is en dan herladen.
+            showToast('The update is already running in the background. The page reloads when it is done.', 'info');
+            setTimeout(function() { location.reload(); }, 60000);
+            return;
+        }
         showToast(data.message || 'Update failed', 'error');
     } catch (err) {
         showToast('Update failed: ' + err, 'error');

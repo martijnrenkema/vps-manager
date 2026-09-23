@@ -37,6 +37,7 @@ def get_default_config():
             "username": "",
             "password": "",
             "encryption": "starttls",
+            "verify_tls": True,
             "from_name": "",
             "from_address": "",
         },
@@ -119,7 +120,17 @@ def load_config():
         try:
             with open(CONFIG_PATH, 'r') as f:
                 user_config = json.load(f)
-            return _deep_merge(defaults, user_config)
+            if not isinstance(user_config, dict):
+                raise json.JSONDecodeError('top level is not an object', '', 0)
+            merged = _deep_merge(defaults, user_config)
+            # Geldige JSON met een verkeerde structuur ({"auth": null}) liet de
+            # app anders bij het starten crashen op CONFIG['auth'].get(...).
+            for key, default in defaults.items():
+                if isinstance(default, dict) and not isinstance(merged.get(key), dict):
+                    logging.getLogger('vps-manager').error(
+                        "config.json: '%s' has an invalid type, using defaults for it", key)
+                    merged[key] = default
+            return merged
         except json.JSONDecodeError as e:
             # Stil terugvallen op defaults zou alle instellingen (incl. 2FA en
             # wachtwoord-hash) onaangekondigd "wissen". Bewaar het kapotte
@@ -146,6 +157,10 @@ def save_config(config):
         try:
             with os.fdopen(fd, 'w') as f:
                 json.dump(config, f, indent=2)
+                # Zonder fsync kan na een crash/stroomuitval een leeg bestand
+                # achterblijven: terugval op defaults = 2FA en wachtwoord kwijt.
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp_path, str(CONFIG_PATH))
         except BaseException:
             try:
