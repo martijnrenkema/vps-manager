@@ -23,6 +23,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The tag (without the leading v) must match web/VERSION, which the app
+      # reports and the updater compares against the latest release.
+      - name: Check tag matches web/VERSION
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="$(tr -d '[:space:]' < web/VERSION)"
+          tag_version="${TAG#v}"
+          if [ "$tag_version" != "$version" ]; then
+            echo "::error file=web/VERSION::Tag '$TAG' does not match web/VERSION ('$version'). Bump web/VERSION or fix the tag."
+            exit 1
+          fi
+          echo "Tag $TAG matches web/VERSION $version"
+
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:

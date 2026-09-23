@@ -19,7 +19,7 @@
                         {% for rule in data.ufw_rules %}
                         <tr>
                             <td data-label="#">{{ rule.number }}</td>
-                            <td data-label="To"><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</td>
+                            <td data-label="To"><span><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</span></td>
                             <td data-label="Action">
                                 {% if rule.action == 'ALLOW' %}
                                     <span class="badge badge-green">{{ rule.action }}</span>
@@ -50,11 +50,11 @@
                 <div style="font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px">Add rule</div>
                 <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
                     <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Port</label>
+                        <label for="ufwPort" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Port</label>
                         <input type="number" id="ufwPort" class="form-control" placeholder="80" min="1" max="65535" style="width:90px">
                     </div>
                     <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Protocol</label>
+                        <label for="ufwProto" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Protocol</label>
                         <select id="ufwProto" class="form-control" style="width:90px">
                             <option value="tcp">TCP</option>
                             <option value="udp">UDP</option>
@@ -62,18 +62,18 @@
                         </select>
                     </div>
                     <div class="form-group" style="margin-bottom:0;min-width:150px;flex:1">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">From IP (blank = Anywhere)</label>
+                        <label for="ufwFrom" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">From IP (blank = Anywhere)</label>
                         <input type="text" id="ufwFrom" class="form-control" placeholder="Anywhere">
                     </div>
                     <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Action</label>
+                        <label for="ufwAction" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Action</label>
                         <select id="ufwAction" class="form-control" style="width:90px">
                             <option value="allow">Allow</option>
                             <option value="deny">Deny</option>
                         </select>
                     </div>
                     <div class="form-group" style="margin-bottom:0;min-width:120px;flex:1">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Comment (optional)</label>
+                        <label for="ufwComment" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Comment (optional)</label>
                         <input type="text" id="ufwComment" class="form-control" placeholder="e.g. Nginx reverse proxy">
                     </div>
                     <button type="button" class="btn btn-green" onclick="addUfwRule(this)">+ Add</button>
@@ -89,27 +89,27 @@
         <div class="card-body">
             {% if data.jails %}
             <div class="table-wrap">
-                <table>
+                <table class="table-responsive-cards">
                     <thead><tr><th>Jail</th><th>Status</th><th>Currently Banned</th><th>Total Banned</th></tr></thead>
                     <tbody>
                         {% for jail in data.jails %}
                         <tr>
-                            <td><strong>{{ jail.name }}</strong></td>
-                            <td>
+                            <td data-label="Jail"><strong>{{ jail.name }}</strong></td>
+                            <td data-label="Status">
                                 {% if jail.status == 'active' %}
                                     <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                                 {% else %}
                                     <span class="badge badge-red">{{ jail.status }}</span>
                                 {% endif %}
                             </td>
-                            <td>
+                            <td data-label="Currently Banned">
                                 {% if jail.banned > 0 %}
                                     <span class="badge badge-yellow">{{ jail.banned }}</span>
                                 {% else %}
                                     <span style="color:var(--text-muted)">0</span>
                                 {% endif %}
                             </td>
-                            <td style="color:var(--text-muted)">{{ jail.total_banned }}</td>
+                            <td data-label="Total Banned" style="color:var(--text-muted)">{{ jail.total_banned }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -235,11 +235,11 @@
     <div class="card-body">
         <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
             <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
-                <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">IP Address</label>
+                <label for="banIpInput" style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">IP Address</label>
                 <input type="text" id="banIpInput" class="form-control" placeholder="e.g. 1.2.3.4">
             </div>
             <div class="form-group" style="min-width:150px;margin-bottom:0">
-                <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Jail</label>
+                <label for="banJailSelect" style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Jail</label>
                 <select id="banJailSelect" class="form-control">
                     {% if data.jails %}
                         {% for jail in data.jails %}
@@ -257,11 +257,11 @@
 
 <!-- Currently Banned IPs (structured) -->
 <div class="card" style="margin-top:16px">
-    <div class="card-header">
+    <div class="card-header" style="flex-wrap:wrap">
         {{ icon('shield') }} Currently Banned IPs <span id="bannedCount" style="color:var(--text-muted);font-weight:normal"></span>
-        <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
-            <input type="text" id="bannedSearch" class="form-control" placeholder="Search IP, jail, country..." style="width:180px;height:30px;font-size:12px" oninput="bannedPage=1;renderBannedIps()">
-            <select id="bannedPerPageSelect" class="form-control" style="width:auto;height:30px;font-size:12px;padding:2px 8px" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
+        <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex:1 1 240px;justify-content:flex-end;min-width:0">
+            <input type="text" id="bannedSearch" class="form-control" placeholder="Search IP, jail, country..." aria-label="Search banned IPs" style="flex:1 1 120px;min-width:0;max-width:180px;height:30px;font-size:12px" oninput="bannedPage=1;renderBannedIps()">
+            <select id="bannedPerPageSelect" class="form-control" aria-label="Banned IPs per page" style="width:auto;height:30px;font-size:12px;padding:2px 8px" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
                 <option value="25">25</option>
                 <option value="50">50</option>
                 <option value="100">100</option>
@@ -289,11 +289,11 @@
         </div>
         <div style="display:flex;gap:12px;align-items:flex-end;margin-top:16px;flex-wrap:wrap">
             <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
-                <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Add IP / CIDR</label>
-                <input type="text" id="whitelistInput" class="form-control" placeholder="e.g. 192.168.1.0/24">
+                <label for="whitelistInput" style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Add IP / CIDR / hostname</label>
+                <input type="text" id="whitelistInput" class="form-control" placeholder="e.g. 192.168.1.0/24" onkeydown="if (event.key === 'Enter') { event.preventDefault(); addWhitelistIp(); }">
             </div>
             <button type="button" class="btn" onclick="addWhitelistIp()">+ Add</button>
-            <button class="btn btn-green" onclick="saveWhitelist()" id="saveWhitelistBtn">{{ icon('save') }} Save</button>
+            <button type="button" class="btn btn-green" onclick="saveWhitelist()" id="saveWhitelistBtn" disabled title="Available once the current whitelist has loaded">{{ icon('save') }} Save</button>
         </div>
     </div>
 </div>
@@ -389,7 +389,7 @@
                 const v6 = r.v6 ? ' <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>' : '';
                 const comment = r.comment ? `<span style="color:var(--text-muted);font-size:12px">${escHtml(r.comment)}</span>` : '';
                 const num = escHtml(String(r.number));
-                return `<tr><td data-label="#">${num}</td><td data-label="To"><code>${escHtml(r.to)}</code>${v6}</td><td data-label="Action"><span class="${badge}">${escHtml(r.action)}</span></td><td data-label="From">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
+                return `<tr><td data-label="#">${num}</td><td data-label="To"><span><code>${escHtml(r.to)}</code>${v6}</span></td><td data-label="Action"><span class="${badge}">${escHtml(r.action)}</span></td><td data-label="From">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
                     `<td data-label=""><button type="button" class="btn btn-sm btn-red" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
             }).join('');
         } catch (e) {
@@ -540,7 +540,7 @@
         const start = (bannedPage - 1) * bannedPerPage;
         const pageItems = filtered.slice(start, start + bannedPerPage);
 
-        let html = '<div class="table-wrap"><table><thead><tr><th>IP Address</th><th>Jail</th><th>Reason</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
+        let html = '<div class="table-wrap"><table class="table-responsive-cards"><thead><tr><th>IP Address</th><th>Jail</th><th>Reason</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
         pageItems.forEach(entry => {
             const duration = entry.duration != null ? formatBanDuration(entry.duration) : '-';
             const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
@@ -549,13 +549,13 @@
             const countryTitle = entry.country ? ` title="${escHtml(entry.country)}"` : '';
             const reason = jailReasons[entry.jail] || entry.jail;
             html += `<tr>
-                <td><span${countryTitle}>${flag}</span><code>${escHtml(entry.ip)}</code>${countBadge}</td>
-                <td><span class="badge badge-yellow" style="font-size:10px">${escHtml(entry.jail)}</span></td>
-                <td style="font-size:12px;color:var(--text-muted)">${escHtml(reason)}</td>
-                <td style="font-size:12px;color:var(--text-muted)">${escHtml(entry.banned_at)}</td>
-                <td style="font-size:12px">${duration}</td>
-                <td>${remaining}</td>
-                <td><button type="button" class="btn btn-sm btn-green" data-ip="${escHtml(entry.ip)}" data-jail="${escHtml(entry.jail)}" onclick="unbanIp(this.dataset.ip, this.dataset.jail, this)">Unban</button></td>
+                <td data-label="IP Address"><span><span${countryTitle}>${flag}</span><code>${escHtml(entry.ip)}</code>${countBadge}</span></td>
+                <td data-label="Jail"><span class="badge badge-yellow" style="font-size:10px">${escHtml(entry.jail)}</span></td>
+                <td data-label="Reason" style="font-size:12px;color:var(--text-muted)">${escHtml(reason)}</td>
+                <td data-label="Banned at" style="font-size:12px;color:var(--text-muted)">${escHtml(entry.banned_at)}</td>
+                <td data-label="Duration" style="font-size:12px">${duration}</td>
+                <td data-label="Remaining">${remaining}</td>
+                <td data-label=""><button type="button" class="btn btn-sm btn-green" data-ip="${escHtml(entry.ip)}" data-jail="${escHtml(entry.jail)}" onclick="unbanIp(this.dataset.ip, this.dataset.jail, this)">Unban</button></td>
             </tr>`;
         });
         html += '</tbody></table></div>';
@@ -597,17 +597,38 @@
     }
 
     // --- Whitelist ---
+    // Save stays disabled until the current list was read successfully:
+    // saving an empty/unknown list would wipe the real ignoreip entries.
+    let whitelistLoaded = false;
+
+    function setWhitelistLoaded(ok) {
+        whitelistLoaded = ok;
+        const btn = document.getElementById('saveWhitelistBtn');
+        btn.disabled = !ok;
+        btn.title = ok ? '' : 'Available once the current whitelist has loaded';
+    }
+
     async function loadWhitelist() {
         const container = document.getElementById('whitelistContainer');
+        setWhitelistLoaded(false);
+        let msg = 'Failed to load whitelist';
         try {
             const res = await fetch('/firewall/whitelist');
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
-            whitelistIps = data.ips || [];
-            renderWhitelist();
+            const data = await res.json().catch(() => null);
+            if (res.ok && data && data.status !== 'error' && Array.isArray(data.ips)) {
+                whitelistIps = data.ips;
+                setWhitelistLoaded(true);
+                renderWhitelist();
+                return;
+            }
+            if (data && data.message) msg = data.message;
+            else msg += ' (HTTP ' + res.status + ')';
         } catch (e) {
-            container.innerHTML = '<div class="empty-state">Failed to load whitelist</div>';
+            msg = 'Failed to load whitelist: connection error';
         }
+        container.innerHTML = '<div class="empty-state" role="alert" style="color:var(--red)">' + escHtml(msg) +
+            '<div style="margin-top:10px;color:var(--text-muted)">Saving is disabled so the existing list is not overwritten. ' +
+            '<button type="button" class="btn btn-sm" onclick="loadWhitelist()">Retry</button></div></div>';
     }
 
     function renderWhitelist() {
@@ -630,12 +651,14 @@
     function addWhitelistIp() {
         const input = document.getElementById('whitelistInput');
         const val = input.value.trim();
-        if (!val) { showToast('Enter an IP or CIDR', 'error'); return; }
-        // Basic validation: IPv4(/CIDR) or IPv6(/CIDR); de server valideert strikt
+        if (!val) { showToast('Enter an IP, CIDR or hostname', 'error'); return; }
+        // Basic validation: IPv4(/CIDR), IPv6(/CIDR) or a hostname (fail2ban
+        // accepts those in ignoreip); the server validates strictly.
         const ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(\/\d{1,2})?$/;
         const ipv6 = /^[0-9a-fA-F:]{2,39}(\/\d{1,3})?$/;
-        if (!ipv4.test(val) && !(val.includes(':') && ipv6.test(val))) {
-            showToast('Invalid IP or CIDR notation', 'error'); return;
+        const hostname = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+        if (!ipv4.test(val) && !(val.includes(':') && ipv6.test(val)) && !(/[a-zA-Z]/.test(val) && hostname.test(val))) {
+            showToast('Invalid IP, CIDR or hostname', 'error'); return;
         }
         if (whitelistIps.includes(val)) {
             showToast('IP already in whitelist', 'error'); return;
@@ -650,7 +673,22 @@
         renderWhitelist();
     }
 
-    async function saveWhitelist() {
+    function saveWhitelist() {
+        if (!whitelistLoaded) return;
+        const hasV4Loopback = whitelistIps.some(ip => /^127\./.test(ip) || ip === 'localhost');
+        const hasV6Loopback = whitelistIps.some(ip => ip === '::1' || ip === '::1/128');
+        if (!hasV4Loopback || !hasV6Loopback) {
+            const missing = [!hasV4Loopback ? '127.0.0.1/8' : null, !hasV6Loopback ? '::1' : null].filter(Boolean).join(' and ');
+            showConfirm('Save whitelist without localhost?',
+                'The whitelist does not contain ' + missing + '. Without the loopback addresses fail2ban can ban local services ' +
+                '(health checks, the panel itself, mail) that connect from this server. Save anyway?',
+                doSaveWhitelist, { destructive: true, confirmLabel: 'Save anyway' });
+            return;
+        }
+        doSaveWhitelist();
+    }
+
+    async function doSaveWhitelist() {
         const btn = document.getElementById('saveWhitelistBtn');
         btn.disabled = true;
         try {
@@ -668,7 +706,7 @@
         } catch (e) {
             showToast('Connection error', 'error');
         }
-        btn.disabled = false;
+        btn.disabled = !whitelistLoaded;
     }
 
 

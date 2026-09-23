@@ -33,7 +33,9 @@
 
 {% block scripts %}
 <script>
+let dnsLookupSeq = 0;
 async function lookupDns() {
+    const seq = ++dnsLookupSeq; // only the newest lookup may render
     const domain = document.getElementById('domainSelect').value;
     const results = document.getElementById('dnsResults');
     const loading = document.getElementById('dnsLoading');
@@ -44,6 +46,7 @@ async function lookupDns() {
     try {
         const res = await fetch('/api/dns/lookup?domain=' + encodeURIComponent(domain));
         const data = await res.json();
+        if (seq !== dnsLookupSeq) return;
         loading.style.display = 'none';
         results.style.display = 'block';
 
@@ -67,6 +70,7 @@ async function lookupDns() {
         html += '</tbody></table></div>';
         results.innerHTML = html;
     } catch (e) {
+        if (seq !== dnsLookupSeq) return;
         loading.style.display = 'none';
         results.style.display = 'block';
         results.innerHTML = '<div class="empty-state">Failed to load DNS records.</div>';

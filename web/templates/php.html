@@ -9,7 +9,7 @@
     <div class="card-body">
         {% if versions %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Version</th>
@@ -22,8 +22,8 @@
                 <tbody>
                     {% for v in versions %}
                     <tr>
-                        <td><strong>PHP {{ v.version }}</strong></td>
-                        <td data-label="Status">
+                        <td data-label="Version"><strong>PHP {{ v.version }}</strong></td>
+                        <td data-label="FPM Status">
                             {% if v.fpm_status == 'active' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                             {% elif v.fpm_status == 'inactive' %}
@@ -32,9 +32,9 @@
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ v.fpm_status }}</span>
                             {% endif %}
                         </td>
-                        <td><code>{{ v.pm }}</code></td>
-                        <td>{{ v.max_children }}</td>
-                        <td>
+                        <td data-label="Process Manager"><code>{{ v.pm }}</code></td>
+                        <td data-label="Max Children">{{ v.max_children }}</td>
+                        <td data-label="Actions">
                             <button type="button" class="btn btn-sm btn-yellow" data-version="{{ v.version }}" onclick="restartPhp(this.dataset.version, this)">Restart FPM</button>
                         </td>
                     </tr>
@@ -71,7 +71,7 @@
     <div class="card-body">
         {% if site_mapping %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Site Config</th>
@@ -82,9 +82,9 @@
                 <tbody>
                     {% for s in site_mapping %}
                     <tr>
-                        <td><strong>{{ s.config }}</strong></td>
-                        <td><span class="badge badge-green">PHP {{ s.php_version }}</span></td>
-                        <td><code style="color:var(--text-muted)">{{ s.socket }}</code></td>
+                        <td data-label="Site Config"><strong>{{ s.config }}</strong></td>
+                        <td data-label="PHP Version"><span class="badge badge-green">PHP {{ s.php_version }}</span></td>
+                        <td data-label="Socket Path"><code style="color:var(--text-muted);word-break:break-all">{{ s.socket }}</code></td>
                     </tr>
                     {% endfor %}
                 </tbody>

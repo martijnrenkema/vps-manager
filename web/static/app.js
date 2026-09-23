@@ -112,6 +112,51 @@ function escHtml(s) {
         .replace(/'/g, '&#39;');
 }
 
+/* Parse a server timestamp. ISO 8601 with an offset/Z ("...+02:00") is an
+ * absolute time; without one (older log entries) it is the server's local wall
+ * clock and is shown as-is, i.e. interpreted as local. Accepts a space instead
+ * of 'T' and any number of fraction digits (Python emits microseconds, which
+ * Date.parse does not handle consistently). Returns a Date (maybe invalid). */
+function parseServerTime(value) {
+    if (value == null || value === '') return new Date(NaN);
+    if (typeof value === 'number') return new Date(value);
+    const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?)?\s*(Z|[+-]\d{2}(?::?\d{2})?)?$/i.exec(String(value).trim());
+    if (!m) return new Date(value);
+    const ms = m[7] ? Math.round(Number('0.' + m[7]) * 1000) : 0;
+    const parts = [+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0), ms];
+    if (!m[8]) return new Date(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]);
+    let offsetMin = 0;
+    if (m[8].toUpperCase() !== 'Z') {
+        const o = /^([+-])(\d{2}):?(\d{2})?$/.exec(m[8]);
+        offsetMin = (o[1] === '-' ? -1 : 1) * (Number(o[2]) * 60 + Number(o[3] || 0));
+    }
+    return new Date(Date.UTC(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]) - offsetMin * 60000);
+}
+
+/* Single-pass syntax highlighter for the config editors' overlay.
+ * `re` is a global regex whose alternatives are capture groups; classes[i] is
+ * the CSS class for group i+1. Every character is emitted exactly once and
+ * escaped, so later rules can never match inside markup inserted by earlier
+ * ones (the old chained .replace() calls wrapped the quotes of their own
+ * class="..." attributes as strings). Returns HTML. */
+function highlightTokens(code, re, classes) {
+    let out = '';
+    let last = 0;
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(code)) !== null) {
+        if (m[0] === '') { re.lastIndex++; continue; }
+        let g = 0;
+        while (g < classes.length && m[g + 1] === undefined) g++;
+        out += escHtml(code.slice(last, m.index));
+        out += g < classes.length
+            ? '<span class="' + classes[g] + '">' + escHtml(m[0]) + '</span>'
+            : escHtml(m[0]);
+        last = re.lastIndex;
+    }
+    return out + escHtml(code.slice(last));
+}
+
 /* ------------------------------------------------------------------------ *
  * Toasts
  * showToast(message, type = 'success', opts = {duration, action:{label,onClick}})
@@ -188,9 +233,10 @@ function showToast(message, type, opts) {
 }
 
 /* ------------------------------------------------------------------------ *
- * apiCall(url, method = 'GET', body = null, opts = {silent})
+ * apiCall(url, method = 'GET', body = null, opts = {silent, quietSuccess, onError})
  * Resolves to the parsed JSON on real success (HTTP 2xx and status !== 'error')
- * and to null on any failure. Shows a toast either way unless opts.silent.
+ * and to null on any failure. Shows a toast either way unless opts.silent
+ * (quietSuccess: only error toasts, for callers that show their own success).
  * Callers can therefore safely do:  const data = await apiCall(...); if (!data) return;
  * ------------------------------------------------------------------------ */
 async function apiCall(url, method, body, opts) {
@@ -224,7 +270,7 @@ async function apiCall(url, method, body, opts) {
         if (opts.onError) opts.onError(res, data);
         return null;
     }
-    if (!opts.silent) showToast(data.message || 'OK', 'success');
+    if (!opts.silent && !opts.quietSuccess) showToast(data.message || 'OK', 'success');
     return data;
 }
 
@@ -292,12 +338,24 @@ function startVisiblePolling(fn, intervalMs, opts) {
     };
 }
 
-/* Bulk helper: runs apiCall silently for each item, returns {ok:[], failed:[]} */
+/* Bulk helper: runs apiCall silently for each item.
+ * Returns {ok:[], failed:[], errors:{item: server message}}. */
 async function runBulkRequests(items, urlFor) {
-    const result = { ok: [], failed: [] };
+    const result = { ok: [], failed: [], errors: {} };
     for (let i = 0; i < items.length; i++) {
-        const data = await apiCall(urlFor(items[i]), 'POST', null, { silent: true });
-        (data ? result.ok : result.failed).push(items[i]);
+        let reason = '';
+        const data = await apiCall(urlFor(items[i]), 'POST', null, {
+            silent: true,
+            onError: function (res, body) {
+                reason = (body && body.message) || (res ? 'HTTP ' + res.status : '');
+            },
+        });
+        if (data) {
+            result.ok.push(items[i]);
+        } else {
+            result.failed.push(items[i]);
+            result.errors[items[i]] = reason || 'connection error';
+        }
     }
     return result;
 }
@@ -307,7 +365,9 @@ function bulkSummaryToast(result, verb, noun) {
     if (!result.failed.length) {
         showToast(result.ok.length + ' ' + noun + ' ' + verb, 'success');
     } else {
-        const msg = result.ok.length + ' of ' + total + ' ' + noun + ' ' + verb + '\nFailed: ' + result.failed.join(', ');
+        const errors = result.errors || {};
+        const failed = result.failed.map(function (n) { return errors[n] ? n + ' (' + errors[n] + ')' : n; });
+        const msg = result.ok.length + ' of ' + total + ' ' + noun + ' ' + verb + '\nFailed: ' + failed.join(', ');
         showToast(msg, result.ok.length ? 'warning' : 'error');
     }
 }
@@ -411,7 +471,31 @@ function baseTooltip(theme) {
 /* ------------------------------------------------------------------------ *
  * PM2 actions / logs modal
  * ------------------------------------------------------------------------ */
-async function pm2Action(action, name, btn) {
+/* Stopping these takes the panel itself down (it is served through the web
+ * server / runs as this PM2 process or systemd unit). */
+function isPanelCritical(name) {
+    const n = String(name || '').replace(/\.service$/, '').toLowerCase();
+    return n === 'nginx' || n === 'caddy' || n === 'vps-manager';
+}
+
+function stopConfirmText(kind, names) {
+    names = [].concat(names);
+    const critical = names.filter(isPanelCritical);
+    let msg = 'Stop ' + (names.length === 1 ? kind + ' "' + names[0] + '"' : names.length + ' ' + kind + 's:\n' + names.join(', ')) + '?';
+    if (critical.length) {
+        msg += '\n\nWARNING: ' + critical.join(', ') + (critical.length === 1 ? ' serves' : ' serve') +
+            ' this control panel. After stopping it the panel becomes unreachable and cannot start it again; you will need SSH access to recover.';
+    }
+    return msg;
+}
+
+async function pm2Action(action, name, btn, confirmed) {
+    if (action === 'stop' && !confirmed) {
+        showConfirm('Stop process', stopConfirmText('process', name), function () {
+            pm2Action(action, name, btn, true);
+        }, { destructive: true, confirmLabel: isPanelCritical(name) ? 'Stop anyway' : 'Stop' });
+        return;
+    }
     const data = await withBusy(btn, function () {
         return apiCall('/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
     });
@@ -432,8 +516,13 @@ async function pm2Action(action, name, btn) {
 }
 
 let _lastFocusBeforeModal = null;
+// Request counter for the shared log modal (PM2 logs, per-site web logs):
+// only the newest request may write into it, so a slow earlier response can't
+// replace the log that was opened later.
+let _logModalSeq = 0;
 
 async function showLogs(name) {
+    const seq = ++_logModalSeq;
     const modal = document.getElementById('logModal');
     _lastFocusBeforeModal = document.activeElement;
     modal.style.display = 'flex';
@@ -445,8 +534,10 @@ async function showLogs(name) {
     try {
         const res = await fetch('/pm2/logs/' + encodeURIComponent(name));
         const data = await res.json();
+        if (seq !== _logModalSeq) return;
         content.textContent = res.ok ? (data.logs || 'No logs') : (data.message || 'Failed to load logs');
     } catch (e) {
+        if (seq !== _logModalSeq) return;
         content.textContent = 'Failed to load logs';
     }
 }
@@ -456,6 +547,7 @@ function closeLogModal() {
     if (!modal) return;
     const wasOpen = modal.style.display === 'flex';
     modal.style.display = 'none';
+    _logModalSeq++; // drop responses still in flight
     if (wasOpen && _lastFocusBeforeModal && _lastFocusBeforeModal.focus) {
         try { _lastFocusBeforeModal.focus(); } catch (e) { /* element gone */ }
     }
@@ -470,6 +562,11 @@ function closeLogModal() {
  * ------------------------------------------------------------------------ */
 let confirmCallback = null;
 let _confirmReturnFocus = null;
+// Enter only confirms when the key was pressed after the dialog opened: the
+// keydown that opened it (e.g. Enter in the command palette) or a held-down,
+// auto-repeating Enter must never also confirm it.
+let _confirmArmed = false;
+let _confirmArmTimer = null;
 const DESTRUCTIVE_RE = /\b(reboot|delete|kill|stop|clear|remove|ban|disable|drop|wipe|uninstall|shutdown|unban)\b/i;
 
 function showConfirm(title, message, callback, opts) {
@@ -488,6 +585,10 @@ function showConfirm(title, message, callback, opts) {
     confirmCallback = callback;
     _confirmReturnFocus = document.activeElement;
     overlay.classList.add('active');
+    _confirmArmed = false;
+    clearTimeout(_confirmArmTimer);
+    // Armed in a later task, i.e. after the current event finished dispatching
+    _confirmArmTimer = setTimeout(function () { _confirmArmed = true; }, 0);
     setTimeout(function () { btn.focus(); }, 0);
 }
 
@@ -496,6 +597,8 @@ function closeConfirm() {
     const wasOpen = overlay.classList.contains('active');
     overlay.classList.remove('active');
     confirmCallback = null;
+    _confirmArmed = false;
+    clearTimeout(_confirmArmTimer);
     if (wasOpen && _confirmReturnFocus && _confirmReturnFocus.focus && document.contains(_confirmReturnFocus)) {
         try { _confirmReturnFocus.focus(); } catch (e) { /* ignore */ }
     }
@@ -567,19 +670,25 @@ function toggleSidebar(e) {
     if (e) e.stopPropagation();
     const sidebar = document.getElementById('sidebar');
     const open = !sidebar.classList.contains('open');
-    sidebar.classList.toggle('open', open);
+    if (!open) { closeSidebar(); return; }
+    sidebar.classList.add('open');
     document.querySelectorAll('[aria-controls="sidebar"]').forEach(function (b) {
-        b.setAttribute('aria-expanded', String(open));
+        b.setAttribute('aria-expanded', 'true');
     });
 }
 
 function closeSidebar() {
     const sidebar = document.getElementById('sidebar');
     if (!sidebar || !sidebar.classList.contains('open')) return;
+    const hadFocus = sidebar.contains(document.activeElement);
     sidebar.classList.remove('open');
+    let toggle = null;
     document.querySelectorAll('[aria-controls="sidebar"]').forEach(function (b) {
         b.setAttribute('aria-expanded', 'false');
+        if (!toggle && b.offsetParent !== null) toggle = b;
     });
+    // On mobile the closed sidebar is hidden: don't leave focus inside it
+    if (hadFocus && toggle) toggle.focus();
 }
 
 /* ------------------------------------------------------------------------ *
@@ -633,8 +742,8 @@ async function loadNotifHistory() {
             return;
         }
         body.innerHTML = items.slice(0, 50).map(function (item, idx) {
-            const d = new Date(item.timestamp);
-            const time = d.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+            const d = parseServerTime(item.timestamp);
+            const time = isNaN(d) ? String(item.timestamp || '') : d.toLocaleDateString('nl-NL', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
             const cat = escNotif(item.category);
             const color = NOTIF_CATEGORY_COLORS[item.category] || 'var(--text-muted)';
             const unread = item.read ? '' : ' notif-item-unread';
@@ -803,8 +912,8 @@ async function cmdCheckUpdates() {
             if (!isAuthOrCsrfFailure(res, data)) showToast((data && data.message) || 'Update check failed', 'error');
             return;
         }
-        if (data.available) {
-            showToast('Update available: ' + data.latest, 'success');
+        if (data.update_available) {
+            showToast('Update available: v' + data.latest_version, 'success');
             window.location.href = '/updates';
         } else {
             showToast('Already up to date', 'success');
@@ -969,22 +1078,33 @@ function navigateCmd(idx) {
     const item = cmdFiltered[idx];
     if (!item) return;
     closeCmdPalette();
-    if (item.action) item.action();
+    // Run the action in a later task: the Enter keydown that chose it must be
+    // completely finished before an action opens a confirm dialog, or that same
+    // keydown would reach the dialog's Enter handler and confirm it at once.
+    if (item.action) setTimeout(item.action, 0);
     else if (item.url) window.location.href = item.url;
 }
 
 /* ------------------------------------------------------------------------ *
  * Navigation progress bar (internal link clicks + form submits)
  * ------------------------------------------------------------------------ */
+let _navProgressTimer = null;
+
 function startNavProgress() {
     const bar = document.getElementById('navProgress');
     if (!bar) return;
     bar.classList.remove('done');
     void bar.offsetWidth; // restart the transition
     bar.classList.add('active');
+    // Safety net: if we are still on this page long after the click, the
+    // navigation did not happen (cancelled "leave page?" prompt, a download,
+    // a handler that stopped it) - don't leave the bar running forever.
+    clearTimeout(_navProgressTimer);
+    _navProgressTimer = setTimeout(stopNavProgress, 15000);
 }
 
 function stopNavProgress() {
+    clearTimeout(_navProgressTimer);
     const bar = document.getElementById('navProgress');
     if (!bar || !bar.classList.contains('active')) return;
     bar.classList.remove('active');
@@ -1071,6 +1191,8 @@ function isInternalNavigation(a, e) {
 
     // Keyboard handling
     document.addEventListener('keydown', function (e) {
+        const t = e.target;
+        const inPalette = !!(t && t.closest && t.closest('#cmdPalette'));
         if (isConfirmOpen()) {
             if (e.key === 'Escape') {
                 e.preventDefault();
@@ -1079,9 +1201,14 @@ function isInternalNavigation(a, e) {
             }
             if (e.key === 'Enter') {
                 // Enter on the Cancel button cancels (native click); anywhere else confirms.
-                const t = e.target;
                 if (t && t.closest && t.closest('#confirmOverlay') && t.tagName === 'BUTTON' && t.id !== 'confirmBtn') return;
+                // Only a fresh key press confirms: not the keydown that opened
+                // the dialog (already handled by e.g. the palette input), not
+                // auto-repeat of a held key. preventDefault also stops an ignored
+                // Enter from natively clicking the focused Confirm button.
+                const handledElsewhere = e.defaultPrevented;
                 e.preventDefault();
+                if (handledElsewhere || !_confirmArmed || e.repeat || inPalette) return;
                 executeConfirm();
                 return;
             }
@@ -1115,6 +1242,9 @@ function isInternalNavigation(a, e) {
         }
         if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
             e.preventDefault();
+            // Not on top of an open confirm dialog (it would steal focus and
+            // leave the dialog waiting for a stray Enter).
+            if (isConfirmOpen() || e.repeat) return;
             openCmdPalette();
         }
     });
@@ -1146,6 +1276,17 @@ function isInternalNavigation(a, e) {
         startNavProgress();
     });
     window.addEventListener('pageshow', stopNavProgress);
+    // Pages with unsaved changes (config editors) ask "leave this page?" in a
+    // beforeunload handler. Our listener is added after theirs (on load) so it
+    // runs last: when a prompt is going to be shown and the user cancels it,
+    // script execution resumes on this page and the timer below hides the bar.
+    // (If the user leaves, the page unloads before the timer can matter.)
+    window.addEventListener('load', function () {
+        window.addEventListener('beforeunload', function (e) {
+            const prompting = e.defaultPrevented || (typeof e.returnValue === 'string' && e.returnValue !== '');
+            if (prompting) setTimeout(stopNavProgress, 200);
+        });
+    });
     window.addEventListener('pagehide', function () { setTimeout(stopNavProgress, 0); });
 
     // Badge: cheap unread count on load, refreshed when the tab regains focus.

@@ -48,7 +48,7 @@
                     {{ icon('edit') }} <span id="editorTitle">Select a config file</span>
                 </div>
                 <div class="btn-group" id="editorActions" style="display:none;flex-wrap:wrap;gap:6px">
-                    <button class="btn btn-sm btn-green" onclick="saveConfig()">{{ icon('save') }} Save</button>
+                    <button class="btn btn-sm btn-green" id="btnSave" onclick="saveConfig()" disabled>{{ icon('save') }} Save</button>
                     <button class="btn btn-sm" onclick="validateConfig()">{{ icon('check') }} Validate</button>
                     <button class="btn btn-sm btn-green" id="btnEnable" onclick="toggleSite('enable')" style="display:none">{{ icon('toggle-right') }} Enable</button>
                     <button class="btn btn-sm btn-yellow" id="btnDisable" onclick="toggleSite('disable')" style="display:none">{{ icon('toggle-left') }} Disable</button>
@@ -59,7 +59,7 @@
                     <div class="editor-line-numbers" id="lineNumbers"></div>
                     <div class="nginx-editor-wrap">
                         <pre class="highlight-overlay" id="highlightOverlay"><code id="highlightCode"></code></pre>
-                        <textarea class="editor-textarea" id="editorTextarea" placeholder="Select a config file from the sidebar..." spellcheck="false"></textarea>
+                        <textarea class="editor-textarea" id="editorTextarea" placeholder="Select a config file from the sidebar..." spellcheck="false" readonly aria-label="Config file contents"></textarea>
                     </div>
                 </div>
                 <div class="editor-statusbar" id="editorStatusbar">
@@ -90,6 +90,19 @@
 let currentConfigName = '';
 let currentConfigType = '';
 let configChanged = false;
+// configLoaded: the editor holds the server's content of currentConfigName.
+// While a file is loading (or failed to load) the editor is empty + read-only
+// and Save is disabled, so a failed or slow read can never be saved over the
+// file. configLoadSeq drops responses of loads that were superseded.
+let configLoaded = false;
+let configLoadSeq = 0;
+
+function setEditorLoaded(ok) {
+    configLoaded = ok;
+    const ta = document.getElementById('editorTextarea');
+    ta.readOnly = !ok;
+    document.getElementById('btnSave').disabled = !ok;
+}
 
 function loadConfig(name, type) {
     if (configChanged && !confirm('You have unsaved changes. Discard them?')) return;
@@ -101,6 +114,13 @@ function loadConfig(name, type) {
     currentConfigName = name;
     currentConfigType = type;
     configChanged = false;
+    const seq = ++configLoadSeq;
+    const ta = document.getElementById('editorTextarea');
+    ta.value = '';
+    setEditorLoaded(false);
+    updateLineNumbers();
+    document.getElementById('editorInfo').textContent = '';
+    document.getElementById('editorStatus').style.color = '';
 
     document.getElementById('editorTitle').textContent = name;
     document.getElementById('editorActions').style.display = 'flex';
@@ -112,19 +132,24 @@ function loadConfig(name, type) {
     document.getElementById('btnDisable').style.display = (type === 'site' && !isDisabled) ? '' : 'none';
 
     fetch(`/api/caddy/config/read?name=${encodeURIComponent(name)}&type=${encodeURIComponent(type)}`)
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'ok') {
-                document.getElementById('editorTextarea').value = data.content;
+        .then(r => r.json().then(data => ({ ok: r.ok, data }), () => ({ ok: false, data: null })))
+        .then(({ ok, data }) => {
+            if (seq !== configLoadSeq) return; // another file was selected meanwhile
+            if (ok && data && data.status === 'ok' && typeof data.content === 'string') {
+                ta.value = data.content;
+                setEditorLoaded(true);
                 updateLineNumbers();
                 document.getElementById('editorStatus').textContent = 'Loaded';
                 document.getElementById('editorInfo').textContent = `${data.content.split('\n').length} lines`;
             } else {
-                document.getElementById('editorStatus').textContent = data.message || 'Error';
+                document.getElementById('editorStatus').textContent = 'Could not load: ' + ((data && data.message) || 'error') + ' (editing disabled)';
+                document.getElementById('editorStatus').style.color = 'var(--red)';
             }
         })
         .catch(() => {
-            document.getElementById('editorStatus').textContent = 'Connection error';
+            if (seq !== configLoadSeq) return;
+            document.getElementById('editorStatus').textContent = 'Connection error (editing disabled)';
+            document.getElementById('editorStatus').style.color = 'var(--red)';
         });
 }
 
@@ -139,15 +164,10 @@ function updateLineNumbers() {
 function highlightCaddyfile(code) {
     const hl = document.getElementById('highlightCode');
     if (!hl) return;
-    let html = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    html = html
-        .replace(/(#[^\n]*)/g, '<span class="hl-comment">$1</span>')
-        .replace(/\b(reverse_proxy|file_server|tls|encode|header|handle|handle_path|route|respond|redir|import|root|log|output|php_fastcgi|rewrite|uri|basicauth|forward_auth|request_header|try_files|templates|push|metrics|acme_server|abort|error|invoke|map|vars|skip_log|method|bind|auto_https)\b/g, '<span class="hl-directive">$1</span>')
-        .replace(/(\{[a-zA-Z_.][a-zA-Z0-9_.]*\})/g, '<span class="hl-variable">$1</span>')
-        .replace(/("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g, '<span class="hl-string">$1</span>')
-        .replace(/\b(\d+)\b/g, '<span class="hl-number">$1</span>')
-        .replace(/([{}])/g, '<span class="hl-brace">$1</span>');
-    hl.innerHTML = html + '\n';
+    // One pass, earlier alternatives win: comments, strings, {placeholders},
+    // directives, numbers, braces (see highlightTokens in app.js).
+    const re = /(#[^\n]*)|("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')|(\{[a-zA-Z_.][a-zA-Z0-9_.]*\})|\b(reverse_proxy|file_server|tls|encode|header|handle|handle_path|route|respond|redir|import|root|log|output|php_fastcgi|rewrite|uri|basicauth|forward_auth|request_header|try_files|templates|push|metrics|acme_server|abort|error|invoke|map|vars|skip_log|method|bind|auto_https)\b|\b(\d+)\b|([{}])/g;
+    hl.innerHTML = highlightTokens(code, re, ['hl-comment', 'hl-string', 'hl-variable', 'hl-directive', 'hl-number', 'hl-brace']) + '\n';
 }
 
 document.getElementById('editorTextarea').addEventListener('input', function() {
@@ -165,13 +185,17 @@ document.getElementById('editorTextarea').addEventListener('scroll', function() 
 
 // Tab support
 document.getElementById('editorTextarea').addEventListener('keydown', function(e) {
-    if (e.key === 'Tab') {
+    // (read-only while nothing is loaded: then Tab just moves focus)
+    if (e.key === 'Tab' && !this.readOnly && !e.shiftKey) {
         e.preventDefault();
         const start = this.selectionStart;
         const end = this.selectionEnd;
         this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
         this.selectionStart = this.selectionEnd = start + 4;
         configChanged = true;
+        document.getElementById('editorStatus').textContent = 'Modified (unsaved)';
+        document.getElementById('editorStatus').style.color = 'var(--yellow)';
+        updateLineNumbers();
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
@@ -180,8 +204,9 @@ document.getElementById('editorTextarea').addEventListener('keydown', function(e
 });
 
 async function saveConfig() {
-    if (!currentConfigName) return;
+    if (!currentConfigName || !configLoaded) return;
 
+    const seq = configLoadSeq; // the file this save belongs to
     const content = document.getElementById('editorTextarea').value;
     document.getElementById('editorStatus').textContent = 'Saving...';
     document.getElementById('editorStatus').style.color = 'var(--text-muted)';
@@ -193,13 +218,19 @@ async function saveConfig() {
             body: JSON.stringify({name: currentConfigName, content, type: currentConfigType})
         });
         const data = await res.json();
+        const sameFile = seq === configLoadSeq; // still showing the saved file?
         if (res.ok) {
             showToast(data.message, 'success');
-            document.getElementById('editorStatus').textContent = 'Saved';
-            document.getElementById('editorStatus').style.color = 'var(--green)';
-            configChanged = false;
+            if (!sameFile) return;
+            // Edits typed while the request ran are still unsaved
+            if (document.getElementById('editorTextarea').value === content) {
+                document.getElementById('editorStatus').textContent = 'Saved';
+                document.getElementById('editorStatus').style.color = 'var(--green)';
+                configChanged = false;
+            }
         } else {
             showToast(data.message || 'Error', 'error');
+            if (!sameFile) return;
             document.getElementById('editorStatus').textContent = 'Save failed';
             document.getElementById('editorStatus').style.color = 'var(--red)';
             if (data.output) {
@@ -211,6 +242,10 @@ async function saveConfig() {
         }
     } catch (e) {
         showToast('Connection error', 'error');
+        if (seq === configLoadSeq) {
+            document.getElementById('editorStatus').textContent = 'Save failed';
+            document.getElementById('editorStatus').style.color = 'var(--red)';
+        }
     }
 }
 

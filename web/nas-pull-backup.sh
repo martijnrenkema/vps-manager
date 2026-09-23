@@ -24,8 +24,8 @@ RETENTION_DAYS="${RETENTION_DAYS:-14}"
 KEEP_MIN_SNAPSHOTS="${KEEP_MIN_SNAPSHOTS:-3}"
 # Report failure when the newest VPS checksum manifest is older than this
 # (the VPS backup stopped running); the pull itself still verifies/snapshots.
-# 0 disables the check.
-MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-2}"
+# 8 days tolerates a weekly VPS backup; set 2 for a daily one. 0 disables.
+MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-8}"
 LOCK_FILE="$LOCAL_DIR/.pull-backup.lock"
 
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
@@ -61,15 +61,26 @@ json_escape() {
     '
 }
 
+webhook_secret_config() {
+    # curl config syntax: a quoted value, with \ and " escaped; newlines dropped
+    local v
+    v=$(printf '%s' "$WEBHOOK_SECRET" | tr -d '\r\n')
+    v=${v//\\/\\\\}
+    v=${v//\"/\\\"}
+    printf 'header = "X-Webhook-Secret: %s"\n' "$v"
+}
+
 report_status() {
     local status="$1"
     local details="$2"
     [ -n "$WEBHOOK_SECRET" ] || return 0
     local escaped
     escaped=$(json_escape "$details")
-    curl -s -X POST "$WEBHOOK_URL" \
+    # The secret goes to curl as a config file on stdin (-K -), not as a
+    # command-line argument, where every local user could read it in `ps`.
+    # -K - works on all curl versions (unlike -H @file, which needs >= 7.55).
+    webhook_secret_config | curl -s -K - -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
-        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
         -d "{\"status\": \"$status\", \"details\": \"$escaped\"}" > /dev/null 2>&1 || true
 }
 

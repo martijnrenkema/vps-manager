@@ -99,7 +99,10 @@ async function bulkPm2Action(action) {
     if (!cbs.length) return;
     var names = Array.from(cbs).map(function(cb) { return cb.dataset.name; });
     var label = action.charAt(0).toUpperCase() + action.slice(1);
-    showConfirm(label + ' processes', label + ' ' + names.length + ' process' + (names.length === 1 ? '' : 'es') + '?\n' + names.join(', '), async function() {
+    var message = action === 'stop'
+        ? stopConfirmText('process', names)
+        : label + ' ' + names.length + ' process' + (names.length === 1 ? '' : 'es') + '?\n' + names.join(', ');
+    showConfirm(label + ' processes', message, async function() {
         var buttons = Array.from(document.querySelectorAll('#pm2BulkBar button'));
         var result = await withBusy(buttons, function() {
             return runBulkRequests(names, function(n) { return '/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(n); });

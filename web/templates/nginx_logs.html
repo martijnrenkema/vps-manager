@@ -145,18 +145,21 @@
 <script>
 async function viewSiteLog(site, type) {
     type = type || 'error';
+    var seq = ++_logModalSeq; // ignore out-of-order responses (see app.js)
     document.getElementById('logModal').style.display = 'flex';
     document.getElementById('logModalTitle').textContent = (type === 'access' ? 'Access log: ' : 'Error log: ') + site;
     document.getElementById('logModalContent').textContent = 'Loading...';
     try {
         var res = await fetch('/api/nginx-log?site=' + encodeURIComponent(site) + '&type=' + type + '&lines=200');
         var data = await res.json();
+        if (seq !== _logModalSeq) return;
         if (res.ok) {
             document.getElementById('logModalContent').textContent = data.content || '(no ' + type + ' logs)';
         } else {
             document.getElementById('logModalContent').textContent = 'Error: ' + (data.message || 'Unknown error');
         }
     } catch (e) {
+        if (seq !== _logModalSeq) return;
         document.getElementById('logModalContent').textContent = 'Error: ' + e.message;
     }
 }

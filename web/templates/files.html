@@ -83,45 +83,47 @@
         </div>
         <!-- Ownership -->
         <div class="form-group">
-            <label>Owner</label>
+            <label for="permsOwner">Owner</label>
             <div style="display:flex;gap:8px">
-                <select class="form-control" id="permsOwner" style="flex:1"></select>
-                <span style="line-height:38px;color:var(--text-muted)">:</span>
-                <select class="form-control" id="permsGroup" style="flex:1"></select>
+                <select class="form-control" id="permsOwner" style="flex:1" onchange="updatePermsWarning()"></select>
+                <span style="line-height:38px;color:var(--text-muted)" aria-hidden="true">:</span>
+                <select class="form-control" id="permsGroup" style="flex:1" aria-label="Group" onchange="updatePermsWarning()"></select>
             </div>
         </div>
         <!-- Chmod matrix -->
-        <div class="form-group">
-            <label>Permissions</label>
+        <div class="form-group" role="group" aria-labelledby="permsMatrixLabel">
+            <label id="permsMatrixLabel">Permissions</label>
             <div class="chmod-matrix">
                 <div class="chmod-header"></div>
                 <div class="chmod-header">Read</div>
                 <div class="chmod-header">Write</div>
                 <div class="chmod-header">Execute</div>
                 <div class="chmod-label">Owner</div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_ur" onchange="updateOctalFromMatrix()"></div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_uw" onchange="updateOctalFromMatrix()"></div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_ux" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ur" aria-label="Owner read" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_uw" aria-label="Owner write" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ux" aria-label="Owner execute" onchange="updateOctalFromMatrix()"></div>
                 <div class="chmod-label">Group</div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_gr" onchange="updateOctalFromMatrix()"></div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_gw" onchange="updateOctalFromMatrix()"></div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_gx" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_gr" aria-label="Group read" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_gw" aria-label="Group write" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_gx" aria-label="Group execute" onchange="updateOctalFromMatrix()"></div>
                 <div class="chmod-label">Others</div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_or" onchange="updateOctalFromMatrix()"></div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_ow" onchange="updateOctalFromMatrix()"></div>
-                <div class="chmod-cell"><input type="checkbox" id="perm_ox" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_or" aria-label="Others read" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ow" aria-label="Others write" onchange="updateOctalFromMatrix()"></div>
+                <div class="chmod-cell"><input type="checkbox" id="perm_ox" aria-label="Others execute" onchange="updateOctalFromMatrix()"></div>
             </div>
             <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
-                <span style="font-size:12px;color:var(--text-muted)">Octal:</span>
-                <input type="text" class="form-control" id="permsMode" placeholder="755" maxlength="4" style="width:80px;text-align:center;font-family:monospace;font-size:16px;font-weight:600" oninput="updateMatrixFromOctal()">
+                <label for="permsMode" style="font-size:12px;color:var(--text-muted);margin:0">Octal:</label>
+                <input type="text" class="form-control" id="permsMode" placeholder="755" maxlength="4" inputmode="numeric" style="width:80px;text-align:center;font-family:monospace;font-size:16px;font-weight:600" oninput="updateMatrixFromOctal()">
                 <span style="font-size:12px;color:var(--text-muted)" id="permsSymbolic">rwxr-xr-x</span>
             </div>
         </div>
         <!-- Options -->
         <div class="form-group" style="margin-bottom:20px">
-            <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-                <input type="checkbox" id="permsRecursive" checked> Apply recursively
+            <label for="permsRecursive" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+                <input type="checkbox" id="permsRecursive" onchange="updatePermsWarning()"> Apply recursively (all files and folders inside)
             </label>
+            <div id="permsModeNote" style="font-size:12px;color:var(--text-muted);margin-top:6px">Permissions are only changed if you edit them above; otherwise only the owner is applied.</div>
+            <div id="permsRecursiveWarning" role="alert" style="display:none;margin-top:8px;padding:8px 10px;border-radius:6px;font-size:12px;background:var(--yellow-bg);color:var(--yellow);border:1px solid rgba(210,153,34,0.3)"></div>
         </div>
         <div class="btn-group" style="justify-content:flex-end">
             <button class="btn" onclick="closePerms()">Cancel</button>
@@ -138,13 +140,13 @@
             <span id="editorFileName" style="font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
         </div>
         <div class="btn-group">
-            <button class="btn btn-sm btn-green" onclick="saveEditor()">{{ icon('save') }} Save</button>
+            <button class="btn btn-sm btn-green" id="editorSaveBtn" onclick="saveEditor()" disabled>{{ icon('save') }} Save</button>
             <button class="btn btn-sm" onclick="closeEditor()">Close</button>
         </div>
     </div>
     <div class="editor-container">
         <div class="editor-line-numbers" id="editorLineNumbers"></div>
-        <textarea class="editor-textarea" id="editorTextarea" spellcheck="false"></textarea>
+        <textarea class="editor-textarea" id="editorTextarea" spellcheck="false" readonly aria-label="File contents"></textarea>
     </div>
     <div class="editor-statusbar">
         <span id="editorStatus">Ready</span>
@@ -157,7 +159,7 @@
     <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="mkdirTitle">
         <h3 id="mkdirTitle">New folder</h3>
         <div class="form-group" style="text-align:left;margin:16px 0">
-            <label>Folder name</label>
+            <label for="mkdirName">Folder name</label>
             <input type="text" class="form-control" id="mkdirName" placeholder="name" onkeydown="if(event.key==='Enter')doMkdir()">
         </div>
         <div class="btn-group" style="justify-content:center">
@@ -170,19 +172,32 @@
 
 {% block scripts %}
 <script>
-let currentPath = '/var/www';
+// currentPath is the directory that is actually shown: it only changes when a
+// listing succeeded (uploads, mkdir and permissions act on it).
+let currentPath = null;
+let hasListing = false; // false until the first directory was shown
 
 let currentDirInfo = {};
+// Directories the server reported as a browse root (no parent allowed).
+const knownRoots = new Set();
+let loadDirSeq = 0;
 
+// path == null: let the server open its configured default (file_browser.default_path)
 function loadDir(path) {
-    currentPath = path;
-    fetch(`/files/list?path=${encodeURIComponent(path)}`)
+    const seq = ++loadDirSeq;
+    const url = path == null ? '/files/list' : `/files/list?path=${encodeURIComponent(path)}`;
+    fetch(url)
         .then(r => r.json())
         .then(data => {
-            if (data.status === 'error' || data.error) {
-                showToast(data.message || data.error, 'error');
+            if (seq !== loadDirSeq) return; // a newer navigation superseded this one
+            if (!data || data.status === 'error' || data.error || typeof data.path !== 'string') {
+                const msg = (data && (data.message || data.error)) || 'Unable to load directory';
+                showToast(msg, 'error');
+                if (!hasListing) renderLoadError(path, msg);
                 return;
             }
+            hasListing = true;
+            if (data.parent === null) knownRoots.add(data.path);
             currentPath = data.path;
             currentDirInfo = data.dir_info || {};
             renderBreadcrumb(data.path);
@@ -196,20 +211,61 @@ function loadDir(path) {
                 warn.style.display = 'none';
             }
         })
-        .catch(() => showToast('Unable to load directory', 'error'));
+        .catch(() => {
+            if (seq !== loadDirSeq) return;
+            showToast('Unable to load directory', 'error');
+            if (!hasListing) renderLoadError(path, 'Unable to load directory');
+        });
+}
+
+// Nothing could be shown yet (e.g. the default folder does not exist): say so
+// instead of leaving the loading skeleton, and offer a path to open.
+function renderLoadError(path, msg) {
+    const tbody = document.getElementById('fileList');
+    tbody.innerHTML = '';
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 6;
+    td.className = 'empty-state';
+    const p = document.createElement('div');
+    p.style.marginBottom = '10px';
+    p.textContent = (path ? path + ': ' : 'Default folder: ') + msg +
+        '. Check the file browser paths in Settings, or open another allowed folder:';
+    const form = document.createElement('form');
+    form.style.cssText = 'display:flex;gap:8px;justify-content:center;flex-wrap:wrap';
+    form.innerHTML = '<label for="openPathInput" class="sr-only">Folder path</label>' +
+        '<input type="text" class="form-control" id="openPathInput" placeholder="/var/www/site" style="max-width:320px">' +
+        '<button type="submit" class="btn btn-sm">Open</button>';
+    form.onsubmit = (e) => {
+        e.preventDefault();
+        const v = form.querySelector('input').value.trim();
+        if (v) loadDir(v);
+    };
+    td.appendChild(p);
+    td.appendChild(form);
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    document.getElementById('breadcrumb').innerHTML = '';
 }
 
 function renderBreadcrumb(path) {
     const bc = document.getElementById('breadcrumb');
     bc.innerHTML = '';
+    // Crumbs are relative to the browse root the path lies under
+    // (/var/www › site › public), not the whole absolute path again.
+    let rootPath = '';
+    knownRoots.forEach(r => {
+        if ((path === r || path.startsWith(r.endsWith('/') ? r : r + '/')) && r.length > rootPath.length) rootPath = r;
+    });
+    if (!rootPath) rootPath = '/';
     const root = document.createElement('span');
     root.className = 'bc-item';
-    root.textContent = '/var/www';
-    root.onclick = () => loadDir('/var/www');
+    root.textContent = rootPath;
+    root.onclick = () => loadDir(rootPath);
     bc.appendChild(root);
 
-    const parts = path.split('/').filter(Boolean);
-    let built = '';
+    const parts = path.slice(rootPath.length).split('/').filter(Boolean);
+    let built = rootPath === '/' ? '' : rootPath;
     for (const part of parts) {
         built += '/' + part;
         const sep = document.createElement('span');
@@ -443,13 +499,41 @@ function octalToSymbolic(octal) {
     return str.split('').map(d => map[parseInt(d)] || '---').join('');
 }
 
+// Mode is only applied when the user actually edited it: it is prefilled with
+// the folder's own mode, and a recursive chmod of that would e.g. make every
+// file 755 when only the owner was meant to change.
+let permsModeTouched = false;
+
+function updatePermsWarning() {
+    const recursive = document.getElementById('permsRecursive').checked;
+    const warn = document.getElementById('permsRecursiveWarning');
+    const note = document.getElementById('permsModeNote');
+    note.textContent = permsModeTouched
+        ? 'Permissions will be set to ' + document.getElementById('permsMode').value + '.'
+        : 'Permissions are only changed if you edit them above; otherwise only the owner is applied.';
+    if (recursive && permsModeTouched) {
+        warn.textContent = 'Warning: the mode ' + document.getElementById('permsMode').value +
+            ' will be applied to every file AND every folder inside, alike. 755 makes all files executable; 644 makes folders impossible to enter.';
+        warn.style.display = 'block';
+    } else if (recursive) {
+        warn.textContent = 'Owner and group will be set for every file and folder inside.';
+        warn.style.display = 'block';
+    } else {
+        warn.style.display = 'none';
+    }
+}
+
 function updateOctalFromMatrix() {
+    permsModeTouched = true;
     const oct = matrixToOctal();
     document.getElementById('permsMode').value = oct;
     document.getElementById('permsSymbolic').textContent = octalToSymbolic(oct);
+    updatePermsWarning();
 }
 
 function updateMatrixFromOctal() {
+    permsModeTouched = true;
+    updatePermsWarning();
     const val = document.getElementById('permsMode').value.trim();
     if (/^[0-7]{3,4}$/.test(val)) {
         octalToMatrix(val);
@@ -499,7 +583,11 @@ async function showPermsDialog() {
     document.getElementById('permsMode').value = modeStr;
     octalToMatrix(modeStr);
     document.getElementById('permsSymbolic').textContent = octalToSymbolic(modeStr);
+    document.getElementById('permsRecursive').checked = false;
+    permsModeTouched = false;
+    updatePermsWarning();
     document.getElementById('permsOverlay').classList.add('active');
+    setTimeout(() => document.getElementById('permsOwner').focus(), 50);
 }
 
 function closePerms() {
@@ -512,18 +600,27 @@ async function applyPerms() {
     const mode = document.getElementById('permsMode').value.trim();
     const recursive = document.getElementById('permsRecursive').checked;
 
+    const path = currentPath;
+    const ownerChanged = owner !== (currentDirInfo.owner || '') || group !== (currentDirInfo.group || '');
+    const doChmod = permsModeTouched;
+    // Only chown when the owner changed. Exception: "recursive" with nothing
+    // else edited means re-applying the folder's owner to everything inside
+    // (fixes mixed ownership). A recursive mode change alone leaves owners be.
+    const doChown = ownerChanged || (recursive && !doChmod);
+
     if (!owner) { showToast('Select an owner', 'error'); return; }
-    if (!mode || !/^[0-7]{3,4}$/.test(mode)) { showToast('Invalid permissions', 'error'); return; }
+    if (doChmod && (!mode || !/^[0-7]{3,4}$/.test(mode))) { showToast('Invalid permissions', 'error'); return; }
+    if (!doChown && !doChmod) { showToast('Nothing changed', 'info'); return; }
 
     closePerms();
     let errors = [];
 
     // Apply chown
-    try {
+    if (doChown) try {
         const res = await fetch('/files/chown', {
             method: 'POST',
             headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({path: currentPath, owner, group, recursive})
+            body: JSON.stringify({path, owner, group, recursive})
         });
         const data = await res.json();
         if (!res.ok) errors.push(data.message || 'chown failed');
@@ -531,12 +628,12 @@ async function applyPerms() {
         errors.push('chown: connection error');
     }
 
-    // Apply chmod
-    try {
+    // Apply chmod (only when the mode was edited)
+    if (doChmod) try {
         const res = await fetch('/files/chmod', {
             method: 'POST',
             headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({path: currentPath, mode, recursive})
+            body: JSON.stringify({path, mode, recursive})
         });
         const data = await res.json();
         if (!res.ok) errors.push(data.message || 'chmod failed');
@@ -547,10 +644,12 @@ async function applyPerms() {
     if (errors.length) {
         showToast(errors.join('; '), 'error');
     } else {
-        const sym = octalToSymbolic(mode);
-        showToast(`Permissions set to ${owner}:${group} ${mode} (${sym})`, 'success');
+        const parts = [];
+        if (doChown) parts.push(`owner ${owner}:${group}`);
+        if (doChmod) parts.push(`mode ${mode} (${octalToSymbolic(mode)})`);
+        showToast('Set ' + parts.join(' and ') + (recursive ? ' recursively' : ''), 'success');
     }
-    loadDir(currentPath);
+    if (currentPath === path) loadDir(currentPath);
 }
 
 // --- Upload with progress ---
@@ -572,14 +671,20 @@ function uploadFiles(fileList) {
     const title = document.getElementById('uploadProgressTitle');
     const dismissBtn = document.getElementById('uploadDismissBtn');
 
+    // Upload target fixed at the start: navigating while the queue runs must
+    // not send the remaining files to another folder.
+    const targetPath = currentPath;
+    if (!targetPath) { showToast('No folder open to upload to', 'error'); return; }
+
     area.style.display = 'block';
     dismissBtn.style.display = 'none';
     list.innerHTML = '';
 
-    let completed = 0;
+    let processed = 0;
+    let succeeded = 0;
     const total = files.length;
 
-    title.textContent = `Uploading 0/${total} files...`;
+    title.textContent = `Uploading 0/${total} files to ${targetPath}...`;
 
     // Create progress entries for each file
     const entries = files.map((file, idx) => {
@@ -604,10 +709,13 @@ function uploadFiles(fileList) {
 
     function uploadNext() {
         if (current >= files.length) {
-            title.textContent = `Upload complete: ${completed}/${total} files`;
+            const failed = total - succeeded;
+            title.textContent = failed
+                ? `Uploaded ${succeeded} of ${total} files to ${targetPath} - ${failed} failed`
+                : `Upload complete: ${succeeded}/${total} files to ${targetPath}`;
             dismissBtn.style.display = 'inline-flex';
             document.getElementById('uploadInput').value = '';
-            loadDir(currentPath);
+            if (currentPath === targetPath) loadDir(currentPath);
             return;
         }
 
@@ -622,7 +730,7 @@ function uploadFiles(fileList) {
 
         const form = new FormData();
         form.append('csrf_token', csrfToken);
-        form.append('path', currentPath);
+        form.append('path', targetPath);
         form.append('file', file);
 
         const xhr = new XMLHttpRequest();
@@ -636,21 +744,22 @@ function uploadFiles(fileList) {
         });
 
         xhr.addEventListener('load', function() {
-            completed++;
-            title.textContent = `Uploading ${completed}/${total} files...`;
+            processed++;
+            title.textContent = `Uploading ${processed}/${total} files to ${targetPath}...`;
 
-            if (xhr.status >= 200 && xhr.status < 300) {
+            let ok = xhr.status >= 200 && xhr.status < 300;
+            let data = null;
+            try { data = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+            if (data && data.status === 'error') ok = false;
+            if (ok) {
+                succeeded++;
                 barEl.style.width = '100%';
                 barEl.className = 'progress-bar-fill green';
                 statusEl.textContent = 'Done';
                 statusEl.className = 'upload-file-status status-ok';
                 entries[idx].className = 'upload-file-entry upload-done';
             } else {
-                let msg = 'Error';
-                try {
-                    const data = JSON.parse(xhr.responseText);
-                    msg = data.message || 'Error';
-                } catch (e) {}
+                const msg = (data && data.message) || ('Error (HTTP ' + xhr.status + ')');
                 barEl.className = 'progress-bar-fill red';
                 barEl.style.width = '100%';
                 statusEl.textContent = msg;
@@ -662,8 +771,8 @@ function uploadFiles(fileList) {
         });
 
         xhr.addEventListener('error', function() {
-            completed++;
-            title.textContent = `Uploading ${completed}/${total} files...`;
+            processed++;
+            title.textContent = `Uploading ${processed}/${total} files to ${targetPath}...`;
             barEl.className = 'progress-bar-fill red';
             barEl.style.width = '100%';
             statusEl.textContent = 'Network error';
@@ -753,6 +862,17 @@ function isEditable(name) {
 
 let editorPath = '';
 let editorChanged = false;
+// editorLoaded: the textarea holds the file's real content and it is writable.
+// Until then it is read-only and Save/Ctrl+S do nothing, so a failed or
+// pending read can never write an empty/stale buffer over the file.
+let editorLoaded = false;
+let editorSeq = 0;
+
+function setEditorWritable(ok) {
+    editorLoaded = ok;
+    document.getElementById('editorTextarea').readOnly = !ok;
+    document.getElementById('editorSaveBtn').disabled = !ok;
+}
 
 function updateEditorLineNumbers() {
     const textarea = document.getElementById('editorTextarea');
@@ -761,8 +881,10 @@ function updateEditorLineNumbers() {
 }
 
 async function openEditor(path) {
+    const seq = ++editorSeq;
     editorPath = path;
     editorChanged = false;
+    setEditorWritable(false);
     const overlay = document.getElementById('editorOverlay');
     const textarea = document.getElementById('editorTextarea');
     const status = document.getElementById('editorStatus');
@@ -773,24 +895,28 @@ async function openEditor(path) {
     status.textContent = 'Loading...';
     status.style.color = 'var(--text-muted)';
     info.textContent = '';
+    updateEditorLineNumbers();
     overlay.style.display = 'flex';
 
     try {
         const res = await fetch('/files/read?path=' + encodeURIComponent(path));
         const data = await res.json();
-        if (data.status === 'ok') {
+        if (seq !== editorSeq) return; // closed or another file opened meanwhile
+        if (res.ok && data.status === 'ok' && typeof data.content === 'string') {
             textarea.value = data.content;
             updateEditorLineNumbers();
-            status.textContent = data.writable ? 'Ready' : 'Read-only';
-            status.style.color = data.writable ? 'var(--text-muted)' : 'var(--yellow)';
+            const writable = !!data.writable;
+            status.textContent = data.notice ? data.notice : (writable ? 'Ready' : 'Read-only');
+            status.style.color = writable && !data.notice ? 'var(--text-muted)' : 'var(--yellow)';
             info.textContent = `${data.content.split('\n').length} lines`;
-            textarea.readOnly = !data.writable;
+            setEditorWritable(writable);
         } else {
-            status.textContent = data.message || 'Error';
+            status.textContent = 'Could not open file: ' + (data.message || 'error');
             status.style.color = 'var(--red)';
         }
     } catch (e) {
-        status.textContent = 'Connection error';
+        if (seq !== editorSeq) return;
+        status.textContent = 'Could not open file: connection error';
         status.style.color = 'var(--red)';
     }
 }
@@ -800,10 +926,14 @@ function closeEditor() {
     document.getElementById('editorOverlay').style.display = 'none';
     editorPath = '';
     editorChanged = false;
+    editorSeq++; // drop a read still in flight
+    setEditorWritable(false);
 }
 
 async function saveEditor() {
-    if (!editorPath) return;
+    if (!editorPath || !editorLoaded) return;
+    const seq = editorSeq;
+    const content = document.getElementById('editorTextarea').value;
     const status = document.getElementById('editorStatus');
     status.textContent = 'Saving...';
     status.style.color = 'var(--text-muted)';
@@ -812,23 +942,30 @@ async function saveEditor() {
         const res = await fetch('/files/save', {
             method: 'POST',
             headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({path: editorPath, content: document.getElementById('editorTextarea').value})
+            body: JSON.stringify({path: editorPath, content})
         });
         const data = await res.json();
+        const same = seq === editorSeq;
         if (res.ok) {
             showToast(data.message, 'success');
-            status.textContent = 'Saved';
-            status.style.color = 'var(--green)';
-            editorChanged = false;
+            if (same && document.getElementById('editorTextarea').value === content) {
+                status.textContent = 'Saved';
+                status.style.color = 'var(--green)';
+                editorChanged = false;
+            }
         } else {
             showToast(data.message || 'Error', 'error');
-            status.textContent = 'Save failed';
-            status.style.color = 'var(--red)';
+            if (same) {
+                status.textContent = 'Save failed';
+                status.style.color = 'var(--red)';
+            }
         }
     } catch (e) {
         showToast('Connection error', 'error');
-        status.textContent = 'Error';
-        status.style.color = 'var(--red)';
+        if (seq === editorSeq) {
+            status.textContent = 'Save failed: connection error';
+            status.style.color = 'var(--red)';
+        }
     }
 }
 
@@ -845,13 +982,17 @@ document.getElementById('editorTextarea').addEventListener('scroll', function() 
 
 // Tab support in editor
 document.getElementById('editorTextarea').addEventListener('keydown', function(e) {
-    if (e.key === 'Tab') {
+    // (read-only while nothing is loaded: then Tab just moves focus)
+    if (e.key === 'Tab' && !this.readOnly && !e.shiftKey) {
         e.preventDefault();
         const start = this.selectionStart;
         const end = this.selectionEnd;
         this.value = this.value.substring(0, start) + '    ' + this.value.substring(end);
         this.selectionStart = this.selectionEnd = start + 4;
         editorChanged = true;
+        document.getElementById('editorStatus').textContent = 'Modified (unsaved)';
+        document.getElementById('editorStatus').style.color = 'var(--yellow)';
+        updateEditorLineNumbers();
     }
     // Ctrl+S / Cmd+S
     if ((e.ctrlKey || e.metaKey) && e.key === 's') {
@@ -878,7 +1019,7 @@ document.addEventListener('keydown', function(e) {
     }
 });
 
-// Initial load
-loadDir(currentPath);
+// Initial load: the server's configured default folder
+loadDir(null);
 </script>
 {% endblock %}

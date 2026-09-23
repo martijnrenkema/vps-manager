@@ -119,9 +119,9 @@ async function saveAutoHeal(btn) {
     btn.disabled = true;
     const data = await apiCall('/api/config', 'POST', {
         auto_heal: { enabled: enabled, max_restarts_per_day: maxRestarts },
-    });
+    }, { quietSuccess: true });
     btn.disabled = false;
-    if (data && data.status === 'ok') {
+    if (data) {
         document.getElementById('healMaxLabel').textContent = maxRestarts;
         showToast('Auto-heal settings saved', 'success');
     }

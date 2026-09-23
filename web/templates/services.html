@@ -64,7 +64,13 @@
 
 {% block scripts %}
 <script>
-async function serviceAction(action, name, btn) {
+async function serviceAction(action, name, btn, confirmed) {
+    if (action === 'stop' && !confirmed) {
+        showConfirm('Stop service', stopConfirmText('service', name), function() {
+            serviceAction(action, name, btn, true);
+        }, { destructive: true, confirmLabel: isPanelCritical(name) ? 'Stop anyway' : 'Stop' });
+        return;
+    }
     const data = await withBusy(btn, function() {
         return apiCall('/services/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
     });

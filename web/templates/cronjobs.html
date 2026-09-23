@@ -59,26 +59,42 @@
             <button type="button" class="btn btn-sm" onclick="setPreset('0 0 1 * *')">Monthly</button>
         </div>
 
+        <!-- Special @-schedules replace the five fields -->
+        <div class="form-group" style="margin-bottom:12px">
+            <label for="cronSpecial" style="font-size:11px">Schedule type</label>
+            <select class="form-control" id="cronSpecial" onchange="onSpecialChange()">
+                <option value="">Fields below (minute hour day month weekday)</option>
+                <option value="@reboot">@reboot - once at system startup</option>
+                <option value="@hourly">@hourly - every hour</option>
+                <option value="@daily">@daily - every day at 00:00</option>
+                <option value="@midnight">@midnight - every day at 00:00</option>
+                <option value="@weekly">@weekly - every Sunday at 00:00</option>
+                <option value="@monthly">@monthly - on the 1st at 00:00</option>
+                <option value="@yearly">@yearly - on 1 January at 00:00</option>
+                <option value="@annually">@annually - on 1 January at 00:00</option>
+            </select>
+        </div>
+
         <!-- Schedule fields -->
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px">
+        <div id="cronFields" style="display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px">
             <div class="form-group" style="margin:0">
-                <label style="font-size:11px">Minute</label>
+                <label for="cronMinute" style="font-size:11px">Minute</label>
                 <input type="text" class="form-control" id="cronMinute" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:var(--font-mono)">
             </div>
             <div class="form-group" style="margin:0">
-                <label style="font-size:11px">Hour</label>
+                <label for="cronHour" style="font-size:11px">Hour</label>
                 <input type="text" class="form-control" id="cronHour" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:var(--font-mono)">
             </div>
             <div class="form-group" style="margin:0">
-                <label style="font-size:11px">Day</label>
+                <label for="cronDom" style="font-size:11px">Day</label>
                 <input type="text" class="form-control" id="cronDom" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:var(--font-mono)">
             </div>
             <div class="form-group" style="margin:0">
-                <label style="font-size:11px">Month</label>
+                <label for="cronMonth" style="font-size:11px">Month</label>
                 <input type="text" class="form-control" id="cronMonth" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:var(--font-mono)">
             </div>
             <div class="form-group" style="margin:0">
-                <label style="font-size:11px">Weekday</label>
+                <label for="cronDow" style="font-size:11px">Weekday</label>
                 <input type="text" class="form-control" id="cronDow" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:var(--font-mono)">
             </div>
         </div>
@@ -92,7 +108,7 @@
 
         <!-- Command -->
         <div class="form-group">
-            <label>Command</label>
+            <label for="cronCommand">Command</label>
             <textarea class="form-control" id="cronCommand" rows="3" placeholder="/path/to/script.sh" style="font-family:var(--font-mono);font-size:13px;resize:vertical"></textarea>
         </div>
 
@@ -123,6 +139,14 @@ const cronHumanMap = {
     '0 0 * * *': 'Daily at 00:00',
     '0 0 * * 1': 'Weekly on Monday',
     '0 0 1 * *': 'Monthly on the 1st',
+    '@reboot': 'At system startup',
+    '@hourly': 'Every hour',
+    '@daily': 'Daily at 00:00',
+    '@midnight': 'Daily at 00:00',
+    '@weekly': 'Weekly on Sunday',
+    '@monthly': 'Monthly on the 1st',
+    '@yearly': 'Yearly on 1 January',
+    '@annually': 'Yearly on 1 January',
 };
 
 function simpleHumanCron(schedule) {
@@ -279,19 +303,40 @@ async function postCron(url, body) {
     }
 }
 
+const CRON_FIELD_IDS = ['cronMinute', 'cronHour', 'cronDom', 'cronMonth', 'cronDow'];
+
+// The schedule as crontab expects it: either one @keyword (@daily, @reboot…)
+// sent as a single value, or the five fields joined.
+function currentSchedule() {
+    const special = document.getElementById('cronSpecial').value;
+    if (special) return special;
+    return CRON_FIELD_IDS.map(id => document.getElementById(id).value.trim() || '*').join(' ');
+}
+
+function setSpecial(keyword) {
+    const sel = document.getElementById('cronSpecial');
+    if (keyword && !Array.from(sel.options).some(o => o.value === keyword)) {
+        sel.appendChild(new Option(keyword, keyword)); // unknown/new keyword: keep it editable
+    }
+    sel.value = keyword || '';
+    const on = !!keyword;
+    CRON_FIELD_IDS.forEach(id => { document.getElementById(id).disabled = on; });
+    document.getElementById('cronFields').style.opacity = on ? '0.45' : '';
+}
+
+function onSpecialChange() {
+    setSpecial(document.getElementById('cronSpecial').value);
+    updateSchedulePreview();
+}
+
 function updateSchedulePreview() {
-    const schedule = [
-        document.getElementById('cronMinute').value.trim() || '*',
-        document.getElementById('cronHour').value.trim() || '*',
-        document.getElementById('cronDom').value.trim() || '*',
-        document.getElementById('cronMonth').value.trim() || '*',
-        document.getElementById('cronDow').value.trim() || '*',
-    ].join(' ');
+    const schedule = currentSchedule();
     document.getElementById('cronSchedulePreview').textContent = schedule;
     document.getElementById('cronHumanPreview').textContent = simpleHumanCron(schedule);
 }
 
 function setPreset(schedule) {
+    setSpecial('');
     const parts = schedule.split(' ');
     document.getElementById('cronMinute').value = parts[0];
     document.getElementById('cronHour').value = parts[1];
@@ -322,12 +367,20 @@ function editCronJob(type, index) {
     document.getElementById('cronEditType').value = type;
     document.getElementById('cronEditIndex').value = index;
 
-    const parts = job.schedule.split(' ');
-    document.getElementById('cronMinute').value = parts[0] || '*';
-    document.getElementById('cronHour').value = parts[1] || '*';
-    document.getElementById('cronDom').value = parts[2] || '*';
-    document.getElementById('cronMonth').value = parts[3] || '*';
-    document.getElementById('cronDow').value = parts[4] || '*';
+    const sched = String(job.schedule || '').trim();
+    if (sched.startsWith('@')) {
+        // @daily, @reboot, ...: shown in the "Schedule type" select, fields reset
+        CRON_FIELD_IDS.forEach(id => { document.getElementById(id).value = '*'; });
+        setSpecial(sched.split(/\s+/)[0]);
+    } else {
+        setSpecial('');
+        const parts = sched.split(/\s+/);
+        document.getElementById('cronMinute').value = parts[0] || '*';
+        document.getElementById('cronHour').value = parts[1] || '*';
+        document.getElementById('cronDom').value = parts[2] || '*';
+        document.getElementById('cronMonth').value = parts[3] || '*';
+        document.getElementById('cronDow').value = parts[4] || '*';
+    }
     document.getElementById('cronCommand').value = job.command;
     updateSchedulePreview();
 
@@ -342,13 +395,7 @@ function closeCronDialog() {
 async function saveCronJob() {
     const type = document.getElementById('cronEditType').value;
     const index = parseInt(document.getElementById('cronEditIndex').value);
-    const schedule = [
-        document.getElementById('cronMinute').value.trim() || '*',
-        document.getElementById('cronHour').value.trim() || '*',
-        document.getElementById('cronDom').value.trim() || '*',
-        document.getElementById('cronMonth').value.trim() || '*',
-        document.getElementById('cronDow').value.trim() || '*',
-    ].join(' ');
+    const schedule = currentSchedule();
     const command = document.getElementById('cronCommand').value.trim();
 
     if (!command) {

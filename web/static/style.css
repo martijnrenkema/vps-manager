@@ -1420,15 +1420,21 @@ a.quick-item:hover {
 }
 
 @media (max-width: 768px) {
+    /* Closed off-canvas sidebar: visibility:hidden (after the slide-out)
+       takes its links out of the tab order and the accessibility tree. */
     .sidebar {
         transform: translateX(-100%);
         background: var(--bg-secondary);
         box-shadow: none;
+        visibility: hidden;
+        transition: transform 0.25s var(--ease), visibility 0s linear 0.25s;
     }
 
     .sidebar.open {
         transform: translateX(0);
         box-shadow: var(--shadow-pop);
+        visibility: visible;
+        transition: transform 0.25s var(--ease), visibility 0s linear 0s;
     }
 
     .sidebar-scrim {
@@ -1809,6 +1815,12 @@ a.quick-item:hover {
 .toggle-switch input:checked + .toggle-slider::before {
     background: var(--green);
     transform: translateX(20px);
+}
+
+/* The real checkbox is invisible: show keyboard focus on the slider */
+.toggle-switch input:focus-visible + .toggle-slider {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 /* Notification categories */
@@ -2774,6 +2786,20 @@ a.quick-item:hover {
         display: none;
     }
 
+    /* Block layout: otherwise the (hidden-header) table still sizes itself to
+       its widest cell (e.g. a long nowrap command) and pushes every card's
+       values off-screen to the right. */
+    .table-responsive-cards,
+    .table-responsive-cards tbody {
+        display: block;
+        width: 100%;
+    }
+
+    .table-responsive-cards td > * {
+        max-width: 100%;
+        min-width: 0;
+    }
+
     .table-responsive-cards tr {
         display: block;
         margin-bottom: 8px;
@@ -2799,7 +2825,18 @@ a.quick-item:hover {
         font-weight: 500;
         color: var(--text-muted);
         font-size: var(--fs-label);
-        margin-right: 12px;
+        /* auto: the label stays left and ALL value nodes sit together on the
+           right (with several children space-between spread them out) */
+        margin-right: auto;
+        padding-right: 12px;
+        flex-shrink: 0;
+    }
+
+    .table-responsive-cards td {
+        gap: 6px;
+        text-align: right;
+        min-width: 0;
+        overflow-wrap: anywhere;
     }
 
     .table-responsive-cards td:last-child {

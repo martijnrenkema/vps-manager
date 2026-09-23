@@ -292,7 +292,7 @@ The NAS script:
 - Verifies the latest checksum manifest and reports failure if any checksum fails.
 - Creates daily hard-link snapshots in `/volume1/Backup/vps/snapshots/YYYYMMDD`.
 - Keeps snapshots for 14 days by default (`RETENTION_DAYS=14`), but always keeps the newest 3 (`KEEP_MIN_SNAPSHOTS=3`), so a long VPS outage never prunes every snapshot.
-- Reports failure when the newest VPS checksum manifest is older than 2 days (`MAX_BACKUP_AGE_DAYS=2`, `0` disables), i.e. the VPS backup itself stopped running.
+- Reports failure when the newest VPS checksum manifest is older than 8 days (`MAX_BACKUP_AGE_DAYS=8`, `0` disables), i.e. the VPS backup itself stopped running. The default tolerates a weekly VPS backup schedule; with the daily default cron job you can tighten it to `MAX_BACKUP_AGE_DAYS=2` in the NAS `.backup_env`.
 
 ### Restore Checklist
 

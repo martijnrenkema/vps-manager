@@ -133,8 +133,8 @@ function renderAuditLog() {
     }
 
     tbody.innerHTML = pageItems.map(entry => {
-        const d = new Date(entry.timestamp);
-        const ts = d.toLocaleDateString('nl-NL', {day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' +
+        const d = parseServerTime(entry.timestamp);
+        const ts = isNaN(d) ? String(entry.timestamp || '-') : d.toLocaleDateString('nl-NL', {day:'2-digit',month:'2-digit',year:'numeric'}) + ' ' +
                    d.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
         const color = actionColors[entry.action] || 'var(--text-muted)';
         const details = entry.details && Object.keys(entry.details).length

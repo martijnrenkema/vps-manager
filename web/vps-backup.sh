@@ -51,15 +51,26 @@ json_escape() {
     python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))'
 }
 
+webhook_secret_config() {
+    # curl config syntax: a quoted value, with \ and " escaped; newlines dropped
+    local v
+    v=$(printf '%s' "$WEBHOOK_SECRET" | tr -d '\r\n')
+    v=${v//\\/\\\\}
+    v=${v//\"/\\\"}
+    printf 'header = "X-Webhook-Secret: %s"\n' "$v"
+}
+
 report_status() {
     local status="$1"
     local details="$2"
     [ -n "$WEBHOOK_SECRET" ] || return 0
     local escaped
     escaped=$(printf '%s' "$details" | json_escape)
-    curl -s -X POST "$WEBHOOK_URL" \
+    # The secret goes to curl as a config file on stdin (-K -), not as a
+    # command-line argument, where every local user could read it in `ps`.
+    # -K - works on all curl versions (unlike -H @file, which needs >= 7.55).
+    webhook_secret_config | curl -s -K - -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
-        -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
         -d "{\"status\": \"$status\", \"details\": $escaped}" > /dev/null 2>&1 || true
 }
 
@@ -109,15 +120,33 @@ DB_COUNT=0
 # the client IS installed, a failing listing (MariaDB down, missing
 # /root/.my.cnf, auth error) must fail the backup: previously `|| true` hid it
 # and a run with 0 dumped databases was reported as success.
-# MYSQL_BACKUP=no in .backup_env skips this for client-only hosts.
+# That only applies when a LOCAL server exists: hosts with just the client
+# (remote database, client-only tooling) log a warning and continue.
+# MYSQL_BACKUP=no in .backup_env skips this entirely.
 MYSQL_BACKUP="${MYSQL_BACKUP:-auto}"
-if [ "$MYSQL_BACKUP" != "no" ] && command -v mysql >/dev/null 2>&1; then
-    if ! db_list=$(mysql -N -e "SHOW DATABASES" 2>/dev/null); then
-        report_failure "$LINENO" "could not list MariaDB/MySQL databases (server down or no credentials in /root/.my.cnf?)"
-        exit 1
+MYSQL_NOTE=""
+local_mysql_server() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl is-active --quiet mariadb 2>/dev/null && return 0
+        systemctl is-active --quiet mysql 2>/dev/null && return 0
+        systemctl is-active --quiet mysqld 2>/dev/null && return 0
     fi
-    # grep exits 1 when only system databases exist; that is not an error
-    DATABASES=$(printf '%s\n' "$db_list" | grep -Ev "^($SYSTEM_DBS)$" || true)
+    [ -S /run/mysqld/mysqld.sock ] || [ -S /var/run/mysqld/mysqld.sock ] || [ -S /var/lib/mysql/mysql.sock ] && return 0
+    # Installed but stopped is still a local server whose data is not backed up
+    command -v mariadbd >/dev/null 2>&1 || command -v mysqld >/dev/null 2>&1 \
+        || [ -x /usr/sbin/mariadbd ] || [ -x /usr/sbin/mysqld ]
+}
+if [ "$MYSQL_BACKUP" != "no" ] && command -v mysql >/dev/null 2>&1; then
+    if db_list=$(mysql -N -e "SHOW DATABASES" 2>/dev/null); then
+        # grep exits 1 when only system databases exist; that is not an error
+        DATABASES=$(printf '%s\n' "$db_list" | grep -Ev "^($SYSTEM_DBS)$" || true)
+    elif local_mysql_server; then
+        report_failure "$LINENO" "could not list MariaDB/MySQL databases (local server down or no credentials in /root/.my.cnf?)"
+        exit 1
+    else
+        MYSQL_NOTE=" (MySQL client present but no local server - skipped; set MYSQL_BACKUP=no to silence)"
+        echo "$(date): WARNING: mysql client found but no local MariaDB/MySQL server - database dump skipped" >> "$LOG"
+    fi
 fi
 
 dump_mariadb() {
@@ -150,14 +179,18 @@ while IFS= read -r -d '' dbfile; do
     safename=$(printf '%s' "$relative" | sed 's|/|_|g; s|\.db$||')
     dest="$BACKUP_DIR/databases/${safename}_$DATE.db"
     tmp="$dest.tmp"
+    # Plain cp (no -p): the copy must get today's mtime, otherwise the
+    # retention `find -mtime +N -delete` below removes an old-but-unchanged
+    # database copy in the very run that made it.
     if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$dbfile" ".backup '$tmp'" 2>/dev/null || cp -p "$dbfile" "$tmp"
+        sqlite3 "$dbfile" ".backup '$tmp'" 2>/dev/null || cp "$dbfile" "$tmp"
     else
-        cp -p "$dbfile" "$tmp"
+        cp "$dbfile" "$tmp"
     fi
+    touch "$tmp"
     mv "$tmp" "$dest"
 done < <(find "$WWW_DIR" -maxdepth 5 -name "*.db" -type f \
-    ! -path "*/node_modules/*" ! -path "*/venv/*" ! -path "*/.venv/*" 2>/dev/null -print0)
+    ! -path "*/node_modules/*" ! -path "*/venv/*" ! -path "*/.venv/*" -print0 2>/dev/null)
 
 find "$BACKUP_DIR/databases" -type f -mtime +"$RETENTION_DAYS" -delete
 
@@ -190,16 +223,22 @@ fi
 
 # Process substitution instead of a pipe: in a pipe subshell a failing cp
 # would be invisible to set -e and the ERR trap (backup would report success).
+# Plain cp (no -p) so the copy is dated today: with -p a config that had not
+# changed for RETENTION_DAYS kept its old mtime and the retention find below
+# deleted it again in the same run. The .env suffix makes the copy match the
+# checksum glob configs/*_DATE.* further down.
 while IFS= read -r envfile; do
     sitename=$(basename "$(dirname "$envfile")")
     is_listed "$sitename" "$SKIP_CONFIG_DIRS" && continue
-    cp -p "$envfile" "$BACKUP_DIR/configs/${sitename}-env_$DATE"
+    cp "$envfile" "$BACKUP_DIR/configs/${sitename}-env_$DATE.env"
+    touch "$BACKUP_DIR/configs/${sitename}-env_$DATE.env"
 done < <(find "$WWW_DIR" -maxdepth 2 -name ".env" -type f 2>/dev/null)
 
 while IFS= read -r wpconfig; do
     sitename=$(basename "$(dirname "$wpconfig")")
     is_listed "$sitename" "$SKIP_CONFIG_DIRS" && continue
-    cp -p "$wpconfig" "$BACKUP_DIR/configs/${sitename}-wp-config_$DATE.php"
+    cp "$wpconfig" "$BACKUP_DIR/configs/${sitename}-wp-config_$DATE.php"
+    touch "$BACKUP_DIR/configs/${sitename}-wp-config_$DATE.php"
 done < <(find "$WWW_DIR" -maxdepth 2 -name "wp-config.php" -type f 2>/dev/null)
 
 find "$BACKUP_DIR/configs" -type f -mtime +"$RETENTION_DAYS" -delete
@@ -309,6 +348,6 @@ CHECKSUM_COUNT=$(wc -l < "$CHECKSUM_FILE")
 BACKUP_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
 SITE_COUNT=$(find "$BACKUP_DIR/sites" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
 
-message="Backup completed - $SITE_COUNT sites, $DB_COUNT MariaDB databases - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums"
+message="Backup completed - $SITE_COUNT sites, $DB_COUNT MariaDB databases$MYSQL_NOTE - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums"
 echo "$(date): $message" >> "$LOG"
 report_status "success" "$message"
