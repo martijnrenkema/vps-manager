@@ -773,7 +773,10 @@ async function saveConfig(e) {
         if (res.ok) {
             showToast(result.message, 'success');
         } else {
-            showToast(result.message, 'error');
+            // Toon welk veld fout is, niet alleen "Validation failed"
+            const details = Array.isArray(result.errors) && result.errors.length
+                ? ':\n' + result.errors.join('\n') : '';
+            showToast((result.message || 'Could not save settings') + details, 'error');
         }
     } catch(e) {
         showToast('Connection error', 'error');

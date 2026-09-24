@@ -77,12 +77,12 @@ if _env_file.exists():
                 _line = _line.strip()
                 if _line and not _line.startswith('#') and '=' in _line:
                     _key, _val = _line.split('=', 1)
-                    _val = _val.strip()
-                    # PASS="x y" → x y (zoals shells en dotenv het lezen)
-                    if len(_val) >= 2 and _val[0] == _val[-1] and _val[0] in '"\'':
-                        _val = _val[1:-1]
+                    # NB: quotes bewust niet strippen — bestaande installaties
+                    # met VPS_MANAGER_SECRET="..." zouden anders een andere
+                    # secret key krijgen (iedereen uitgelogd) of een ander
+                    # wachtwoord.
                     if _key.strip() not in os.environ:  # Don't override existing env vars
-                        os.environ[_key.strip()] = _val
+                        os.environ[_key.strip()] = _val.strip()
     except OSError:
         pass
 
@@ -1018,6 +1018,21 @@ def _auto_heal_services(services):
     return alerts
 
 
+def _find_legacy_log_entry(notif_log, alert_key, email):
+    """Notification-log entry voor alert_key onder een willekeurige
+    (oude) categorie: keys zijn "[email:]categorie:alertkey"."""
+    for k, v in notif_log.items():
+        if k.startswith('_daily'):
+            continue
+        is_email = k.startswith('email:')
+        if is_email != email:
+            continue
+        _category, _, key = (k[len('email:'):] if is_email else k).partition(':')
+        if key == alert_key:
+            return v
+    return None
+
+
 def _monitor_sleep_seconds(elapsed=0):
     """Begrensd: een onzinnige monitor_interval mag de thread niet laten
     crashen (OverflowError) of eindeloos laten slapen."""
@@ -1149,6 +1164,25 @@ def _monitor_loop():
                     # marker exists yet, stamp the marker so we don't re-fire
                     # right after an upgrade to a version that introduced the gate.
                     if first_cycle and notif_log:
+                        # Migratie (v2.0): alerts worden nu op key i.p.v. op
+                        # berichttekst in een categorie ingedeeld, dus de
+                        # log-key ("categorie:key") van een al actieve alert
+                        # kan veranderd zijn. Neem de oude entry over, anders
+                        # wordt hij direct na de update opnieuw gepusht/gemaild.
+                        for alert in alerts:
+                            akey = alert.get('key')
+                            if not akey:
+                                continue
+                            new_key = f"{_classify_alert(alert)}:{akey}"
+                            for email in (False, True):
+                                target = ('email:' if email else '') + new_key
+                                if target in notif_log:
+                                    continue
+                                old_entry = _find_legacy_log_entry(notif_log, akey, email)
+                                if old_entry is not None:
+                                    notif_log[target] = old_entry
+                                    log_changed = True
+
                         for alert in alerts:
                             category = _classify_alert(alert)
                             if not _is_update_cat(category):
@@ -5813,7 +5847,7 @@ def install_updates():
         # Ruime timeout: een SIGTERM midden in dpkg laat "dpkg was interrupted"
         # achter.
         result = run_cmd(
-            "sudo env DEBIAN_FRONTEND=noninteractive apt-get -y "
+            "sudo env DEBIAN_FRONTEND=noninteractive apt-get -y --with-new-pkgs "
             "-o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "
             "upgrade 2>&1",
             timeout=1800)
@@ -7369,6 +7403,22 @@ def _under(path, root):
     return norm == root.rstrip('/') or norm.startswith(root.rstrip('/') + '/')
 
 
+def _changed_config_values(data):
+    """Laat alleen keys/sub-keys over die verschillen van de huidige CONFIG."""
+    if not isinstance(data, dict):
+        return data
+    changed = {}
+    for key, value in data.items():
+        current = CONFIG.get(key)
+        if isinstance(value, dict) and isinstance(current, dict):
+            sub = {k: v for k, v in value.items() if current.get(k) != v}
+            if sub:
+                changed[key] = sub
+        elif value != current:
+            changed[key] = value
+    return changed
+
+
 def validate_config(data):
     """Validate config values. Returns (is_valid, errors)"""
     errors = []
@@ -7570,6 +7620,14 @@ def update_config():
     data = _json_body()
     if not data:
         return jsonify({'status': 'error', 'message': 'No data received'}), 400
+
+    # Alleen gewijzigde waarden valideren: de instellingenpagina stuurt altijd
+    # alles mee, en een bestaande waarde die onder strengere regels (v2.0)
+    # niet meer zou mogen, blokkeerde anders het opslaan van elke andere
+    # instelling. Nieuwe of gewijzigde waarden worden wél volledig gecontroleerd.
+    data = _changed_config_values(data)
+    if not data:
+        return jsonify({'status': 'ok', 'message': 'Settings saved (no changes)'})
 
     # Validate config
     is_valid, errors = validate_config(data)

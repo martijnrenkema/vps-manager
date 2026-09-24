@@ -122,7 +122,7 @@ def load_config():
                 user_config = json.load(f)
             if not isinstance(user_config, dict):
                 raise json.JSONDecodeError('top level is not an object', '', 0)
-            # Migratie (v1.11): certificaatcontrole voor SMTP is nieuw. Een
+            # Migratie (v2.0): certificaatcontrole voor SMTP is nieuw. Een
             # bestaande SMTP-config zonder deze key behoudt het oude gedrag
             # (niet verifiëren): anders kan een self-signed mailserver na de
             # update geen e-mail-2FA-codes meer versturen = buitengesloten.

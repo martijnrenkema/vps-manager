@@ -1,4 +1,4 @@
-# Analyse VPS Manager (na v1.10.2)
+# Analyse VPS Manager v2.0.0 (na v1.10.2)
 
 Code-review van backend, frontend, scripts en performance, uitgevoerd met vier parallelle review-agents en daarna geverifieerd in de code. Deze branch bevat de fixes; onderaan staat wat bewust nog open is.
 
