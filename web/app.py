@@ -4323,6 +4323,20 @@ def get_security_audit():
                                    '2FA is not enabled for this dashboard',
                                    'Enable TOTP or email 2FA in Settings'))
 
+    # --- SMTP certificate verification ---
+    smtp_cfg = CONFIG.get('smtp', {})
+    if smtp_cfg.get('host') and smtp_cfg.get('encryption', 'starttls') != 'none':
+        if smtp_cfg.get('verify_tls', True):
+            checks.append(_audit_check('smtp_tls', 'SMTP certificate verification', 'ok',
+                                       'The mail server certificate is verified'))
+        else:
+            checks.append(_audit_check('smtp_tls', 'SMTP certificate verification', 'warn',
+                                       'The mail server certificate is not verified, so the SMTP password '
+                                       'and email 2FA codes could be intercepted',
+                                       'Enable "Verify TLS certificate" in Settings → SMTP and send a test '
+                                       'email (keep it off only for your own mail server with a '
+                                       'self-signed certificate)'))
+
     # --- Backup freshness ---
     backup_status = _load_backup_status()
     last_success = backup_status.get('last_success')
