@@ -258,7 +258,17 @@ What it backs up:
 - Node/Python/static site files without rebuildable dependencies such as `node_modules`, `.next`, `venv`, `.git`, caches, logs and bytecode.
 - Nginx/Caddy, Let's Encrypt, cron/systemd/PHP/MySQL/fail2ban/UFW/SSH metadata, plus selected site `.env` and `wp-config.php` files.
 - VPS Manager state (`data/` with `config.json`, secret key, VAPID keys) — these are not in git, so this tarball is the only way to recover 2FA and push subscriptions.
+- MariaDB users and grants (`_grants_DATE.sql.gz`), so a restore also brings back the database accounts the sites log in with.
 - A daily checksum manifest covering current-day DB/config files and all mirrored site files.
+
+**Manager installed somewhere else than `/var/www/vps-manager`?** The script looks for `.backup_env` there by default, so pass its real path in the cron line and set the matching directories in `.backup_env` (example for `/var/www/vps.example.com`):
+
+```bash
+echo '0 3 * * * root BACKUP_ENV=/var/www/vps.example.com/data/.backup_env /usr/local/bin/vps-backup.sh' | sudo tee /etc/cron.d/vps-backup
+# in .backup_env:
+SKIP_DIRS="html vps.example.com"
+MANAGER_DATA_DIR=/var/www/vps.example.com/data
+```
 
 If the `mysql` client is installed but listing the databases fails (MariaDB down, no credentials in `/root/.my.cnf`), the backup is reported as failed instead of succeeding with 0 dumps. Set `MYSQL_BACKUP=no` in `.backup_env` on hosts that only have the client installed.
 
@@ -308,7 +318,7 @@ Restore order:
 2. Restore `/etc` web/system config from `configs/*_YYYYMMDD.tar.gz`.
 3. Restore site files from `sites/<site>/`.
 4. Restore `.env` / `wp-config.php` from `configs/`.
-5. Restore MariaDB with `gunzip -c databases/<db>_YYYYMMDD.sql.gz | mysql`.
+5. Restore MariaDB: per database `mysql -e "CREATE DATABASE IF NOT EXISTS <db>"` and `gunzip -c databases/<db>_YYYYMMDD.sql.gz | mysql <db>` (the dumps contain no `CREATE DATABASE`/`USE`). Then restore users and grants with `gunzip -c databases/_grants_YYYYMMDD.sql.gz | mysql --force` (`--force` skips accounts that already exist, such as `root`).
 6. Restore SQLite `.db` files to their original paths and fix ownership.
 7. Restore the VPS Manager `data/` directory from `configs/vps-manager-data_YYYYMMDD.tar.gz` (2FA, secret key, VAPID keys, settings).
 8. Restart services/PM2 and verify HTTP, database login and SSL.
@@ -358,6 +368,11 @@ vps.example.com {
 Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
+
+### v2.0.1 - Backup Script Fixes
+- **Fix: `.backup_env` overrides were applied too late** - The script derived `SKIP_CONFIG_DIRS`, the checksum file and the lock file from the defaults *before* reading `.backup_env`. A custom `SKIP_DIRS` therefore still copied `.env`/`wp-config.php` from the skipped directories, and a custom `BACKUP_DIR` wrote the checksum manifest and lock file to the default location. `.backup_env` is now read first
+- **Database users and grants are backed up again** - A restore brought back every table but no DB user or privilege, so no site could connect. `vps-backup.sh` now writes `databases/_grants_DATE.sql.gz` (MariaDB `mysqldump --system=users`); on MySQL it logs a warning instead of failing the backup
+- **Docs** - Installing the manager outside `/var/www/vps-manager` needs `BACKUP_ENV` in the cron line plus `SKIP_DIRS`/`MANAGER_DATA_DIR` in `.backup_env`; see *VPS Backup Script*
 
 ### v2.0.0 - New Design, Much Faster, Security & Reliability Overhaul
 - **New design** - Calmer interface with dark and light themes (follows the OS or a toggle), sidebar status hints, a "Needs attention" dashboard with one resources panel (1h/6h/24h), tables with problems first, self-hosted IBM Plex fonts; no external resources at all

@@ -9,13 +9,21 @@
 set -Eeuo pipefail
 umask 027
 
+BACKUP_ENV="${BACKUP_ENV:-/var/www/vps-manager/data/.backup_env}"
+# Load overrides first: the defaults below are derived from each other
+# (SKIP_CONFIG_DIRS from SKIP_DIRS, CHECKSUM_FILE from BACKUP_DIR), so values
+# set in $BACKUP_ENV must be known before those are computed.
+if [ -f "$BACKUP_ENV" ]; then
+    # shellcheck disable=SC1090
+    source "$BACKUP_ENV"
+fi
+
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/vps}"
 DATE=$(date +%Y%m%d)
 RETENTION_DAYS="${RETENTION_DAYS:-7}"
 CHECKSUM_FILE="$BACKUP_DIR/checksums_$DATE.sha256"
 LOG="${LOG:-/var/log/vps-backup.log}"
 WEBHOOK_URL="${WEBHOOK_URL:-http://127.0.0.1:5050/api/backup/webhook}"
-BACKUP_ENV="${BACKUP_ENV:-/var/www/vps-manager/data/.backup_env}"
 WWW_DIR="${WWW_DIR:-/var/www}"
 LOCK_FILE="$BACKUP_DIR/.vps-backup.lock"
 # Optional: user that may read the backups (for the rsync pull from the NAS).
@@ -32,11 +40,6 @@ MANAGER_DATA_DIR="${MANAGER_DATA_DIR:-/var/www/vps-manager/data}"
 SKIP_DIRS="${SKIP_DIRS:-html vps-manager}"
 SKIP_CONFIG_DIRS="${SKIP_CONFIG_DIRS:-$SKIP_DIRS}"
 
-WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-if [ -f "$BACKUP_ENV" ]; then
-    # shellcheck disable=SC1090
-    source "$BACKUP_ENV"
-fi
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
 
 mkdir -p "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" "$BACKUP_DIR/sites" "$(dirname "$LOG")"
@@ -169,6 +172,20 @@ while IFS= read -r db; do
     mv "$tmp" "$dest"
     DB_COUNT=$((DB_COUNT + 1))
 done <<< "$DATABASES"
+
+# Users and grants. The mysql system database is excluded above, so without
+# this a restore brings back every table but no DB user or privilege, and no
+# site can reach its data. --system=users is MariaDB-only (10.2.37+); on MySQL
+# or older MariaDB this logs a warning instead of failing the backup.
+if [ -n "$DATABASES" ]; then
+    grants_tmp="$BACKUP_DIR/databases/_grants_$DATE.sql.gz.tmp"
+    if mysqldump --system=users 2>/dev/null | gzip -c > "$grants_tmp"; then
+        mv "$grants_tmp" "$BACKUP_DIR/databases/_grants_$DATE.sql.gz"
+    else
+        rm -f "$grants_tmp"
+        echo "$(date): WARNING: could not dump DB users/grants (mysqldump --system=users needs MariaDB)" >> "$LOG"
+    fi
+fi
 
 # Auto-detect SQLite databases in /var/www. Exclude dependencies and skipped apps.
 while IFS= read -r -d '' dbfile; do
