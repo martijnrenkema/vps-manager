@@ -5,7 +5,7 @@
 
 {% block content %}
 <!-- VPS Manager Updates -->
-<div class="card" style="margin-bottom:20px">
+<div class="card">
     <div class="card-header" style="border-left:3px solid var(--purple)">
         {{ icon('download-cloud') }} VPS Manager Updates
         <span class="badge" id="appVersionBadge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">...</span>
@@ -175,7 +175,7 @@
 {% endif %}
 
 <!-- Update History -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('clock') }} Update History</div>
     <div class="card-body">
         <div id="historyTimeline" style="display:flex;gap:3px;margin-bottom:16px;flex-wrap:wrap"></div>
@@ -409,6 +409,13 @@ async function installAppUpdateFallback(installBtn, stepperEl) {
             setTimeout(function() { location.reload(); }, 8000);
             return;
         }
+        if (res.status === 409 && data.running) {
+            // De update draait al (gestart door de stream die wegviel):
+            // wachten tot de app herstart is en dan herladen.
+            showToast('The update is already running in the background. The page reloads when it is done.', 'info');
+            setTimeout(function() { location.reload(); }, 60000);
+            return;
+        }
         showToast(data.message || 'Update failed', 'error');
     } catch (err) {
         showToast('Update failed: ' + err, 'error');
@@ -460,7 +467,7 @@ async function loadHistory() {
             const statusColor = entry.status === 'success' ? 'var(--green)' : 'var(--red)';
             const statusText = entry.status === 'success' ? 'OK' : 'FAIL';
             html += '<tr>';
-            html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + time + '</td>';
+            html += '<td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">' + escHtml(time) + '</td>';
             html += '<td style="padding:8px 16px">' + sourceBadge + '</td>';
             html += '<td style="padding:8px 16px"><span style="color:' + statusColor + ';font-weight:500">' + statusText + '</span></td>';
             html += '<td style="padding:8px 16px;color:var(--text-secondary)">' + escHtml((entry.details || '-').substring(0, 120)) + '</td>';

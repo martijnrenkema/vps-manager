@@ -14,8 +14,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install flake8
-        run: python -m pip install flake8
+      - name: Install flake8 and Jinja2
+        run: python -m pip install flake8 jinja2
 
       - name: Syntax check
         run: python -m py_compile web/app.py web/config.py
@@ -26,5 +26,39 @@ jobs:
       - name: Critical lint (pyflakes errors)
         run: flake8 --select=E9,F63,F7,F82 web/
 
+      # `bash -n a.sh b.sh` only checks a.sh (the rest become its arguments),
+      # so check each script separately.
       - name: Shell script check
-        run: bash -n web/vps-backup.sh web/nas-pull-backup.sh web/update-watchdog.sh
+        run: |
+          status=0
+          for f in web/vps-backup.sh web/nas-pull-backup.sh web/update-watchdog.sh; do
+            echo "bash -n $f"
+            bash -n "$f" || status=1
+          done
+          exit $status
+
+      # ubuntu-latest ships Node.js; no setup-node needed for a syntax check.
+      - name: JavaScript syntax check
+        run: |
+          status=0
+          for f in web/static/app.js web/static/sw.js; do
+            echo "node --check $f"
+            node --check "$f" || status=1
+          done
+          exit $status
+
+      - name: Jinja template syntax check
+        run: |
+          python - <<'PY'
+          import pathlib, sys
+          from jinja2 import Environment, TemplateSyntaxError
+          env = Environment()
+          failed = False
+          for path in sorted(pathlib.Path('web/templates').glob('*.html')):
+              try:
+                  env.parse(path.read_text(encoding='utf-8'), name=path.name, filename=str(path))
+              except TemplateSyntaxError as e:
+                  failed = True
+                  print(f'::error file={path},line={e.lineno}::{e.message}')
+          sys.exit(1 if failed else 0)
+          PY

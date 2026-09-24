@@ -13,27 +13,17 @@
         <div class="card-body">
             {% if data.ufw_rules %}
             <div class="table-wrap">
-                <table class="table-responsive-cards">
-                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:60px"></th></tr></thead>
+                <table class="table-responsive-cards" id="ufwRulesTable">
+                    <thead><tr><th class="num">#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:48px"><span class="sr-only">Actions</span></th></tr></thead>
                     <tbody>
                         {% for rule in data.ufw_rules %}
                         <tr>
-                            <td data-label="#">{{ rule.number }}</td>
-                            <td data-label="To"><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</td>
-                            <td data-label="Action">
-                                {% if rule.action == 'ALLOW' %}
-                                    <span class="badge badge-green">{{ rule.action }}</span>
-                                {% elif rule.action == 'DENY' or rule.action == 'REJECT' %}
-                                    <span class="badge badge-red">{{ rule.action }}</span>
-                                {% elif rule.action == 'LIMIT' %}
-                                    <span class="badge badge-yellow">{{ rule.action }}</span>
-                                {% else %}
-                                    <span class="badge">{{ rule.action }}</span>
-                                {% endif %}
-                            </td>
-                            <td data-label="From">{{ rule.from_addr }}</td>
-                            <td data-label="Comment"><span style="color:var(--text-muted);font-size:12px">{{ rule.comment }}</span></td>
-                            <td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('{{ rule.number }}')">{{ icon('trash') }}</button></td>
+                            <td data-label="#" class="num muted">{{ rule.number }}</td>
+                            <td data-label="To"><span><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="tag">v6</span>{% endif %}</span></td>
+                            <td data-label="Action"><span class="verb verb-{{ rule.action|lower }}">{{ rule.action }}</span></td>
+                            <td data-label="From" class="mono">{{ rule.from_addr }}</td>
+                            <td data-label="Comment"><span class="muted">{{ rule.comment }}</span></td>
+                            <td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule {{ rule.number }}" title="Delete rule" data-rule="{{ rule.number }}" data-to="{{ rule.to }}" data-action="{{ rule.action }}" data-from="{{ rule.from_addr }}" data-v6="{{ '1' if rule.v6 else '0' }}" onclick="deleteUfwRule(this)">{{ icon('trash') }}</button></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -46,37 +36,37 @@
             {% endif %}
 
             <!-- Add Rule Form -->
-            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Add Rule</div>
-                <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-                    <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Port</label>
-                        <input type="number" id="ufwPort" class="form-control" placeholder="80" min="1" max="65535" style="width:90px">
+            <div class="subform">
+                <div class="subform-title">Add rule</div>
+                <div class="form-row">
+                    <div class="form-group w-sm">
+                        <label for="ufwPort">Port</label>
+                        <input type="number" id="ufwPort" class="form-control" placeholder="80" min="1" max="65535">
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Protocol</label>
-                        <select id="ufwProto" class="form-control" style="width:90px">
+                    <div class="form-group w-sm">
+                        <label for="ufwProto">Protocol</label>
+                        <select id="ufwProto" class="form-control">
                             <option value="tcp">TCP</option>
                             <option value="udp">UDP</option>
                             <option value="any">Both</option>
                         </select>
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:150px;flex:1">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">From IP (blank = Anywhere)</label>
-                        <input type="text" id="ufwFrom" class="form-control" placeholder="Anywhere">
+                    <div class="form-group grow">
+                        <label for="ufwFrom">From IP <span class="muted">(blank = anywhere)</span></label>
+                        <input type="text" id="ufwFrom" class="form-control mono" placeholder="Anywhere">
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Action</label>
-                        <select id="ufwAction" class="form-control" style="width:90px">
+                    <div class="form-group w-sm">
+                        <label for="ufwAction">Action</label>
+                        <select id="ufwAction" class="form-control">
                             <option value="allow">Allow</option>
                             <option value="deny">Deny</option>
                         </select>
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:120px;flex:1">
-                        <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Comment (optional)</label>
+                    <div class="form-group grow">
+                        <label for="ufwComment">Comment <span class="muted">(optional)</span></label>
                         <input type="text" id="ufwComment" class="form-control" placeholder="e.g. Nginx reverse proxy">
                     </div>
-                    <button class="btn btn-green" onclick="addUfwRule()">+ Add</button>
+                    <button type="button" class="btn btn-primary" onclick="addUfwRule(this)">Add rule</button>
                 </div>
             </div>
         </div>
@@ -89,27 +79,21 @@
         <div class="card-body">
             {% if data.jails %}
             <div class="table-wrap">
-                <table>
-                    <thead><tr><th>Jail</th><th>Status</th><th>Currently Banned</th><th>Total Banned</th></tr></thead>
+                <table class="table-responsive-cards">
+                    <thead><tr><th>Jail</th><th>Status</th><th class="num">Banned now</th><th class="num">Total banned</th></tr></thead>
                     <tbody>
                         {% for jail in data.jails %}
                         <tr>
-                            <td><strong>{{ jail.name }}</strong></td>
-                            <td>
+                            <td data-label="Jail"><strong>{{ jail.name }}</strong></td>
+                            <td data-label="Status">
                                 {% if jail.status == 'active' %}
                                     <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                                 {% else %}
-                                    <span class="badge badge-red">{{ jail.status }}</span>
+                                    <span class="badge badge-red"><span class="badge-dot red"></span>{{ jail.status }}</span>
                                 {% endif %}
                             </td>
-                            <td>
-                                {% if jail.banned > 0 %}
-                                    <span class="badge badge-yellow">{{ jail.banned }}</span>
-                                {% else %}
-                                    <span style="color:var(--text-muted)">0</span>
-                                {% endif %}
-                            </td>
-                            <td style="color:var(--text-muted)">{{ jail.total_banned }}</td>
+                            <td data-label="Banned now" class="num{% if jail.banned > 0 %} text-warn{% else %} muted{% endif %}">{{ jail.banned }}</td>
+                            <td data-label="Total banned" class="num muted">{{ jail.total_banned }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -119,60 +103,46 @@
                 <div class="empty-state">Unable to retrieve fail2ban status</div>
             {% endif %}
         </div>
-    </div>
-</div>
-
-<!-- Fail2ban Config -->
-<div class="grid-2col" style="margin-top:16px">
-    <div class="card">
-        <div class="card-header">
-            {{ icon('list') }} Jail Configuration
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span>
-        </div>
-        <div class="card-body">
-            {% if data.f2b_config %}
-            <div class="table-wrap">
-                <table>
-                    <tbody>
-                        <tr><td><strong>Ban Time</strong></td><td>{{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} <span class="badge badge-red" style="margin-left:8px">Permanent</span>{% endif %}</td></tr>
-                        <tr><td><strong>Find Time</strong></td><td>{{ data.f2b_config.findtime or '?' }}</td></tr>
-                        <tr><td><strong>Max Retry</strong></td><td>{{ data.f2b_config.maxretry or '?' }}</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-                <div class="empty-state">Unable to retrieve fail2ban config</div>
-            {% endif %}
-        </div>
+        <div class="card-subhead">Jail configuration <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span></div>
+        {% if data.f2b_config %}
+        <dl class="facts">
+            <div><dt>Ban time</dt><dd>{{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} <span class="badge badge-red">permanent</span>{% endif %}</dd></div>
+            <div><dt>Find time</dt><dd>{{ data.f2b_config.findtime or '?' }}</dd></div>
+            <div><dt>Max retry</dt><dd>{{ data.f2b_config.maxretry or '?' }}</dd></div>
+        </dl>
+        {% else %}
+        <div class="empty-state">Unable to retrieve fail2ban config</div>
+        {% endif %}
     </div>
 </div>
 
 <!-- DDoS Detection -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
         {{ icon('activity') }} DDoS Detection
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Real-time connection monitoring. High connection counts from a single IP or many SYN_RECV connections can indicate a DDoS attack.">?</span>
     </div>
     <div class="card-body">
         {% if data.ddos %}
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
-            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+        {% set d = data.ddos %}
+        <div class="stats-grid inset">
+            <div class="stat-card">
                 <div class="label">Established</div>
-                <div class="value" style="font-size:24px;color:{% if data.ddos.total_connections > data.ddos.conn_threshold %}var(--red){% elif data.ddos.total_connections > data.ddos.conn_threshold * 0.7 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.ddos.total_connections }}</div>
-                <div class="sub">threshold: {{ data.ddos.conn_threshold }}</div>
+                <div class="value{% if d.total_connections > d.conn_threshold %} text-err{% elif d.total_connections > d.conn_threshold * 0.7 %} text-warn{% endif %}">{{ d.total_connections }}</div>
+                <div class="sub">threshold {{ d.conn_threshold }}</div>
             </div>
-            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+            <div class="stat-card">
                 <div class="label">SYN_RECV</div>
-                <div class="value" style="font-size:24px;color:{% if data.ddos.syn_recv > data.ddos.syn_threshold %}var(--red){% elif data.ddos.syn_recv > data.ddos.syn_threshold * 0.5 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.ddos.syn_recv }}</div>
-                <div class="sub">threshold: {{ data.ddos.syn_threshold }}</div>
+                <div class="value{% if d.syn_recv > d.syn_threshold %} text-err{% elif d.syn_recv > d.syn_threshold * 0.5 %} text-warn{% endif %}">{{ d.syn_recv }}</div>
+                <div class="sub">threshold {{ d.syn_threshold }}</div>
             </div>
-            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
-                <div class="label">Top IP</div>
-                {% if data.ddos.top_ips %}
-                <div class="value" style="font-size:16px;color:{% if data.ddos.top_ips[0].count > data.ddos.ip_threshold %}var(--red){% else %}var(--text){% endif %}">{{ data.ddos.top_ips[0].count }}x</div>
-                <div class="sub">{{ data.ddos.top_ips[0].ip }}</div>
+            <div class="stat-card">
+                <div class="label">Top source</div>
+                {% if d.top_ips %}
+                <div class="value{% if d.top_ips[0].count > d.ip_threshold %} text-err{% endif %}">{{ d.top_ips[0].count }}<small class="unit">conns</small></div>
+                <div class="sub mono">{{ d.top_ips[0].ip }}</div>
                 {% else %}
-                <div class="value" style="font-size:24px;color:var(--green)">0</div>
+                <div class="value">0</div>
                 <div class="sub">no connections</div>
                 {% endif %}
             </div>
@@ -180,18 +150,12 @@
         {% if data.ddos.top_ips|length > 1 %}
         <div class="table-wrap">
             <table>
-                <thead><tr><th>IP Address</th><th>Connections</th></tr></thead>
+                <thead><tr><th>IP address</th><th class="num">Connections</th></tr></thead>
                 <tbody>
                     {% for entry in data.ddos.top_ips %}
                     <tr>
                         <td><code>{{ entry.ip }}</code></td>
-                        <td>
-                            {% if entry.count > data.ddos.ip_threshold %}
-                                <span class="badge badge-red">{{ entry.count }}</span>
-                            {% else %}
-                                {{ entry.count }}
-                            {% endif %}
-                        </td>
+                        <td class="num{% if entry.count > data.ddos.ip_threshold %} text-err{% endif %}">{{ entry.count }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -204,18 +168,18 @@
     </div>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
     <div class="card-body">
         {% if data.sessions %}
             <pre>{{ data.sessions }}</pre>
         {% else %}
-            <span style="color:var(--text-muted)">No active sessions</span>
+            <div class="empty-state">No active sessions</div>
         {% endif %}
     </div>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</div>
     <div class="card-body">
         {% if data.auth_log %}
@@ -227,19 +191,19 @@
 </div>
 
 <!-- Ban IP -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
         {{ icon('ban') }} Ban IP Address
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Permanently ban an IP address via fail2ban and add a UFW deny rule. The IP will be blocked immediately.">?</span>
     </div>
     <div class="card-body">
-        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-            <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
-                <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">IP Address</label>
-                <input type="text" id="banIpInput" class="form-control" placeholder="e.g. 1.2.3.4">
+        <div class="form-row">
+            <div class="form-group grow">
+                <label for="banIpInput">IP address</label>
+                <input type="text" id="banIpInput" class="form-control mono" placeholder="e.g. 1.2.3.4">
             </div>
-            <div class="form-group" style="min-width:150px;margin-bottom:0">
-                <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Jail</label>
+            <div class="form-group w-md">
+                <label for="banJailSelect">Jail</label>
                 <select id="banJailSelect" class="form-control">
                     {% if data.jails %}
                         {% for jail in data.jails %}
@@ -250,50 +214,50 @@
                     {% endif %}
                 </select>
             </div>
-            <button class="btn btn-red" onclick="banIp()" id="banBtn">{{ icon('ban') }} Ban</button>
+            <button type="button" class="btn btn-red" onclick="banIp()" id="banBtn">Ban IP…</button>
         </div>
     </div>
 </div>
 
 <!-- Currently Banned IPs (structured) -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
-        {{ icon('shield') }} Currently Banned IPs <span id="bannedCount" style="color:var(--text-muted);font-weight:normal"></span>
-        <div style="display:flex;gap:8px;align-items:center;margin-left:auto">
-            <input type="text" id="bannedSearch" class="form-control" placeholder="Search IP, jail, country..." style="width:180px;height:30px;font-size:12px" oninput="bannedPage=1;renderBannedIps()">
-            <select id="bannedPerPageSelect" class="form-control" style="width:auto;height:30px;font-size:12px;padding:2px 8px" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
+        {{ icon('shield') }} Currently banned IPs <span id="bannedCount" class="card-meta"></span>
+        <div class="card-tools">
+            <input type="text" id="bannedSearch" class="form-control form-control-sm" placeholder="Search IP, jail, country…" aria-label="Search banned IPs" oninput="bannedPage=1;renderBannedIps()">
+            <select id="bannedPerPageSelect" class="form-control form-control-sm" aria-label="Banned IPs per page" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
                 <option value="25">25</option>
                 <option value="50">50</option>
                 <option value="100">100</option>
             </select>
-            <button class="btn btn-sm" onclick="loadBannedIps()">{{ icon('refresh') }}</button>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="loadBannedIps()" aria-label="Refresh banned IPs" title="Refresh">{{ icon('refresh') }}</button>
         </div>
     </div>
     <div class="card-body">
         <div id="bannedIpsContainer">
-            <div class="empty-state">Loading...</div>
+            <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
         </div>
-        <div style="display:flex;justify-content:center;gap:8px;margin-top:16px" id="bannedPagination"></div>
+        <div class="pager" id="bannedPagination"></div>
     </div>
 </div>
 
 <!-- Whitelist Management -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
         {{ icon('list') }} Fail2ban Whitelist (ignoreip)
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="IPs in this whitelist will never be banned by fail2ban. Always keep 127.0.0.1 and your own IP here to avoid locking yourself out.">?</span>
     </div>
     <div class="card-body">
         <div id="whitelistContainer">
-            <div class="empty-state">Loading...</div>
+            <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:flex-end;margin-top:16px;flex-wrap:wrap">
-            <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
-                <label style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Add IP / CIDR</label>
-                <input type="text" id="whitelistInput" class="form-control" placeholder="e.g. 192.168.1.0/24">
+        <div class="form-row" style="margin-top:14px">
+            <div class="form-group grow">
+                <label for="whitelistInput">Add IP / CIDR / hostname</label>
+                <input type="text" id="whitelistInput" class="form-control mono" placeholder="e.g. 192.168.1.0/24" onkeydown="if (event.key === 'Enter') { event.preventDefault(); addWhitelistIp(); }">
             </div>
-            <button class="btn" onclick="addWhitelistIp()">+ Add</button>
-            <button class="btn btn-green" onclick="saveWhitelist()" id="saveWhitelistBtn">{{ icon('save') }} Save</button>
+            <button type="button" class="btn" onclick="addWhitelistIp()">+ Add</button>
+            <button type="button" class="btn btn-primary" onclick="saveWhitelist()" id="saveWhitelistBtn" disabled title="Available once the current whitelist has loaded">{{ icon('save') }} Save</button>
         </div>
     </div>
 </div>
@@ -305,7 +269,7 @@
     let whitelistIps = [];
 
     // --- UFW Rules ---
-    async function addUfwRule() {
+    async function addUfwRule(btn) {
         const port = document.getElementById('ufwPort').value.trim();
         const proto = document.getElementById('ufwProto').value;
         const from_ip = document.getElementById('ufwFrom').value.trim();
@@ -316,41 +280,22 @@
         if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
             showToast('Port must be between 1 and 65535', 'error'); return;
         }
-        try {
-            const res = await fetch('/firewall/ufw/add', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                body: JSON.stringify({port, proto, from_ip, action, comment}),
-            });
-            const data = await res.json();
-            if (res.ok) {
-                showToast(data.message, 'success');
-                document.getElementById('ufwPort').value = '';
-                document.getElementById('ufwFrom').value = '';
-                document.getElementById('ufwComment').value = '';
-                refreshUfwTable();
-            } else {
-                showToast(data.message || 'Failed to add rule', 'error');
-            }
-        } catch (e) {
-            showToast('Connection error', 'error');
-        }
-    }
-
-    async function deleteUfwRule(ruleNumber) {
-        showConfirm('Delete UFW Rule', `Delete rule #${ruleNumber}?`, async function() {
+        await withBusy(btn, async function() {
             try {
-                const res = await fetch('/firewall/ufw/delete', {
+                const res = await fetch('/firewall/ufw/add', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: JSON.stringify({rule_number: ruleNumber}),
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({port, proto, from_ip, action, comment}),
                 });
                 const data = await res.json();
                 if (res.ok) {
                     showToast(data.message, 'success');
+                    document.getElementById('ufwPort').value = '';
+                    document.getElementById('ufwFrom').value = '';
+                    document.getElementById('ufwComment').value = '';
                     refreshUfwTable();
                 } else {
-                    showToast(data.message || 'Failed to delete rule', 'error');
+                    showToast(data.message || 'Failed to add rule', 'error');
                 }
             } catch (e) {
                 showToast('Connection error', 'error');
@@ -358,20 +303,55 @@
         });
     }
 
+    // Rule numbers shift when ufw/fail2ban change rules, so we send the rule as
+    // we last saw it; the server answers 409 if rule N no longer matches.
+    async function deleteUfwRule(btn) {
+        const d = btn.dataset;
+        const ruleNumber = d.rule;
+        const expected = { to: d.to, action: d.action, from_addr: d.from, v6: d.v6 === '1' };
+        const desc = `#${ruleNumber}: ${d.action} ${d.to} from ${d.from}${expected.v6 ? ' (v6)' : ''}`;
+        showConfirm('Delete UFW rule', `Delete rule ${desc}?`, async function() {
+            await withBusy(btn, async function() {
+                try {
+                    const res = await fetch('/firewall/ufw/delete', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({rule_number: ruleNumber, expected: expected}),
+                    });
+                    let data = {};
+                    try { data = await res.json(); } catch (e) { data = {}; }
+                    if (res.ok && data.status !== 'error') {
+                        showToast(data.message || 'Rule deleted', 'success');
+                        refreshUfwTable();
+                    } else if (res.status === 409) {
+                        showToast(data.message || 'The firewall rules changed in the meantime. The list has been reloaded; please try again.', 'warning');
+                        refreshUfwTable();
+                    } else {
+                        showToast(data.message || 'Failed to delete rule', 'error');
+                    }
+                } catch (e) {
+                    showToast('Connection error', 'error');
+                }
+            });
+        });
+    }
+
+    const TRASH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+
     async function refreshUfwTable() {
         try {
             const res = await fetch('/api/firewall/ufw-rules');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const rules = await res.json();
-            const tbody = document.querySelector('.card:first-child table tbody');
-            if (!tbody) return;
+            const tbody = document.querySelector('#ufwRulesTable tbody');
+            if (!tbody) { location.reload(); return; }
             tbody.innerHTML = rules.map(r => {
-                let badge = 'badge';
-                if (r.action === 'ALLOW') badge = 'badge badge-green';
-                else if (r.action === 'DENY' || r.action === 'REJECT') badge = 'badge badge-red';
-                else if (r.action === 'LIMIT') badge = 'badge badge-yellow';
-                const v6 = r.v6 ? ' <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>' : '';
-                const comment = r.comment ? `<span style="color:var(--text-muted);font-size:12px">${escHtml(r.comment)}</span>` : '';
-                return `<tr><td>${escHtml(String(r.number))}</td><td><code>${escHtml(r.to)}</code>${v6}</td><td><span class="${badge}">${escHtml(r.action)}</span></td><td>${escHtml(r.from_addr)}</td><td>${comment}</td><td><button class="btn btn-sm btn-red" onclick="deleteUfwRule('${escHtml(String(r.number))}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button></td></tr>`;
+                const verb = 'verb verb-' + String(r.action || '').toLowerCase().replace(/[^a-z]/g, '');
+                const v6 = r.v6 ? ' <span class="tag">v6</span>' : '';
+                const comment = r.comment ? `<span class="muted">${escHtml(r.comment)}</span>` : '';
+                const num = escHtml(String(r.number));
+                return `<tr><td data-label="#" class="num muted">${num}</td><td data-label="To"><span><code>${escHtml(r.to)}</code>${v6}</span></td><td data-label="Action"><span class="${verb}">${escHtml(r.action)}</span></td><td data-label="From" class="mono">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
+                    `<td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
             }).join('');
         } catch (e) {
             showToast('Could not refresh firewall rules', 'error');
@@ -392,7 +372,7 @@
             try {
                 const res = await fetch('/firewall/ban', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ip, jail}),
                 });
                 const data = await res.json();
@@ -430,7 +410,7 @@
         return `${m}m`;
     }
 
-    let bannedIpsInterval = null;
+    let bannedIpsPoller = null;
     let allBannedIps = [];
     let bannedPage = 1;
     let bannedPerPage = 25;
@@ -452,6 +432,7 @@
         const container = document.getElementById('bannedIpsContainer');
         try {
             const res = await fetch('/firewall/banned-ips');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const jails = await res.json();
 
             // Flatten to single array
@@ -473,11 +454,14 @@
 
             renderBannedIps();
 
-            if (allBannedIps.length > 0 && !bannedIpsInterval) {
-                bannedIpsInterval = setInterval(loadBannedIps, 30000);
-            } else if (allBannedIps.length === 0 && bannedIpsInterval) {
-                clearInterval(bannedIpsInterval);
-                bannedIpsInterval = null;
+            // Keep "remaining" times fresh while there are bans; the server caches
+            // this list for ~30s, so polling faster than 60s gains nothing.
+            // Pauses while the tab is hidden and refreshes when it is shown again.
+            if (allBannedIps.length > 0 && !bannedIpsPoller) {
+                bannedIpsPoller = startVisiblePolling(loadBannedIps, 60000);
+            } else if (allBannedIps.length === 0 && bannedIpsPoller) {
+                bannedIpsPoller.stop();
+                bannedIpsPoller = null;
             }
         } catch (e) {
             container.innerHTML = '<div class="empty-state">Failed to load banned IPs</div>';
@@ -506,7 +490,7 @@
 
         if (filtered.length === 0) {
             container.innerHTML = allBannedIps.length === 0
-                ? '<span class="badge badge-green">No banned IPs</span>'
+                ? '<div class="empty-state">No banned IPs right now</div>'
                 : '<div class="empty-state">No matching IPs found</div>';
             pagDiv.innerHTML = '';
             return;
@@ -517,22 +501,22 @@
         const start = (bannedPage - 1) * bannedPerPage;
         const pageItems = filtered.slice(start, start + bannedPerPage);
 
-        let html = '<div class="table-wrap"><table><thead><tr><th>IP Address</th><th>Jail</th><th>Reason</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
+        let html = '<div class="table-wrap"><table class="table-responsive-cards"><thead><tr><th>IP Address</th><th>Jail</th><th>Reason</th><th>Banned at</th><th>Duration</th><th>Remaining</th><th style="width:80px">Action</th></tr></thead><tbody>';
         pageItems.forEach(entry => {
             const duration = entry.duration != null ? formatBanDuration(entry.duration) : '-';
             const remaining = entry.remaining != null ? formatDuration(entry.remaining) : '-';
-            const countBadge = entry.bancount > 1 ? ` <span class="badge badge-red" title="Banned ${entry.bancount} times" style="font-size:10px">${entry.bancount}x</span>` : '';
+            const countBadge = entry.bancount > 1 ? ` <span class="badge badge-red" title="Banned ${escHtml(entry.bancount)} times" style="font-size:10px">${escHtml(entry.bancount)}x</span>` : '';
             const flag = entry.countryCode ? countryFlag(entry.countryCode) + ' ' : '';
             const countryTitle = entry.country ? ` title="${escHtml(entry.country)}"` : '';
             const reason = jailReasons[entry.jail] || entry.jail;
             html += `<tr>
-                <td><span${countryTitle}>${flag}</span><code>${escHtml(entry.ip)}</code>${countBadge}</td>
-                <td><span class="badge badge-yellow" style="font-size:10px">${escHtml(entry.jail)}</span></td>
-                <td style="font-size:12px;color:var(--text-muted)">${escHtml(reason)}</td>
-                <td style="font-size:12px;color:var(--text-muted)">${escHtml(entry.banned_at)}</td>
-                <td style="font-size:12px">${duration}</td>
-                <td>${remaining}</td>
-                <td><button class="btn btn-sm btn-green" onclick="unbanIp('${escHtml(entry.ip)}', '${escHtml(entry.jail)}')">Unban</button></td>
+                <td data-label="IP Address"><span><span${countryTitle}>${flag}</span><code>${escHtml(entry.ip)}</code>${countBadge}</span></td>
+                <td data-label="Jail"><span class="badge badge-yellow" style="font-size:10px">${escHtml(entry.jail)}</span></td>
+                <td data-label="Reason" style="font-size:12px;color:var(--text-muted)">${escHtml(reason)}</td>
+                <td data-label="Banned at" style="font-size:12px;color:var(--text-muted)">${escHtml(entry.banned_at)}</td>
+                <td data-label="Duration" style="font-size:12px">${duration}</td>
+                <td data-label="Remaining">${remaining}</td>
+                <td data-label=""><button type="button" class="btn btn-sm btn-green" data-ip="${escHtml(entry.ip)}" data-jail="${escHtml(entry.jail)}" onclick="unbanIp(this.dataset.ip, this.dataset.jail, this)">Unban</button></td>
             </tr>`;
         });
         html += '</tbody></table></div>';
@@ -550,51 +534,75 @@
         }
     }
 
-    async function unbanIp(ip, jail) {
+    async function unbanIp(ip, jail, btn) {
         showConfirm('Unban IP', `Unban ${ip} from jail "${jail}"?`, async function() {
-            try {
-                const res = await fetch('/firewall/unban', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: JSON.stringify({ip, jail}),
-                });
-                const data = await res.json();
-                if (res.ok) {
-                    showToast(data.message, 'success');
-                    loadBannedIps();
-                } else {
-                    showToast(data.message || 'Unban failed', 'error');
+            await withBusy(btn, async function() {
+                try {
+                    const res = await fetch('/firewall/unban', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ip, jail}),
+                    });
+                    const data = await res.json();
+                    if (res.ok) {
+                        showToast(data.message, 'success');
+                        loadBannedIps();
+                    } else {
+                        showToast(data.message || 'Unban failed', 'error');
+                    }
+                } catch (e) {
+                    showToast('Connection error', 'error');
                 }
-            } catch (e) {
-                showToast('Connection error', 'error');
-            }
-        });
+            });
+        }, { destructive: false, confirmLabel: 'Unban' });
     }
 
     // --- Whitelist ---
+    // Save stays disabled until the current list was read successfully:
+    // saving an empty/unknown list would wipe the real ignoreip entries.
+    let whitelistLoaded = false;
+
+    function setWhitelistLoaded(ok) {
+        whitelistLoaded = ok;
+        const btn = document.getElementById('saveWhitelistBtn');
+        btn.disabled = !ok;
+        btn.title = ok ? '' : 'Available once the current whitelist has loaded';
+    }
+
     async function loadWhitelist() {
         const container = document.getElementById('whitelistContainer');
+        setWhitelistLoaded(false);
+        let msg = 'Failed to load whitelist';
         try {
             const res = await fetch('/firewall/whitelist');
-            const data = await res.json();
-            whitelistIps = data.ips || [];
-            renderWhitelist();
+            const data = await res.json().catch(() => null);
+            if (res.ok && data && data.status !== 'error' && Array.isArray(data.ips)) {
+                whitelistIps = data.ips;
+                setWhitelistLoaded(true);
+                renderWhitelist();
+                return;
+            }
+            if (data && data.message) msg = data.message;
+            else msg += ' (HTTP ' + res.status + ')';
         } catch (e) {
-            container.innerHTML = '<div class="empty-state">Failed to load whitelist</div>';
+            msg = 'Failed to load whitelist: connection error';
         }
+        container.innerHTML = '<div class="empty-state" role="alert" style="color:var(--red)">' + escHtml(msg) +
+            '<div style="margin-top:10px;color:var(--text-muted)">Saving is disabled so the existing list is not overwritten. ' +
+            '<button type="button" class="btn btn-sm" onclick="loadWhitelist()">Retry</button></div></div>';
     }
 
     function renderWhitelist() {
         const container = document.getElementById('whitelistContainer');
         if (whitelistIps.length === 0) {
-            container.innerHTML = '<span style="color:var(--text-muted)">No whitelisted IPs</span>';
+            container.innerHTML = '<div class="muted" style="padding:2px 0 4px">No whitelisted IPs</div>';
             return;
         }
         let html = '<div class="table-wrap"><table><thead><tr><th>IP / CIDR</th><th style="width:80px">Action</th></tr></thead><tbody>';
         whitelistIps.forEach((ip, idx) => {
             html += `<tr>
                 <td><code>${escHtml(ip)}</code></td>
-                <td><button class="btn btn-sm btn-red" onclick="removeWhitelistIp(${idx})">{{ icon('trash') }} Del</button></td>
+                <td><button type="button" class="btn btn-sm btn-red" aria-label="Remove ${escHtml(ip)} from whitelist" onclick="removeWhitelistIp(${idx})">{{ icon('trash') }} Del</button></td>
             </tr>`;
         });
         html += '</tbody></table></div>';
@@ -604,12 +612,14 @@
     function addWhitelistIp() {
         const input = document.getElementById('whitelistInput');
         const val = input.value.trim();
-        if (!val) { showToast('Enter an IP or CIDR', 'error'); return; }
-        // Basic validation: IPv4(/CIDR) or IPv6(/CIDR); de server valideert strikt
+        if (!val) { showToast('Enter an IP, CIDR or hostname', 'error'); return; }
+        // Basic validation: IPv4(/CIDR), IPv6(/CIDR) or a hostname (fail2ban
+        // accepts those in ignoreip); the server validates strictly.
         const ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(\/\d{1,2})?$/;
         const ipv6 = /^[0-9a-fA-F:]{2,39}(\/\d{1,3})?$/;
-        if (!ipv4.test(val) && !(val.includes(':') && ipv6.test(val))) {
-            showToast('Invalid IP or CIDR notation', 'error'); return;
+        const hostname = /^(?=.{1,253}$)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+        if (!ipv4.test(val) && !(val.includes(':') && ipv6.test(val)) && !(/[a-zA-Z]/.test(val) && hostname.test(val))) {
+            showToast('Invalid IP, CIDR or hostname', 'error'); return;
         }
         if (whitelistIps.includes(val)) {
             showToast('IP already in whitelist', 'error'); return;
@@ -624,13 +634,28 @@
         renderWhitelist();
     }
 
-    async function saveWhitelist() {
+    function saveWhitelist() {
+        if (!whitelistLoaded) return;
+        const hasV4Loopback = whitelistIps.some(ip => /^127\./.test(ip) || ip === 'localhost');
+        const hasV6Loopback = whitelistIps.some(ip => ip === '::1' || ip === '::1/128');
+        if (!hasV4Loopback || !hasV6Loopback) {
+            const missing = [!hasV4Loopback ? '127.0.0.1/8' : null, !hasV6Loopback ? '::1' : null].filter(Boolean).join(' and ');
+            showConfirm('Save whitelist without localhost?',
+                'The whitelist does not contain ' + missing + '. Without the loopback addresses fail2ban can ban local services ' +
+                '(health checks, the panel itself, mail) that connect from this server. Save anyway?',
+                doSaveWhitelist, { destructive: true, confirmLabel: 'Save anyway' });
+            return;
+        }
+        doSaveWhitelist();
+    }
+
+    async function doSaveWhitelist() {
         const btn = document.getElementById('saveWhitelistBtn');
         btn.disabled = true;
         try {
             const res = await fetch('/firewall/whitelist', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ips: whitelistIps}),
             });
             const data = await res.json();
@@ -642,7 +667,7 @@
         } catch (e) {
             showToast('Connection error', 'error');
         }
-        btn.disabled = false;
+        btn.disabled = !whitelistLoaded;
     }
 
 

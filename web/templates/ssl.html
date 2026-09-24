@@ -5,47 +5,46 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header" style="justify-content:space-between">
+    <div class="card-header">
         <span>{{ icon('lock') }} {% if web_server == 'caddy' %}SSL Certificates (Caddy Auto-HTTPS){% else %}Let's Encrypt Certificates{% endif %} <span class="tooltip-icon" data-bs-toggle="tooltip" title="{% if web_server == 'caddy' %}Caddy automatically manages SSL certificates via ACME. Certificates are auto-renewed before expiry.{% else %}Free SSL/TLS certificates from Let's Encrypt. Certificates expire after 90 days and should be renewed before 30 days remaining.{% endif %}">?</span></span>
         {% if web_server == 'caddy' %}
-        <button class="btn btn-sm" onclick="showConfirm('Reload Caddy', 'Reload Caddy to trigger certificate check?', renewAll)">{{ icon('refresh') }} Reload Caddy</button>
+        <button type="button" class="btn btn-sm" onclick="showConfirm('Reload Caddy', 'Reload Caddy to trigger certificate check?', renewAll)">{{ icon('refresh') }} Reload Caddy</button>
         {% else %}
-        <button class="btn btn-sm btn-green" onclick="showConfirm('SSL Renewal', 'Force renew all certificates?', renewAll)">{{ icon('refresh') }} Renew All</button>
+        <button type="button" class="btn btn-sm" onclick="showConfirm('SSL Renewal', 'Force renew all certificates?', renewAll)">{{ icon('refresh') }} Renew All</button>
         {% endif %}
     </div>
     <div class="card-body">
-        {% if certs %}
-        <div class="table-wrap">
-            <table class="table-responsive-cards">
+        <div class="table-wrap" id="sslTableWrap"{% if not certs %} style="display:none"{% endif %}>
+            <table class="table-responsive-cards" id="sslTable">
                 <thead>
                     <tr>
                         <th>Domain(s)</th>
                         <th>Expires</th>
-                        <th>Days</th>
+                        <th class="num">Days left</th>
                         <th>Status</th>
-                        <th>Action</th>
+                        <th class="r"><span class="sr-only">Action</span></th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for cert in certs %}
-                    <tr>
-                        <td data-label="Domain">{{ cert.domain }}</td>
-                        <td data-label="Expires">{{ cert.expiry }}</td>
-                        <td data-label="Days Left">{{ cert.days_left }}</td>
+                    {% for cert in (certs or []) %}
+                    <tr{% if cert.days_left <= 7 %} class="problem"{% elif cert.days_left <= 30 %} class="problem is-warn"{% endif %}>
+                        <td data-label="Domain" class="name">{{ cert.domain }}</td>
+                        <td data-label="Expires" class="num" style="text-align:left">{{ cert.expiry }}</td>
+                        <td data-label="Days Left" class="num{% if cert.days_left <= 7 %} text-err{% elif cert.days_left <= 30 %} text-warn{% endif %}">{{ cert.days_left }}</td>
                         <td data-label="Status">
                             {% if cert.days_left > 30 %}
-                                <span class="badge badge-green">OK</span>
+                                <span class="badge badge-green"><span class="badge-dot green"></span>valid</span>
                             {% elif cert.days_left > 7 %}
-                                <span class="badge badge-yellow">Expiring soon</span>
+                                <span class="badge badge-yellow"><span class="badge-dot yellow"></span>expiring soon</span>
                             {% else %}
-                                <span class="badge badge-red">Critical!</span>
+                                <span class="badge badge-red"><span class="badge-dot red"></span>critical</span>
                             {% endif %}
                         </td>
-                        <td data-label="Action">
+                        <td data-label="Action" class="r">
                             {% if web_server != 'caddy' %}
-                            <button class="btn btn-sm" onclick="renewCert({{ cert.domain.split(' ')[0] | tojson }})">Renew</button>
+                            <button type="button" class="btn btn-sm btn-ghost" data-domain="{{ cert.name or cert.domain.split(' ')[0] }}" onclick="renewCert(this.dataset.domain, this)">Renew</button>
                             {% else %}
-                            <span style="font-size:12px;color:var(--text-muted)">Auto</span>
+                            <span class="muted">auto</span>
                             {% endif %}
                         </td>
                     </tr>
@@ -53,9 +52,7 @@
                 </tbody>
             </table>
         </div>
-        {% else %}
-        <div class="empty-state">Unable to retrieve SSL certificates.</div>
-        {% endif %}
+        <div class="empty-state" id="sslEmpty"{% if certs %} style="display:none"{% endif %}>Unable to retrieve SSL certificates.</div>
     </div>
 </div>
 
@@ -69,63 +66,72 @@
 
 {% block scripts %}
 <script>
-async function renewCert(domain) {
+async function postRenew(payload, startText) {
     document.getElementById('renewOutput').style.display = 'block';
-    document.getElementById('renewLog').textContent = 'Renewing ' + domain + '...';
+    const log = document.getElementById('renewLog');
+    log.textContent = startText;
+    let ok = false;
     try {
-        var res = await fetch('/ssl/renew', {
+        const res = await fetch('/ssl/renew', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({domain: domain})
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
         });
-        var data = await res.json();
-        document.getElementById('renewLog').textContent = data.output || data.message || 'Done.';
-        showToast(res.ok ? 'Renewal successful' : 'Renewal failed', res.ok ? 'success' : 'error');
+        let data = {};
+        try { data = await res.json(); } catch (e) { data = {}; }
+        ok = res.ok && data.status !== 'error';
+        log.textContent = data.output || data.message || (ok ? 'Done.' : 'Request failed (HTTP ' + res.status + ')');
+        showToast(ok ? 'Renewal successful' : (data.message || 'Renewal failed'), ok ? 'success' : 'error');
     } catch (e) {
-        document.getElementById('renewLog').textContent = 'Connection error';
+        log.textContent = 'Connection error';
         showToast('Connection error', 'error');
     }
-    if (res.ok) refreshSslTable();
+    if (ok) refreshSslTable();
+    return ok;
 }
 
-async function renewAll() {
-    document.getElementById('renewOutput').style.display = 'block';
-    document.getElementById('renewLog').textContent = 'Renewing all certificates...';
-    try {
-        var res = await fetch('/ssl/renew', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({})
-        });
-        var data = await res.json();
-        document.getElementById('renewLog').textContent = data.output || data.message || 'Done.';
-        showToast(res.ok ? 'Renewal successful' : 'Renewal failed', res.ok ? 'success' : 'error');
-    } catch (e) {
-        document.getElementById('renewLog').textContent = 'Connection error';
-        showToast('Connection error', 'error');
-    }
-    if (res.ok) refreshSslTable();
+function renewCert(domain, btn) {
+    return withBusy(btn, function() { return postRenew({domain: domain}, 'Renewing ' + domain + '...'); });
+}
+
+function renewAll() {
+    return postRenew({}, 'Renewing all certificates...');
 }
 
 async function refreshSslTable() {
     try {
-        var res = await fetch('/api/ssl');
+        const res = await fetch('/api/ssl');
         if (!res.ok) return;
-        var certs = await res.json();
-        var tbody = document.querySelector('table tbody');
-        if (!tbody || !certs.length) return;
+        const certs = await res.json();
+        const wrap = document.getElementById('sslTableWrap');
+        const empty = document.getElementById('sslEmpty');
+        const tbody = document.querySelector('#sslTable tbody');
+        if (!tbody) return;
+        if (!Array.isArray(certs) || !certs.length) {
+            tbody.innerHTML = '';
+            wrap.style.display = 'none';
+            empty.style.display = '';
+            return;
+        }
+        wrap.style.display = '';
+        empty.style.display = 'none';
         tbody.innerHTML = certs.map(function(cert) {
-            var badge = cert.days_left > 30 ? '<span class="badge badge-green">OK</span>'
-                : cert.days_left > 7 ? '<span class="badge badge-yellow">Expiring soon</span>'
-                : '<span class="badge badge-red">Critical!</span>';
-            var domain = cert.domain || '';
-            var firstDomain = domain.split(' ')[0];
+            const days = Number(cert.days_left);
+            const badge = days > 30 ? '<span class="badge badge-green"><span class="badge-dot green"></span>valid</span>'
+                : days > 7 ? '<span class="badge badge-yellow"><span class="badge-dot yellow"></span>expiring soon</span>'
+                : '<span class="badge badge-red"><span class="badge-dot red"></span>critical</span>';
+            const domain = cert.domain || '';
+            const firstDomain = cert.name || domain.split(' ')[0];
             {% if web_server == 'caddy' %}
-            var actionCol = '<span style="font-size:12px;color:var(--text-muted)">Auto</span>';
+            const actionCol = '<span class="muted">auto</span>';
             {% else %}
-            var actionCol = '<button class="btn btn-sm" onclick="renewCert(\'' + firstDomain.replace(/'/g, "\\'") + '\')">Renew</button>';
+            const actionCol = '<button type="button" class="btn btn-sm btn-ghost" data-domain="' + escHtml(firstDomain) + '" onclick="renewCert(this.dataset.domain, this)">Renew</button>';
             {% endif %}
-            return '<tr><td>' + escHtml(domain) + '</td><td>' + escHtml(cert.expiry || '') + '</td><td>' + cert.days_left + '</td><td>' + badge + '</td><td>' + actionCol + '</td></tr>';
+            const tone = days <= 7 ? ' text-err' : days <= 30 ? ' text-warn' : '';
+            const rowCls = days <= 7 ? ' class="problem"' : days <= 30 ? ' class="problem is-warn"' : '';
+            return '<tr' + rowCls + '><td data-label="Domain" class="name">' + escHtml(domain) + '</td><td data-label="Expires" class="num" style="text-align:left">' + escHtml(cert.expiry || '') +
+                '</td><td data-label="Days Left" class="num' + tone + '">' + escHtml(isNaN(days) ? '' : days) + '</td><td data-label="Status">' + badge +
+                '</td><td data-label="Action" class="r">' + actionCol + '</td></tr>';
         }).join('');
     } catch(e) {}
 }

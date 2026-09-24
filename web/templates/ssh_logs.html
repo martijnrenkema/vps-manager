@@ -20,38 +20,38 @@
     <div class="card" style="margin-bottom:0;min-width:200px">
         <div class="card-header">{{ icon('shield') }} SSH Overview</div>
         <div class="card-body">
-            <div>
-                <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Failed Attempts</div>
-                <div style="font-size:28px;font-weight:700;color:{% if data.failed_count > 1000 %}var(--red){% elif data.failed_count > 100 %}var(--yellow){% else %}var(--green){% endif %};margin-bottom:16px">{{ data.failed_count | default(0) }}</div>
+            <div class="stat-card bare">
+                <div class="label">Failed attempts</div>
+                <div class="value{% if data.failed_count > 1000 %} text-err{% elif data.failed_count > 100 %} text-warn{% endif %}">{{ data.failed_count | default(0) }}</div>
             </div>
-            <div>
-                <div style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px">Accepted Logins</div>
-                <div style="font-size:28px;font-weight:700;color:var(--green)">{{ data.accepted_count | default(0) }}</div>
+            <div class="stat-card bare">
+                <div class="label">Accepted logins</div>
+                <div class="value">{{ data.accepted_count | default(0) }}</div>
             </div>
-            <div style="margin-top:12px;font-size:12px;color:var(--text-muted)">Counts from current auth.log</div>
+            <div class="sub muted" style="font-size:12px;margin-top:8px">Counts from the current auth.log</div>
         </div>
     </div>
     <div class="card" style="margin-bottom:0">
-        <div class="card-header">{{ icon('shield') }} Top Attacking IPs <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">by failed attempts</span></div>
-        <div class="card-body" style="padding:0">
+        <div class="card-header">{{ icon('shield') }} Top Attacking IPs <span class="card-meta">by failed attempts</span></div>
+        <div class="card-body flush">
             {% if data.top_attackers %}
             <div class="table-wrap">
                 <table>
-                    <thead><tr><th>IP Address</th><th>Country</th><th>Attempts</th><th></th></tr></thead>
+                    <thead><tr><th>IP address</th><th>Country</th><th class="num">Attempts</th><th><span class="sr-only">Actions</span></th></tr></thead>
                     <tbody>
                         {% for attacker in data.top_attackers[:10] %}
                         <tr>
                             <td><code>{{ attacker.ip }}</code></td>
                             <td>{% if attacker.countryCode %}<span class="country-flag">{{ attacker.countryCode | country_flag }}</span> {{ attacker.country }}{% else %}<span style="color:var(--text-muted)">-</span>{% endif %}</td>
-                            <td><span class="badge badge-{% if attacker.count > 100 %}red{% elif attacker.count > 20 %}yellow{% else %}blue{% endif %}">{{ attacker.count }}</span></td>
-                            <td><button class="btn btn-sm btn-red" onclick="banIp('{{ attacker.ip }}')" title="Ban this IP">{{ icon('shield') }} Ban</button></td>
+                            <td class="num{% if attacker.count > 100 %} text-err{% elif attacker.count > 20 %} text-warn{% endif %}">{{ attacker.count }}</td>
+                            <td class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" data-ip="{{ attacker.ip }}" onclick="banIp(this.dataset.ip, this)" title="Ban this IP">Ban…</button></td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
             {% else %}
-                <div style="padding:16px"><span class="badge badge-green">No failed attempts found</span></div>
+                <div class="empty-state">No failed attempts found</div>
             {% endif %}
         </div>
     </div>
@@ -59,8 +59,8 @@
 
 <!-- Fail2ban actions -->
 <div class="card">
-    <div class="card-header">{{ icon('shield') }} Fail2ban Actions <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">recent bans & unbans</span></div>
-    <div class="card-body" style="padding:0">
+    <div class="card-header">{{ icon('shield') }} Fail2ban Actions <span class="card-meta">recent bans & unbans</span></div>
+    <div class="card-body flush">
         {% if data.fail2ban_actions %}
         <div class="log-entries">
             {% for entry in data.fail2ban_actions | reverse %}
@@ -78,13 +78,13 @@
                     <span class="log-message">{% if entry.ip %}{{ ip_with_flag(entry.ip, entry) }}{% endif %}</span>
                 </div>
                 <div class="log-detail">
-                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    <pre class="log-raw">{{ entry.raw }}</pre>
                 </div>
             </div>
             {% endfor %}
         </div>
         {% else %}
-            <div style="padding:16px"><span class="badge badge-green">No fail2ban actions found</span></div>
+            <div class="empty-state">No fail2ban actions found</div>
         {% endif %}
     </div>
 </div>
@@ -92,10 +92,10 @@
 <!-- Recent failed attempts -->
 <div class="card">
     <div class="card-header">
-        {{ icon('file-text') }} Failed Login Attempts <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">last 30 entries</span>
-        <button class="btn btn-sm" onclick="viewFullLog('failed')" style="float:right">View more</button>
+        {{ icon('file-text') }} Failed Login Attempts <span class="card-meta">last 30 entries</span>
+        <button class="btn btn-sm btn-ghost" onclick="viewFullLog('failed')">View more</button>
     </div>
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         {% if data.recent_failed %}
         <div class="log-entries">
             {% for entry in data.recent_failed | reverse %}
@@ -107,13 +107,13 @@
                     <span class="log-message">{{ entry.message }}</span>
                 </div>
                 <div class="log-detail">
-                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    <pre class="log-raw">{{ entry.raw }}</pre>
                 </div>
             </div>
             {% endfor %}
         </div>
         {% else %}
-            <div style="padding:16px"><span class="badge badge-green">No failed login attempts</span></div>
+            <div class="empty-state">No failed login attempts</div>
         {% endif %}
     </div>
 </div>
@@ -121,28 +121,28 @@
 <!-- Recent accepted logins -->
 <div class="card">
     <div class="card-header">
-        {{ icon('file-text') }} Accepted Logins <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">last 20 entries</span>
-        <button class="btn btn-sm" onclick="viewFullLog('accepted')" style="float:right">View more</button>
+        {{ icon('file-text') }} Accepted Logins <span class="card-meta">last 20 entries</span>
+        <button class="btn btn-sm btn-ghost" onclick="viewFullLog('accepted')">View more</button>
     </div>
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         {% if data.recent_accepted %}
         <div class="log-entries">
             {% for entry in data.recent_accepted | reverse %}
             <div class="log-entry" onclick="this.classList.toggle('expanded')">
                 <div class="log-entry-summary">
                     <span class="log-timestamp">{{ entry.timestamp }}</span>
-                    <span class="log-level" style="background:rgba(63,185,80,0.15);color:var(--green)">accepted</span>
+                    <span class="log-level log-level-accepted">accepted</span>
                     {% if entry.ip %}<span style="margin-right:8px;font-size:12px">{{ ip_with_flag(entry.ip, entry) }}</span>{% endif %}
                     <span class="log-message">{{ entry.message }}</span>
                 </div>
                 <div class="log-detail">
-                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    <pre class="log-raw">{{ entry.raw }}</pre>
                 </div>
             </div>
             {% endfor %}
         </div>
         {% else %}
-            <div style="padding:16px"><span class="badge badge-green">No accepted logins found</span></div>
+            <div class="empty-state">No accepted logins found</div>
         {% endif %}
     </div>
 </div>
@@ -150,10 +150,10 @@
 <!-- Recent SSH log entries -->
 <div class="card">
     <div class="card-header">
-        {{ icon('file-text') }} Recent SSH Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">last 20 sshd entries</span>
-        <button class="btn btn-sm" onclick="viewFullLog('all')" style="float:right">View more</button>
+        {{ icon('file-text') }} Recent SSH Log <span class="card-meta">last 20 sshd entries</span>
+        <button class="btn btn-sm btn-ghost" onclick="viewFullLog('all')">View more</button>
     </div>
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         {% if data.recent_entries %}
         <div class="log-entries">
             {% for entry in data.recent_entries | reverse %}
@@ -161,7 +161,7 @@
                 <div class="log-entry-summary">
                     <span class="log-timestamp">{{ entry.timestamp }}</span>
                     {% if entry.level == 'accepted' %}
-                        <span class="log-level" style="background:rgba(63,185,80,0.15);color:var(--green)">accepted</span>
+                        <span class="log-level log-level-accepted">accepted</span>
                     {% elif entry.level == 'failed' %}
                         <span class="log-level log-level-error">failed</span>
                     {% elif entry.level == 'disconnect' %}
@@ -175,13 +175,13 @@
                     <span class="log-message">{{ entry.message }}</span>
                 </div>
                 <div class="log-detail">
-                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    <pre class="log-raw">{{ entry.raw }}</pre>
                 </div>
             </div>
             {% endfor %}
         </div>
         {% else %}
-            <div style="padding:16px"><span class="badge badge-green">No SSH log entries found</span></div>
+            <div class="empty-state">No SSH log entries found</div>
         {% endif %}
     </div>
 </div>
@@ -203,23 +203,26 @@ async function viewFullLog(filter) {
     }
 }
 
-async function banIp(ip) {
-    if (!confirm('Ban IP ' + ip + ' via fail2ban + UFW?')) return;
-    try {
-        var res = await fetch('/firewall/ban', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-            body: JSON.stringify({ip: ip, jail: 'sshd'})
+function banIp(ip, btn) {
+    showConfirm('Ban IP', 'Ban IP ' + ip + ' via fail2ban + UFW?', function() {
+        withBusy(btn, async function() {
+            try {
+                var res = await fetch('/firewall/ban', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ip: ip, jail: 'sshd'})
+                });
+                var data = await res.json();
+                if (res.ok) {
+                    showToast(data.message || 'IP banned', 'success');
+                } else {
+                    showToast(data.message || 'Failed to ban IP', 'error');
+                }
+            } catch (e) {
+                showToast('Connection error', 'error');
+            }
         });
-        var data = await res.json();
-        if (res.ok) {
-            showToast(data.message || 'IP banned', 'success');
-        } else {
-            showToast(data.message || 'Failed to ban IP', 'error');
-        }
-    } catch (e) {
-        showToast('Connection error', 'error');
-    }
+    }, { confirmLabel: 'Ban' });
 }
 </script>
 {% endblock %}

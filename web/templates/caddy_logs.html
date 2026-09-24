@@ -5,8 +5,8 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('file-text') }} Caddy Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">global (last 20 entries)</span></div>
-    <div class="card-body" style="padding:0">
+    <div class="card-header">{{ icon('file-text') }} Caddy Error Log <span class="card-meta">global (last 20 entries)</span></div>
+    <div class="card-body flush">
         {% if data.errors %}
             <div class="log-entries">
                 {% for entry in data.errors %}
@@ -17,7 +17,7 @@
                         <span class="log-message">{{ entry.message }}</span>
                     </div>
                     <div class="log-detail">
-                        <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                        <pre class="log-raw">{{ entry.raw }}</pre>
                     </div>
                 </div>
                 {% endfor %}
@@ -32,8 +32,8 @@
 
 {% if data.php_errors %}
 <div class="card">
-    <div class="card-header">{{ icon('file-text') }} PHP-FPM Error Log <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">php-fpm (last 20 entries)</span></div>
-    <div class="card-body" style="padding:0">
+    <div class="card-header">{{ icon('file-text') }} PHP-FPM Error Log <span class="card-meta">php-fpm (last 20 entries)</span></div>
+    <div class="card-body flush">
         <div class="log-entries">
             {% for entry in data.php_errors %}
             <div class="log-entry" onclick="this.classList.toggle('expanded')">
@@ -42,7 +42,7 @@
                     <span class="log-message">{{ entry.message }}</span>
                 </div>
                 <div class="log-detail">
-                    <pre style="margin:0;border:none;background:transparent;padding:8px 0;font-size:12px">{{ entry.raw }}</pre>
+                    <pre class="log-raw">{{ entry.raw }}</pre>
                 </div>
             </div>
             {% endfor %}
@@ -53,7 +53,7 @@
 
 {% if data.per_site %}
 <div class="card">
-    <div class="card-header">{{ icon('folder') }} Errors per Site <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">per-site error logs</span></div>
+    <div class="card-header">{{ icon('folder') }} Errors per Site <span class="card-meta">per-site error logs</span></div>
     <div class="card-body">
         <div class="table-wrap">
             <table>
@@ -100,7 +100,7 @@
 
 {% if data.access_summary %}
 <div class="card">
-    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span class="tooltip-icon" data-bs-toggle="tooltip" title="HTTP status codes: 2xx = success, 3xx = redirect, 4xx = client error (e.g. 404 not found), 5xx = server error." style="margin-left:0">?</span> <span style="color:var(--text-muted);font-weight:400;font-size:13px;margin-left:8px">per-site access logs</span></div>
+    <div class="card-header">{{ icon('bar-chart') }} Access Log Summary <span class="tooltip-icon" data-bs-toggle="tooltip" title="HTTP status codes: 2xx = success, 3xx = redirect, 4xx = client error (e.g. 404 not found), 5xx = server error." style="margin-left:0">?</span> <span class="card-meta">per-site access logs</span></div>
     <div class="card-body">
         <div class="table-wrap">
             <table>
@@ -145,18 +145,21 @@
 <script>
 async function viewSiteLog(site, type) {
     type = type || 'error';
+    var seq = ++_logModalSeq; // ignore out-of-order responses (see app.js)
     document.getElementById('logModal').style.display = 'flex';
     document.getElementById('logModalTitle').textContent = (type === 'access' ? 'Access log: ' : 'Error log: ') + site;
     document.getElementById('logModalContent').textContent = 'Loading...';
     try {
         var res = await fetch('/api/web-log?site=' + encodeURIComponent(site) + '&type=' + type + '&lines=200');
         var data = await res.json();
+        if (seq !== _logModalSeq) return;
         if (res.ok) {
             document.getElementById('logModalContent').textContent = data.content || '(no ' + type + ' logs)';
         } else {
             document.getElementById('logModalContent').textContent = 'Error: ' + (data.message || 'Unknown error');
         }
     } catch (e) {
+        if (seq !== _logModalSeq) return;
         document.getElementById('logModalContent').textContent = 'Error: ' + e.message;
     }
 }

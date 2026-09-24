@@ -1,19 +1,25 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="robots" content="noindex, nofollow">
+    {% include '_theme_head.html' %}
     <title>Login - VPS Manager</title>
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
-    {# Inter wordt lokaal geserveerd via de @font-face in style.css #}
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=11">
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
 </head>
 <body>
     <div class="login-container">
-        <div class="login-box">
-            <h1>VPS Manager</h1>
-            <div class="subtitle">{{ server_ip }}</div>
+        <main class="login-box">
+            <div class="login-brand">
+                <span class="host-mark" aria-hidden="true">vm</span>
+                <div class="login-brand-text">
+                    <h1>Sign in to VPS Manager</h1>
+                    <div class="subtitle">{{ server_ip }}</div>
+                </div>
+            </div>
+            <div class="login-panel">
 
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% for category, message in messages %}
@@ -27,18 +33,18 @@
                     {% if tfa_method == 'email' %}
                     <div class="form-group">
                         <label for="email_code">Email Verification Code</label>
-                        <input type="text" id="email_code" name="email_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autofocus required>
-                        <small style="color:var(--text-muted);margin-top:4px;display:block">A 6-digit code was sent to your email address</small>
+                        <input type="text" id="email_code" name="email_code" class="form-control" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autofocus required>
+                        <small>A 6-digit code was sent to your email address</small>
                     </div>
                     <button type="submit" class="btn-login">Verify</button>
-                    <div style="margin-top:12px;text-align:center">
-                        <button type="button" id="resendBtn" onclick="resendCode()" style="background:none;border:none;color:var(--blue);cursor:pointer;font-size:13px;text-decoration:underline">Resend code</button>
+                    <div class="login-foot">
+                        <button type="button" id="resendBtn" class="link-btn" onclick="resendCode()">Resend code</button>
                     </div>
                     {% else %}
                     <div class="form-group">
                         <label for="totp_code">Authenticator Code</label>
-                        <input type="text" id="totp_code" name="totp_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autofocus required>
-                        <small style="color:var(--text-muted);margin-top:4px;display:block">Enter the 6-digit code from your authenticator app</small>
+                        <input type="text" id="totp_code" name="totp_code" class="form-control" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" autofocus required>
+                        <small>Enter the 6-digit code from your authenticator app</small>
                     </div>
                     <button type="submit" class="btn-login">Verify</button>
                     {% endif %}
@@ -54,6 +60,7 @@
                     <button type="submit" class="btn-login">Login</button>
                 {% endif %}
             </form>
+            </div>
             {% if show_2fa and tfa_method == 'email' %}
             <script>
             async function resendCode() {
@@ -64,7 +71,7 @@
                 try {
                     const res = await fetch('/settings/2fa/send-code', {
                         method: 'POST',
-                        headers: {'X-CSRFToken': '{{ csrf_token() }}'}
+                        headers: {'X-CSRFToken': {{ csrf_token()|tojson }}, 'X-Requested-With': 'XMLHttpRequest'}
                     });
                     const data = await res.json();
                     btn.textContent = res.ok ? 'Code sent!' : (data.message || 'Error');
@@ -86,7 +93,7 @@
             }
             </script>
             {% endif %}
-        </div>
+        </main>
     </div>
 </body>
 </html>

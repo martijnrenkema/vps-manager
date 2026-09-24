@@ -21,7 +21,7 @@
                 <label for="confirm_password">Confirm new password</label>
                 <input type="password" id="confirm_password" class="form-control" autocomplete="new-password" required>
             </div>
-            <button type="submit" class="btn btn-green">Save Password</button>
+            <button type="submit" class="btn btn-primary">Save Password</button>
         </form>
     </div>
 </div>
@@ -68,10 +68,10 @@
             </div>
             <div class="form-group" style="max-width:200px">
                 <label for="verify_code">Enter 6-digit code to verify</label>
-                <input type="text" id="verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+                <input type="text" id="verify_code" class="form-control" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
             </div>
             <div style="display:flex;gap:8px">
-                <button class="btn btn-green" onclick="verify2FA()">Verify & Enable</button>
+                <button class="btn btn-primary" onclick="verify2FA()">Verify & Enable</button>
                 <button class="btn" onclick="cancelTfaSetup()">Cancel</button>
             </div>
         </div>
@@ -83,15 +83,15 @@
                 <input type="email" id="tfa_email" class="form-control" placeholder="you@example.com" required>
             </div>
             <div style="display:flex;gap:8px">
-                <button class="btn btn-green" onclick="enableEmail2FA()">Send Verification Code</button>
+                <button class="btn btn-primary" onclick="enableEmail2FA()">Send Verification Code</button>
                 <button class="btn" onclick="cancelTfaSetup()">Cancel</button>
             </div>
             <div id="emailVerifyStep" style="display:none;margin-top:16px">
                 <div class="form-group" style="max-width:200px">
                     <label for="email_verify_code">Enter 6-digit code from email</label>
-                    <input type="text" id="email_verify_code" class="form-control" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
+                    <input type="text" id="email_verify_code" class="form-control" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="000000" required>
                 </div>
-                <button class="btn btn-green" onclick="verifyEmail2FA()">Verify & Enable</button>
+                <button class="btn btn-primary" onclick="verifyEmail2FA()">Verify & Enable</button>
             </div>
         </div>
 
@@ -155,12 +155,19 @@
                 <label for="smtp_from">From address</label>
                 <input type="email" class="form-control" id="smtp_from" value="{{ config.smtp.from_address }}" placeholder="vps@example.com">
             </div>
+            <div class="form-group">
+                <label for="smtp_verify_tls" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
+                    <input type="checkbox" id="smtp_verify_tls" aria-describedby="smtp_verify_tls_help" {% if config.smtp.verify_tls is not defined or config.smtp.verify_tls is none or config.smtp.verify_tls %}checked{% endif %} style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
+                    Verify TLS certificate
+                </label>
+                <div id="smtp_verify_tls_help" style="font-size:12px;color:var(--text-muted);margin-top:4px">Turn off only for a self-signed mail server you trust.</div>
+            </div>
             <div class="form-group" style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border-color);">
                 <label for="notification_email">Notification recipient <span style="color:var(--text-muted);font-weight:400">(optional, defaults to from address)</span></label>
                 <input type="email" class="form-control" id="notification_email" value="{{ config.notification_email }}" placeholder="alerts@example.com">
             </div>
             <div style="display:flex;gap:8px;margin-top:12px">
-                <button type="submit" class="btn btn-green">Save SMTP Settings</button>
+                <button type="submit" class="btn btn-primary">Save SMTP Settings</button>
                 <button type="button" class="btn" onclick="testSmtp()">Send Test Email</button>
             </div>
         </form>
@@ -227,7 +234,7 @@
             <h4 style="font-size:14px;margin-bottom:12px;color:var(--text-secondary)">DDoS Detection</h4>
             <div class="form-group" style="margin-bottom:12px">
                 <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer">
-                    <input type="checkbox" id="cfg_ddos_enabled" {% if config.ddos_detection.enabled %}checked{% endif %} style="accent-color:var(--green);width:16px;height:16px;cursor:pointer">
+                    <input type="checkbox" id="cfg_ddos_enabled" {% if config.ddos_detection.enabled %}checked{% endif %} style="accent-color:var(--accent);width:16px;height:16px;cursor:pointer">
                     Enable DDoS detection <span class="tooltip-icon" data-bs-toggle="tooltip" title="When enabled, the monitor checks for unusual connection patterns and alerts you." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span>
                 </label>
             </div>
@@ -318,7 +325,7 @@
                     </div>
                     <div class="form-group">
                         <label>Webhook secret <span class="tooltip-icon" data-bs-toggle="tooltip" title="Shared secret for authenticating incoming backup webhook calls." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></label>
-                        <input type="password" class="form-control" id="cfg_backup_webhook" value="{{ config.backup.webhook_secret }}" autocomplete="off">
+                        <input type="password" class="form-control" id="cfg_backup_webhook" value="" placeholder="{{ '•••••••• (set — leave empty to keep)' if config.backup.webhook_secret else 'Not set' }}" autocomplete="new-password">
                     </div>
                 </div>
 
@@ -373,7 +380,7 @@
                 </div>
             </div>
 
-            <button type="submit" class="btn btn-green" style="margin-top:8px">Save Configuration</button>
+            <button type="submit" class="btn btn-primary" style="margin-top:8px">Save Configuration</button>
         </form>
     </div>
 </div>
@@ -447,7 +454,11 @@ async function enable2FA() {
         const res = await fetch('/settings/2fa/enable', { method: 'POST', headers: {'X-CSRFToken': csrfToken} });
         const data = await res.json();
         if (res.ok) {
-            document.getElementById('qrCodeContainer').innerHTML = `<img src="${data.qr_code}" alt="QR Code" style="border-radius:8px">`;
+            const qr = document.createElement('img');
+            qr.src = data.qr_code;
+            qr.alt = 'QR code for authenticator app';
+            qr.style.borderRadius = '8px';
+            document.getElementById('qrCodeContainer').replaceChildren(qr);
             document.getElementById('totpSecret').textContent = data.secret;
         } else {
             showToast(data.message, 'error');
@@ -554,6 +565,7 @@ async function saveSmtp(e) {
         password: document.getElementById('smtp_password').value,
         from_name: document.getElementById('smtp_from_name').value.trim(),
         from_address: document.getElementById('smtp_from').value.trim(),
+        verify_tls: document.getElementById('smtp_verify_tls').checked,
         notification_email: document.getElementById('notification_email').value.trim(),
     };
     try {
@@ -611,7 +623,7 @@ async function detectServices() {
             cb.type = 'checkbox';
             cb.value = svc;
             cb.checked = true;
-            cb.style.cssText = 'accent-color:var(--green);cursor:pointer';
+            cb.style.cssText = 'accent-color:var(--accent);cursor:pointer';
             if (isExisting) {
                 badge.style.opacity = '0.5';
                 badge.title = 'Already monitored';
@@ -663,12 +675,35 @@ async function detectWebServer() {
         const res = await fetch('/api/webserver/detect');
         const data = await res.json();
         const resultDiv = document.getElementById('detectedWebServerResult');
-        let html = `Detected: <strong>${data.detected}</strong>`;
-        html += ` (Nginx: ${data.nginx_installed ? 'installed' : 'not found'}, Caddy: ${data.caddy_installed ? 'installed' : 'not found'})`;
-        if (data.detected !== data.current) {
-            html += `<br><button class="btn btn-sm btn-green" style="margin-top:8px" onclick="document.getElementById('cfg_web_server').value='${data.detected}';toggleWebServerFields();document.getElementById('detectedWebServer').style.display='none';showToast('Web server changed to ${data.detected} - save settings to apply','success')">Switch to ${data.detected}</button>`;
+        if (!res.ok) {
+            showToast(data.message || 'Detection failed', 'error');
+            btn.disabled = false;
+            return;
         }
-        resultDiv.innerHTML = html;
+        // Built with DOM APIs: the detected name is server data and must not be
+        // interpolated into HTML or into an inline handler.
+        const detected = String(data.detected || '');
+        resultDiv.textContent = '';
+        resultDiv.append('Detected: ');
+        const strong = document.createElement('strong');
+        strong.textContent = detected || 'none';
+        resultDiv.append(strong);
+        resultDiv.append(` (Nginx: ${data.nginx_installed ? 'installed' : 'not found'}, Caddy: ${data.caddy_installed ? 'installed' : 'not found'})`);
+        if (detected && data.detected !== data.current) {
+            resultDiv.append(document.createElement('br'));
+            const switchBtn = document.createElement('button');
+            switchBtn.type = 'button';
+            switchBtn.className = 'btn btn-sm btn-green';
+            switchBtn.style.marginTop = '8px';
+            switchBtn.textContent = 'Switch to ' + detected;
+            switchBtn.addEventListener('click', function() {
+                document.getElementById('cfg_web_server').value = detected;
+                toggleWebServerFields();
+                document.getElementById('detectedWebServer').style.display = 'none';
+                showToast('Web server changed to ' + detected + ' - save settings to apply', 'success');
+            });
+            resultDiv.append(switchBtn);
+        }
         document.getElementById('detectedWebServer').style.display = 'block';
     } catch (e) {
         showToast('Connection error', 'error');
@@ -738,7 +773,10 @@ async function saveConfig(e) {
         if (res.ok) {
             showToast(result.message, 'success');
         } else {
-            showToast(result.message, 'error');
+            // Toon welk veld fout is, niet alleen "Validation failed"
+            const details = Array.isArray(result.errors) && result.errors.length
+                ? ':\n' + result.errors.join('\n') : '';
+            showToast((result.message || 'Could not save settings') + details, 'error');
         }
     } catch(e) {
         showToast('Connection error', 'error');

@@ -93,7 +93,10 @@ for uptime monitoring, PM2 health checks, or reverse proxy checks.
 
 Self-updates installed via the Updates page are guarded by a watchdog: if the
 freshly restarted app fails its health check, the update is automatically
-rolled back to the previous version and a notification is recorded.
+rolled back to the previous version and a notification is recorded. The
+watchdog probes the address from `VPS_MANAGER_HOST`/`VPS_MANAGER_PORT`
+(loopback when unset or `0.0.0.0`), health-checks the rolled-back version too,
+and only one watchdog runs at a time.
 
 ## Updating
 
@@ -257,6 +260,10 @@ What it backs up:
 - VPS Manager state (`data/` with `config.json`, secret key, VAPID keys) — these are not in git, so this tarball is the only way to recover 2FA and push subscriptions.
 - A daily checksum manifest covering current-day DB/config files and all mirrored site files.
 
+If the `mysql` client is installed but listing the databases fails (MariaDB down, no credentials in `/root/.my.cnf`), the backup is reported as failed instead of succeeding with 0 dumps. Set `MYSQL_BACKUP=no` in `.backup_env` on hosts that only have the client installed.
+
+Backup files are not world-readable: site mirrors (which include each site's `.env`) are `640` with group = the primary group of `BACKUP_READ_USER` (root if unset); database dumps and configs are `640`, owned by `BACKUP_READ_USER`. Directories stay `755` so the dashboard can show backup sizes. When the NAS pulls as a non-root SSH user, set `BACKUP_READ_USER` to that user in `.backup_env` and make sure its primary group is not shared with other users.
+
 ### Remote Pull Script (NAS / offsite)
 
 Install the NAS-side script on Synology:
@@ -284,7 +291,8 @@ The NAS script:
 - Uses a lock file to prevent overlapping runs.
 - Verifies the latest checksum manifest and reports failure if any checksum fails.
 - Creates daily hard-link snapshots in `/volume1/Backup/vps/snapshots/YYYYMMDD`.
-- Keeps snapshots for 14 days by default (`RETENTION_DAYS=14`).
+- Keeps snapshots for 14 days by default (`RETENTION_DAYS=14`), but always keeps the newest 3 (`KEEP_MIN_SNAPSHOTS=3`), so a long VPS outage never prunes every snapshot.
+- Reports failure when the newest VPS checksum manifest is older than 8 days (`MAX_BACKUP_AGE_DAYS=8`, `0` disables), i.e. the VPS backup itself stopped running. The default tolerates a weekly VPS backup schedule; with the daily default cron job you can tighten it to `MAX_BACKUP_AGE_DAYS=2` in the NAS `.backup_env`.
 
 ### Restore Checklist
 
@@ -350,6 +358,14 @@ vps.example.com {
 Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
+
+### v2.0.0 - New Design, Much Faster, Security & Reliability Overhaul
+- **New design** - Calmer interface with dark and light themes (follows the OS or a toggle), sidebar status hints, a "Needs attention" dashboard with one resources panel (1h/6h/24h), tables with problems first, self-hosted IBM Plex fonts; no external resources at all
+- **Much faster** - Slow collectors (apt, certbot, HTTP checks, log scans, disk usage) are served from cache and refreshed in the background (stale-while-revalidate, single-flight); parallel dashboard collection; log pages read only the tail of large logs; long-lived static caching and gzip
+- **Security** - Web terminal `sudo` limited to read-only commands (several allowed commands could yield a root shell); the file browser can no longer read the manager's own secrets; sessions are revoked on password/2FA changes; SMTP TLS certificate verification (opt-in for existing setups); stricter config validation; IPv6-aware login rate limiting
+- **Reliability** - Failed self-updates roll back; the update keeps running when the browser tab closes; cron/UFW edits verify that the target did not change; config editors can no longer save empty or stale content; nginx/Caddy saves validate and restore properly; dismissed alerts return when the problem recurs
+- **Fixes** - Expired push subscriptions were never removed, duplicate nginx `access_log` lines, phased-update parsing hid security updates, loopback DDoS false alarms, PM2 monitoring going blind, backup script deleting config copies in the same run, command palette Enter rebooting without confirmation, many HTTP 500s on unusual input — full list in `ANALYSIS-2.0.0.md`
+- **Upgrade notes** - See `RELEASE.md`: reinstall `vps-backup.sh`/`nas-pull-backup.sh` manually; password/2FA changes now log out other sessions; alert categories are key-based ("High connection count" is now DDoS)
 
 ### v1.10.2 - Update Button Fallback
 - **In-app updater falls back automatically** - If the update progress stream fails before delivering a single event (as it did in v1.9.0/v1.10.0), the button now automatically installs the update via the plain install endpoint instead of stranding the user. No live step-by-step progress in that case, but the update completes and the page reloads

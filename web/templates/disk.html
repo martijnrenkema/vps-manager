@@ -68,43 +68,44 @@
 
 <style>
 :root {
-    --disk-color-0: #58a6ff;
-    --disk-color-1: #3fb950;
-    --disk-color-2: #bc8cff;
-    --disk-color-3: #d29922;
-    --disk-color-4: #39d2c0;
-    --disk-color-5: #f778ba;
-    --disk-color-6: #ff7b72;
-    --disk-color-7: #79c0ff;
-    --disk-color-8: #7ee787;
-    --disk-color-9: #d2a8ff;
+    /* Categorical slots (no status hues); beyond five sites: neutral */
+    --disk-color-0: var(--cat-1);
+    --disk-color-1: var(--cat-2);
+    --disk-color-2: var(--cat-3);
+    --disk-color-3: var(--cat-4);
+    --disk-color-4: var(--cat-5);
+    --disk-color-5: var(--text-3);
+    --disk-color-6: var(--text-3);
+    --disk-color-7: var(--text-3);
+    --disk-color-8: var(--text-3);
+    --disk-color-9: var(--text-3);
 }
 
 .storage-total {
-    font-size: 22px;
-    font-weight: 700;
+    font-family: var(--font-mono);
+    font-size: 20px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
     color: var(--text);
-    margin-bottom: 16px;
+    margin-bottom: 12px;
 }
 
 /* Stacked bar */
 .storage-bar {
     display: flex;
-    height: 24px;
-    border-radius: 8px;
+    height: 12px;
+    border-radius: 3px;
     overflow: hidden;
-    background: var(--bg-body);
+    background: var(--line);
     gap: 2px;
-    margin-bottom: 20px;
+    margin-bottom: 16px;
 }
 .storage-bar-segment {
     min-width: 3px;
     transition: opacity 0.2s;
     cursor: default;
 }
-.storage-bar-segment:first-child { border-radius: 8px 0 0 8px; }
-.storage-bar-segment:last-child { border-radius: 0 8px 8px 0; }
-.storage-bar-segment:only-child { border-radius: 8px; }
+
 .storage-bar-segment:hover { opacity: 0.75; }
 
 /* Legend */
@@ -118,20 +119,22 @@
     align-items: center;
     gap: 8px;
     padding: 6px 10px;
-    border-radius: 6px;
+    border-radius: 4px;
     font-size: 13px;
-    transition: background 0.15s;
+    transition: background 0.12s;
 }
 .storage-legend-item:hover {
-    background: rgba(255,255,255,0.04);
+    background: var(--hover);
 }
 .storage-dot {
     width: 10px;
     height: 10px;
-    border-radius: 3px;
+    border-radius: 2px;
     flex-shrink: 0;
 }
 .storage-legend-name {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
     color: var(--text);
     flex: 1;
     overflow: hidden;
@@ -164,8 +167,8 @@
 }
 .storage-row-name {
     color: var(--text);
-    font-weight: 500;
-    font-size: 13px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
     flex: 1;
 }
 .storage-row-size {
@@ -174,9 +177,9 @@
     font-variant-numeric: tabular-nums;
 }
 .storage-row-track {
-    height: 6px;
-    background: var(--bg-body);
-    border-radius: 3px;
+    height: 4px;
+    background: var(--line);
+    border-radius: 2px;
     overflow: hidden;
 }
 .storage-row-fill {

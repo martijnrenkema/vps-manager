@@ -1,227 +1,295 @@
 {% extends "base.html" %}
-{% from "icons.html" import icon %}
 {% block title %}Dashboard - VPS Manager{% endblock %}
 {% block page_title %}Dashboard{% endblock %}
 
 {% block head_extra %}
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}?v={{ asset_v }}" defer></script>
+{% endblock %}
+
+{% block topbar_extra %}
+<span class="live-indicator hide-sm" id="liveIndicator" title="Metrics refresh every minute while this tab is visible">Live</span>
 {% endblock %}
 
 {% block content %}
 {% if data %}
-    {% if alerts %}
-    <div class="alerts-card card" style="margin-bottom:24px" id="alertsCard">
+{% set th = thresholds or {} %}
+{% set mem_warn = th.get('memory_warning', 85) %}
+{% set disk_warn = th.get('disk_warning', 80) %}
+{% set disk_crit = th.get('disk_critical', 95) %}
+{% set swap_warn = th.get('swap_warning', 50) %}
+{% macro meter_tone(pct, warn, crit) -%}
+{%- if pct >= crit %}is-err{% elif pct >= warn %}is-warn{% endif -%}
+{%- endmacro %}
+{% set load_parts = (data.load or '').split(' / ') %}
+{% set alert_sources = {'/services': 'Services', '/pm2': 'PM2', '/ssl': 'SSL', '/uptime': 'Uptime', '/updates': 'Updates',
+                        '/disk': 'Disk', '/backup': 'Backup', '/firewall': 'Firewall', '/ssh-logs': 'SSH', '/security': 'Security'} %}
+{% set sev_words = {'error': 'Error', 'warning': 'Warning', 'info': 'Info'} %}
+
+<div class="dash-grid">
+    {# ---------------- Needs attention ---------------- #}
+    <section class="card span-8" id="alertsCard" aria-labelledby="attnTitle">
         <div class="card-header">
-            {{ icon('activity') }} Alerts
-            <span class="badge badge-{% if alerts|selectattr('severity','equalto','error')|list %}red{% elif alerts|selectattr('severity','equalto','warning')|list %}yellow{% else %}green{% endif %}" style="margin-left:auto" id="alertsBadge">{{ alerts|length }}</span>
-        </div>
-        <div class="card-body" style="padding:0" id="alertsList">
-            {% for alert in alerts %}
-            <div class="alert-item alert-{{ alert.severity }}" data-alert-id="{{ loop.index0 }}" data-alert-key="{{ alert.key }}">
-                {% if alert.link %}
-                <a href="{{ alert.link }}" class="alert-link">
-                {% endif %}
-                <span class="alert-icon">
-                    {% if alert.severity == 'error' %}
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
-                    {% elif alert.severity == 'warning' %}
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-                    {% else %}
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-                    {% endif %}
-                </span>
-                <span class="alert-message">{{ alert.message }}</span>
-                {% if alert.link %}
-                </a>
-                {% endif %}
-                <button class="alert-dismiss" onclick="dismissAlert(this)" title="Dismiss">&times;</button>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-
-    <div class="stats-grid">
-        {% if health %}
-        <div class="stat-card" style="border-top-color:var(--{{ health.color }})">
-            <div class="label">Health Score <span class="tooltip-icon" data-bs-toggle="tooltip" title="Overall server health based on active alerts: errors weigh heaviest, warnings less. 100 = no active alerts." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
-            <div class="value" style="color:var(--{{ health.color }})">{{ health.score }}<span style="font-size:14px;color:var(--text-muted)">/100</span></div>
-            <div class="sub">{{ health.label }}</div>
-        </div>
-        {% endif %}
-        <div class="stat-card" style="border-top-color:var(--accent)">
-            <div class="label">Hostname</div>
-            <div class="value" style="font-size:18px">{{ data.hostname }}</div>
-            <div class="sub">{{ data.os }}</div>
-        </div>
-        <div class="stat-card" style="border-top-color:var(--green)">
-            <div class="label">Uptime</div>
-            <div class="value" style="font-size:18px">{{ data.uptime }}</div>
-            <div class="sub">{{ data.cpu_model }} ({{ data.cpu_cores }} cores)</div>
-        </div>
-        <div class="stat-card" style="border-top-color:var(--purple)">
-            <div class="label">Load Average <span class="tooltip-icon" data-bs-toggle="tooltip" title="The average number of processes waiting to run. Values below your CPU core count (e.g. 4) are normal." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
-            <div class="value" style="font-size:18px">{{ data.load }}</div>
-            <div class="sub">1 / 5 / 15 min</div>
-        </div>
-    </div>
-
-    <div class="stats-grid">
-        <div class="stat-card">
-            <div class="label">Memory</div>
-            <div class="value">{{ data.mem_pct }}%</div>
-            <div class="sub">{{ data.mem_used_gb }}G / {{ data.mem_total_gb }}G (free: {{ data.mem_avail_gb }}G)</div>
-            <div class="progress-wrap">
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill {% if data.mem_pct > 80 %}red{% elif data.mem_pct > 60 %}yellow{% else %}green{% endif %}" style="width:{{ data.mem_pct }}%"></div>
-                </div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="label">Disk /</div>
-            <div class="value">{{ data.disk_pct }}%</div>
-            <div class="sub">{{ data.disk_used }} / {{ data.disk_size }} (free: {{ data.disk_avail }})</div>
-            <div class="progress-wrap">
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill {% if data.disk_pct > 80 %}red{% elif data.disk_pct > 60 %}yellow{% else %}green{% endif %}" style="width:{{ data.disk_pct }}%"></div>
-                </div>
-            </div>
-        </div>
-        <div class="stat-card">
-            <div class="label" style="display:flex;align-items:center;justify-content:space-between">
-                <span>Swap <span class="tooltip-icon" data-bs-toggle="tooltip" title="Virtual memory on disk, used when RAM is full. High swap usage may indicate insufficient RAM." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></span>
-                {% if data.swap_pct > 0 %}<button class="btn btn-sm" id="swapClearBtn" onclick="clearSwap(this)" style="padding:1px 8px;font-size:11px">Clear</button>{% endif %}
-            </div>
-            <div class="value" id="swapValue">{{ data.swap_pct }}%</div>
-            <div class="sub" id="swapSub">{{ data.swap }}</div>
-            <div class="progress-wrap">
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill {% if data.swap_pct > 80 %}red{% elif data.swap_pct > 50 %}yellow{% else %}green{% endif %}" id="swapBar" style="width:{{ data.swap_pct }}%"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="charts-grid">
-        <div class="chart-card">
-            <div class="chart-title">CPU Load (1 min avg)</div>
-            <div class="chart-value" id="chartCpuValue">--</div>
-            <div class="chart-wrap">
-                <canvas id="chartCpu"></canvas>
-                <div class="chart-empty" id="chartCpuEmpty">Collecting data...</div>
-            </div>
-        </div>
-        <div class="chart-card">
-            <div class="chart-title">Memory Usage</div>
-            <div class="chart-value" id="chartMemValue">--</div>
-            <div class="chart-wrap">
-                <canvas id="chartMem"></canvas>
-                <div class="chart-empty" id="chartMemEmpty">Collecting data...</div>
-            </div>
-        </div>
-        <div class="chart-card">
-            <div class="chart-title">Disk Usage</div>
-            <div class="chart-value" id="chartDiskValue">--</div>
-            <div class="chart-wrap">
-                <canvas id="chartDisk"></canvas>
-                <div class="chart-empty" id="chartDiskEmpty">Collecting data...</div>
-            </div>
-        </div>
-        <div class="chart-card">
-            <div class="chart-title">Network I/O <span class="tooltip-icon" data-bs-toggle="tooltip" title="Incoming (RX) and outgoing (TX) network traffic in bytes per second." style="font-size:11px;width:14px;height:14px;line-height:14px">?</span></div>
-            <div class="chart-value" id="chartNetValue">--</div>
-            <div class="chart-wrap">
-                <canvas id="chartNet"></canvas>
-                <div class="chart-empty" id="chartNetEmpty">Collecting data...</div>
-            </div>
-        </div>
-    </div>
-
-    <div class="quick-status">
-        <a href="{{ url_for('services') }}" class="quick-item" style="text-decoration:none;color:inherit">
-            {% set active_count = services|selectattr('status', 'equalto', 'active')|list|length %}
-            <div class="qi-value" style="color:{% if active_count == services|length %}var(--green){% else %}var(--yellow){% endif %}">{{ active_count }}/{{ services|length }}</div>
-            <div class="qi-label">Services active</div>
-        </a>
-        <a href="{{ url_for('pm2') }}" class="quick-item" style="text-decoration:none;color:inherit">
-            {% set online_count = pm2|selectattr('status', 'equalto', 'online')|list|length %}
-            <div class="qi-value" style="color:{% if online_count == pm2|length %}var(--green){% else %}var(--yellow){% endif %}">{{ online_count }}/{{ pm2|length }}</div>
-            <div class="qi-label">PM2 online</div>
-        </a>
-        <a href="{{ url_for('ssl') }}" class="quick-item" style="text-decoration:none;color:inherit">
-            {% if ssl %}
-                {% set min_days = ssl|map(attribute='days_left')|min %}
-                <div class="qi-value" style="color:{% if min_days > 30 %}var(--green){% elif min_days > 7 %}var(--yellow){% else %}var(--red){% endif %}">{{ min_days }}d</div>
-                <div class="qi-label">SSL minimum</div>
-            {% else %}
-                <div class="qi-value" style="color:var(--text-muted)">?</div>
-                <div class="qi-label">SSL status</div>
+            <span id="attnTitle">Needs attention</span>
+            <span class="card-meta num" id="alertsBadge"{% if not alerts %} hidden{% endif %}>{{ alerts|length }}</span>
+            {% if health %}
+            <span class="health {% if health.color == 'red' %}is-err{% elif health.color == 'yellow' %}is-warn{% endif %}" id="healthScore"
+                  title="Overall server health based on active alerts: errors weigh heaviest, warnings less. 100 = no active alerts.">
+                <span class="h-label">Health</span>
+                <span class="h-score"><b id="healthValue">{{ health.score }}</b>/100</span>
+                <span class="h-word" id="healthLabel">{{ health.label }}</span>
+            </span>
             {% endif %}
-        </a>
-    </div>
+        </div>
+        <ul class="attn" id="alertsList">
+            {% for alert in alerts %}
+            {% set src = alert_sources.get(alert.link) if alert.link else None %}
+            <li class="attn-item alert-item alert-{{ alert.severity }}" data-alert-id="{{ loop.index0 }}" data-alert-key="{{ alert.key }}" data-severity="{{ alert.severity }}">
+                <svg class="i sev" role="img" aria-label="{{ sev_words.get(alert.severity, 'Info') }}"><use href="#i-{% if alert.severity == 'error' %}err{% elif alert.severity == 'warning' %}warn{% else %}info{% endif %}"/></svg>
+                <div class="attn-msg">
+                    {% if alert.link %}<a href="{{ alert.link }}">{{ alert.message }}</a>{% else %}{{ alert.message }}{% endif %}
+                    <span class="attn-src">{{ sev_words.get(alert.severity, 'Info') }}{% if src %} · {{ src }}{% endif %}</span>
+                </div>
+                <div class="attn-act">
+                    {% if alert.link %}<a class="btn btn-sm" href="{{ alert.link }}">Open</a>{% endif %}
+                    <button type="button" class="alert-dismiss" onclick="dismissAlert(this)" title="Dismiss" aria-label="Dismiss alert">&times;</button>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        <div class="attn-empty" id="alertsEmpty"{% if alerts %} hidden{% endif %}>
+            <svg class="i" aria-hidden="true"><use href="#i-ok"/></svg>
+            <div><b>All clear</b>No active alerts. Services, certificates, disk and updates look fine.</div>
+        </div>
+    </section>
 
-    <div class="grid-2col">
-        <div class="card">
-            <div class="card-header"><a href="{{ url_for('services') }}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px">{{ icon('activity') }} Services</a></div>
-            <div class="card-body">
-                <div class="table-wrap">
-                    <table>
-                        <thead><tr><th>Service</th><th>Status</th><th style="width:70px"></th></tr></thead>
-                        <tbody>
-                            {% for svc in services %}
-                            <tr>
-                                <td>{{ svc.name }}</td>
-                                <td>
-                                    {% if svc.status == 'active' %}
-                                        <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
+    {# ---------------- System facts ---------------- #}
+    <section class="card span-4" aria-labelledby="sysTitle">
+        <div class="card-header"><span id="sysTitle">System</span></div>
+        <dl class="facts">
+            <div><dt>Hostname</dt><dd title="{{ data.hostname }}">{{ data.hostname }}</dd></div>
+            <div><dt>OS</dt><dd title="{{ data.os }}">{{ data.os }}</dd></div>
+            <div><dt>CPU</dt><dd title="{{ data.cpu_model }}">{{ data.cpu_model|replace(' Processor', '') }} · {{ data.cpu_cores }} cores</dd></div>
+            <div><dt>Memory</dt><dd>{{ data.mem_total_gb }} GB</dd></div>
+            <div><dt>Uptime</dt><dd>{{ data.uptime }}</dd></div>
+            <div><dt>Public IP</dt><dd>{{ server_ip }}</dd></div>
+        </dl>
+    </section>
+
+    {# ---------------- Resources: stat + chart rows, one time axis ---------------- #}
+    <section class="card span-12" aria-labelledby="resTitle">
+        <div class="card-header">
+            <span id="resTitle">Resources</span>
+            <span class="card-meta hide-sm" id="rangeMeta">Last 24 hours · 5-minute samples</span>
+            <span class="legend hide-sm" style="margin-left:auto"><span><i class="dashed"></i>Alert threshold</span></span>
+            <div class="seg" role="group" aria-label="Chart time range" id="rangeSeg">
+                <button type="button" data-range="1" aria-pressed="false">1h</button>
+                <button type="button" data-range="6" aria-pressed="false">6h</button>
+                <button type="button" data-range="24" aria-pressed="true">24h</button>
+            </div>
+        </div>
+
+        <div class="res-row">
+            <div class="res-stat">
+                <div class="k">CPU load <span class="tooltip-icon" data-bs-toggle="tooltip" title="The average number of processes waiting to run. Values below your CPU core count ({{ data.cpu_cores }}) are normal.">?</span></div>
+                <div class="v"><span id="chartCpuValue">{{ load_parts[0] if load_parts else '–' }}</span><small>of {{ data.cpu_cores }} cores</small></div>
+                <div class="d" id="cpuSub">{% if load_parts|length == 3 %}5m {{ load_parts[1] }} · 15m {{ load_parts[2] }}{% endif %}</div>
+            </div>
+            <div class="res-chart">
+                <canvas id="chartCpu" role="img" aria-label="CPU load over time"></canvas>
+                <div class="chart-empty" id="chartCpuEmpty">Collecting data…</div>
+            </div>
+        </div>
+
+        <div class="res-row">
+            <div class="res-stat">
+                <div class="k">Memory</div>
+                <div class="v"><span id="memValue">{{ data.mem_pct }}</span><small>%</small></div>
+                <div class="d">{{ data.mem_used_gb }} of {{ data.mem_total_gb }} GB · {{ data.mem_avail_gb }} free</div>
+                <div class="meter {{ meter_tone(data.mem_pct, mem_warn, 95) }}" id="memMeter" role="meter" aria-label="Memory used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ data.mem_pct }}">
+                    <i id="memBar" style="width:{{ data.mem_pct }}%"></i><span class="tick" style="left:{{ mem_warn }}%"></span>
+                </div>
+            </div>
+            <div class="res-chart">
+                <canvas id="chartMem" role="img" aria-label="Memory usage over time"></canvas>
+                <div class="chart-empty" id="chartMemEmpty">Collecting data…</div>
+            </div>
+        </div>
+
+        <div class="res-row">
+            <div class="res-stat">
+                <div class="k">Disk <span class="mono muted">/</span></div>
+                <div class="v"><span id="diskValue">{{ data.disk_pct }}</span><small>%</small></div>
+                <div class="d">{{ data.disk_used }} of {{ data.disk_size }} · {{ data.disk_avail }} free</div>
+                <div class="meter {{ meter_tone(data.disk_pct, disk_warn, disk_crit) }}" id="diskMeter" role="meter" aria-label="Disk used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ data.disk_pct }}">
+                    <i id="diskBar" style="width:{{ data.disk_pct }}%"></i><span class="tick" style="left:{{ disk_warn }}%"></span>
+                </div>
+            </div>
+            <div class="res-chart">
+                <canvas id="chartDisk" role="img" aria-label="Disk usage over time"></canvas>
+                <div class="chart-empty" id="chartDiskEmpty">Collecting data…</div>
+            </div>
+        </div>
+
+        <div class="res-row">
+            <div class="res-stat">
+                <div class="k">Swap <span class="tooltip-icon" data-bs-toggle="tooltip" title="Virtual memory on disk, used when RAM is full. High swap usage may indicate insufficient RAM.">?</span>
+                    {% if data.swap_pct > 0 %}<button type="button" class="btn btn-sm btn-ghost" id="swapClearBtn" onclick="confirmClearSwap()">Clear…</button>{% endif %}
+                </div>
+                <div class="v"><span id="swapValue">{{ data.swap_pct }}</span><small>%</small></div>
+                <div class="d" id="swapSub">{{ data.swap }}</div>
+                <div class="meter {{ meter_tone(data.swap_pct, swap_warn, 80) }}" id="swapMeter" role="meter" aria-label="Swap used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ data.swap_pct }}">
+                    <i id="swapBar" style="width:{{ data.swap_pct }}%"></i><span class="tick" style="left:{{ swap_warn }}%"></span>
+                </div>
+            </div>
+            <div class="res-chart">
+                <canvas id="chartSwap" role="img" aria-label="Swap usage over time"></canvas>
+                <div class="chart-empty" id="chartSwapEmpty">Collecting data…</div>
+            </div>
+        </div>
+
+        <div class="res-row axis">
+            <div class="res-stat">
+                <div class="k">Network <span class="tooltip-icon" data-bs-toggle="tooltip" title="Incoming (in) and outgoing (out) network traffic in bytes per second.">?</span></div>
+                <div class="v"><span id="netRxValue">–</span><small id="netRxUnit">in</small></div>
+                <div class="d"><span id="netTxValue">–</span> out</div>
+                <div class="legend"><span><i style="background:var(--chart-1)"></i>In</span><span><i style="background:var(--chart-2)"></i>Out</span></div>
+            </div>
+            <div class="res-chart">
+                <canvas id="chartNet" role="img" aria-label="Network traffic over time"></canvas>
+                <div class="chart-empty" id="chartNetEmpty">Collecting data…</div>
+            </div>
+        </div>
+    </section>
+
+    {# ---------------- Services ---------------- #}
+    {% set services = services or [] %}
+    {% set svc_bad = services|rejectattr('status', 'equalto', 'active')|list %}
+    {% set svc_ok = services|selectattr('status', 'equalto', 'active')|list %}
+    <section class="card span-5" aria-labelledby="svcTitle">
+        <div class="card-header">
+            <a href="{{ url_for('services') }}" id="svcTitle" class="card-title-link">Services</a>
+            <span class="card-meta num">{{ svc_ok|length }} of {{ services|length }} running</span>
+        </div>
+        <div class="card-body">
+            {% if services %}
+            <div class="table-wrap">
+                <table class="compact-actions">
+                    <thead><tr><th>Unit</th><th>State</th><th class="r"><span class="sr-only">Actions</span></th></tr></thead>
+                    <tbody>
+                        {% for svc in svc_bad + svc_ok %}
+                        {% set ok = svc.status == 'active' %}
+                        <tr{% if not ok %} class="problem"{% endif %}>
+                            <td class="name">{{ svc.name }}</td>
+                            <td data-label="Status">
+                                {% if ok %}<span class="badge badge-green"><span class="badge-dot green"></span>active</span>
+                                {% else %}<span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>{% endif %}
+                            </td>
+                            <td class="r">
+                                <span class="row-act">
+                                    {% if ok %}
+                                    <button type="button" class="btn btn-sm btn-ghost" data-name="{{ svc.name }}" onclick="dashServiceAction('restart', this.dataset.name, this)">Restart</button>
+                                    <button type="button" class="btn btn-sm btn-ghost btn-red" data-name="{{ svc.name }}" onclick="dashServiceAction('stop', this.dataset.name, this)">Stop</button>
                                     {% else %}
-                                        <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
+                                    <button type="button" class="btn btn-sm" data-name="{{ svc.name }}" onclick="dashServiceAction('start', this.dataset.name, this)">Start</button>
                                     {% endif %}
+                                </span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">No services found. Add units under <a href="{{ url_for('settings') }}">Settings</a>.</div>
+            {% endif %}
+        </div>
+    </section>
+
+    <div class="span-7 dash-stack">
+        {# ---------------- PM2 ---------------- #}
+        {% if has_pm2 or pm2 %}
+        {% set pm2 = pm2 or [] %}
+        {% set pm2_bad = pm2|rejectattr('status', 'equalto', 'online')|list %}
+        {% set pm2_ok = pm2|selectattr('status', 'equalto', 'online')|list %}
+        <section class="card" aria-labelledby="pm2Title">
+            <div class="card-header">
+                <a href="{{ url_for('pm2') }}" id="pm2Title" class="card-title-link">PM2</a>
+                <span class="card-meta num">{{ pm2_ok|length }} of {{ pm2|length }} online</span>
+            </div>
+            <div class="card-body">
+                {% if pm2 %}
+                <div class="table-wrap">
+                    <table class="compact-actions">
+                        <thead><tr><th>Process</th><th>State</th><th class="r hide-sm">CPU</th><th class="r">Memory</th><th class="r hide-sm">Restarts</th><th class="r"><span class="sr-only">Actions</span></th></tr></thead>
+                        <tbody>
+                            {% for p in pm2_bad + pm2_ok %}
+                            {% set ok = p.status == 'online' %}
+                            <tr{% if not ok %} class="problem{% if p.status == 'stopped' %} is-warn{% endif %}"{% endif %}>
+                                <td class="name">{{ p.name }}</td>
+                                <td data-label="Status">
+                                    {% if ok %}<span class="badge badge-green"><span class="badge-dot green"></span>online</span>
+                                    {% elif p.status == 'stopped' %}<span class="badge badge-yellow"><span class="badge-dot yellow"></span>stopped</span>
+                                    {% else %}<span class="badge badge-red"><span class="badge-dot red"></span>{{ p.status }}</span>{% endif %}
                                 </td>
-                                <td><button class="btn btn-sm" onclick="dashServiceRestart({{ svc.name|tojson }}, this)">Restart</button></td>
+                                <td class="r num hide-sm">{% if ok %}{{ p.cpu }}%{% else %}<span class="muted">–</span>{% endif %}</td>
+                                <td class="r num">{% if ok %}{{ p.memory }} MB{% else %}<span class="muted">–</span>{% endif %}</td>
+                                <td class="r num hide-sm{% if (p.restarts or 0) > 5 %} text-err{% elif not p.restarts %} muted{% endif %}">{{ p.restarts }}</td>
+                                <td class="r">
+                                    <span class="row-act">
+                                        <button type="button" class="btn btn-sm btn-ghost hide-sm" data-name="{{ p.name }}" onclick="showLogs(this.dataset.name)">Logs</button>
+                                        <button type="button" class="btn btn-sm{% if ok %} btn-ghost{% endif %}" data-name="{{ p.name }}" onclick="pm2Action('restart', this.dataset.name, this)">Restart</button>
+                                    </span>
+                                </td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
+                {% else %}
+                <div class="empty-state">No PM2 processes running.</div>
+                {% endif %}
             </div>
-        </div>
-        <div class="card">
-            <div class="card-header"><a href="{{ url_for('pm2') }}" style="color:inherit;text-decoration:none;display:flex;align-items:center;gap:8px">{{ icon('settings') }} PM2 Processes</a></div>
+        </section>
+        {% endif %}
+
+        {# ---------------- Certificates ---------------- #}
+        <section class="card" aria-labelledby="sslTitle">
+            <div class="card-header">
+                <a href="{{ url_for('ssl') }}" id="sslTitle" class="card-title-link">Certificates</a>
+                <span class="card-meta">soonest first</span>
+            </div>
             <div class="card-body">
+                {% if ssl %}
                 <div class="table-wrap">
                     <table>
-                        <thead><tr><th>Process</th><th>Status</th><th>Memory</th><th style="width:70px"></th></tr></thead>
+                        <thead><tr><th>Domain</th><th class="hide-sm">Expires</th><th class="r">Days left</th></tr></thead>
                         <tbody>
-                            {% for p in pm2 %}
-                            <tr>
-                                <td>{{ p.name }}</td>
-                                <td>
-                                    {% if p.status == 'online' %}
-                                        <span class="badge badge-green"><span class="badge-dot green"></span>online</span>
-                                    {% elif p.status == 'stopped' %}
-                                        <span class="badge badge-yellow"><span class="badge-dot yellow"></span>stopped</span>
-                                    {% else %}
-                                        <span class="badge badge-red"><span class="badge-dot red"></span>{{ p.status }}</span>
-                                    {% endif %}
-                                </td>
-                                <td>{{ p.memory }} MB</td>
-                                <td><button class="btn btn-sm" onclick="pm2Action('restart', {{ p.name|tojson }}, this)">Restart</button></td>
+                            {% for c in (ssl|sort(attribute='days_left'))[:6] %}
+                            {% set doms = (c.domain or '').split() %}
+                            {% set d = c.days_left %}
+                            {% set warn_days = th.get('ssl_warning_days', 14) %}
+                            {% set crit_days = th.get('ssl_critical_days', 3) %}
+                            <tr{% if d <= crit_days %} class="problem"{% elif d <= warn_days %} class="problem is-warn"{% endif %}>
+                                <td class="name">{{ doms[0] if doms else c.domain }}{% if doms|length > 1 %} <span class="muted">+{{ doms|length - 1 }}</span>{% endif %}</td>
+                                <td class="tnum muted hide-sm">{{ c.expiry }}</td>
+                                <td class="r num{% if d <= crit_days %} days-err{% elif d <= warn_days %} days-warn{% endif %}">{{ d }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
                     </table>
                 </div>
+                {% if ssl|length > 6 %}<div class="card-foot"><a href="{{ url_for('ssl') }}">All {{ ssl|length }} certificates</a></div>{% endif %}
+                {% else %}
+                <div class="empty-state">No certificates found yet.</div>
+                {% endif %}
             </div>
-        </div>
+        </section>
     </div>
-
-    <div style="margin-top:32px;text-align:right">
-        <button class="btn btn-red" onclick="showConfirm('Server Reboot', 'Are you sure you want to reboot the VPS? All services will be temporarily unavailable.', doReboot)">{{ icon('refresh') }} Server Reboot</button>
-    </div>
+</div>
 {% else %}
-    <div class="empty-state"><p>Unable to retrieve server data.</p></div>
+    <div class="card">
+        <div class="empty-state"><strong>Unable to retrieve server data</strong>The overview command failed. Check the application log, then reload.</div>
+    </div>
 {% endif %}
 {% endblock %}
 
@@ -229,231 +297,404 @@
 <script>
 async function doReboot() { await apiCall('/reboot', 'POST'); }
 
-async function clearSwap(btn) {
-    btn.disabled = true;
-    btn.textContent = 'Clearing…';
-    var data = await apiCall('/swap/clear', 'POST');
-    if (data && data.status === 'ok') {
-        document.getElementById('swapValue').textContent = '0%';
-        document.getElementById('swapSub').textContent = '0.0G / ' + document.getElementById('swapSub').textContent.split('/').pop().trim();
-        var bar = document.getElementById('swapBar');
-        bar.style.width = '0%';
-        bar.className = 'progress-bar-fill green';
-        btn.style.display = 'none';
-    } else {
-        btn.disabled = false;
-        btn.textContent = 'Clear';
-    }
-}
-
-// --- Charts ---
+// --- Resources: thresholds, formatting ------------------------------------
+{% set th = thresholds or {} %}
+const DASH_THRESH = {{ {'mem': [th.get('memory_warning', 85), 95], 'disk': [th.get('disk_warning', 80), th.get('disk_critical', 95)], 'swap': [th.get('swap_warning', 50), 80]}|tojson }};
+const pageRenderedAt = Date.now() / 1000;
 const chartInstances = {};
-const chartColors = {
-    cpu: { border: '#58a6ff', bg: [0.3, 0.0] },
-    mem: { border: '#3fb950', bg: [0.3, 0.0] },
-    disk: { border: '#bc8cff', bg: [0.3, 0.0] },
-    netRx: { border: '#39d2c0' },
-    netTx: { border: '#d29922' },
-};
-
-function makeGradient(ctx, canvas, r, g, b, stops) {
-    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.parentElement.clientHeight);
-    gradient.addColorStop(0, `rgba(${r},${g},${b},${stops[0]})`);
-    gradient.addColorStop(1, `rgba(${r},${g},${b},${stops[1]})`);
-    return gradient;
-}
-
-function baseChartOpts(yLabel, yMax) {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: { intersect: false, mode: 'index' },
-        plugins: {
-            legend: { display: false },
-            tooltip: {
-                backgroundColor: '#21262d',
-                borderColor: '#30363d',
-                borderWidth: 1,
-                titleColor: '#e6edf3',
-                bodyColor: '#b1bac4',
-                padding: 10,
-                titleFont: { size: 12 },
-                bodyFont: { size: 12 },
-            },
-        },
-        scales: {
-            x: {
-                type: 'time',
-                time: { unit: 'hour', displayFormats: { hour: 'HH:mm' }, tooltipFormat: 'HH:mm' },
-                grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
-                ticks: { color: '#8b949e', font: { size: 11 }, maxTicksLimit: 8 },
-            },
-            y: {
-                min: 0,
-                max: yMax || undefined,
-                grid: { color: 'rgba(48,54,61,0.5)', drawBorder: false },
-                ticks: { color: '#8b949e', font: { size: 11 } },
-                title: { display: !!yLabel, text: yLabel || '', color: '#8b949e', font: { size: 11 } },
-            },
-        },
-        elements: {
-            line: { tension: 0.4, borderWidth: 2 },
-            point: { radius: 0, hoverRadius: 4 },
-        },
-    };
-}
+let metricsCache = [];
+let rangeHours = 24;
+let lastFetchOk = null;
 
 function formatBytes(bytes) {
-    if (bytes < 1024) return bytes + ' B/s';
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB/s';
+    if (bytes < 1024) return Math.round(bytes) + ' B/s';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(bytes < 10240 ? 1 : 0) + ' KB/s';
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB/s';
 }
 
-function initCharts() {
-    // CPU
-    const cpuCanvas = document.getElementById('chartCpu');
-    const cpuCtx = cpuCanvas.getContext('2d');
-    chartInstances.cpu = new Chart(cpuCtx, {
-        type: 'line',
-        data: { datasets: [{ fill: true, backgroundColor: makeGradient(cpuCtx, cpuCanvas, 88, 166, 255, [0.3, 0.0]), borderColor: chartColors.cpu.border, data: [] }] },
-        options: baseChartOpts('Load'),
-    });
+function meterTone(pct, key) {
+    const t = DASH_THRESH[key] || [80, 95];
+    return pct >= t[1] ? 'is-err' : pct >= t[0] ? 'is-warn' : '';
+}
 
-    // Memory
-    const memCanvas = document.getElementById('chartMem');
-    const memCtx = memCanvas.getContext('2d');
-    chartInstances.mem = new Chart(memCtx, {
-        type: 'line',
-        data: { datasets: [{ fill: true, backgroundColor: makeGradient(memCtx, memCanvas, 63, 185, 80, [0.3, 0.0]), borderColor: chartColors.mem.border, data: [] }] },
-        options: baseChartOpts('%', 100),
-    });
+// --- Chart.js plugins: threshold rule + synced crosshair -------------------
+const thresholdPlugin = {
+    id: 'vpsThreshold',
+    afterDatasetsDraw: function (chart, args, opts) {
+        if (!opts || opts.value == null) return;
+        const y = chart.scales.y;
+        if (!y || opts.value > y.max) return;
+        const py = Math.round(y.getPixelForValue(opts.value)) + 0.5;
+        const area = chart.chartArea;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.strokeStyle = opts.color;
+        ctx.globalAlpha = 0.75;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.beginPath();
+        ctx.moveTo(area.left, py);
+        ctx.lineTo(area.right, py);
+        ctx.stroke();
+        ctx.restore();
+    },
+};
 
-    // Disk
-    const diskCanvas = document.getElementById('chartDisk');
-    const diskCtx = diskCanvas.getContext('2d');
-    chartInstances.disk = new Chart(diskCtx, {
-        type: 'line',
-        data: { datasets: [{ fill: true, backgroundColor: makeGradient(diskCtx, diskCanvas, 188, 140, 255, [0.3, 0.0]), borderColor: chartColors.disk.border, data: [] }] },
-        options: baseChartOpts('%', 100),
-    });
+const crosshairPlugin = {
+    id: 'vpsCrosshair',
+    afterDatasetsDraw: function (chart, args, opts) {
+        if (chart.$crossX == null) return;
+        const x = chart.scales.x;
+        const px = Math.round(x.getPixelForValue(chart.$crossX)) + 0.5;
+        const area = chart.chartArea;
+        if (px < area.left || px > area.right) return;
+        const ctx = chart.ctx;
+        ctx.save();
+        ctx.strokeStyle = opts.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(px, area.top);
+        ctx.lineTo(px, area.bottom);
+        ctx.stroke();
+        ctx.restore();
+    },
+};
 
-    // Network (two lines)
-    const netCanvas = document.getElementById('chartNet');
-    const netCtx = netCanvas.getContext('2d');
-    const netOpts = baseChartOpts('');
-    netOpts.plugins.legend = { display: true, labels: { color: '#8b949e', boxWidth: 12, font: { size: 11 } } };
-    netOpts.scales.y.ticks.callback = function(val) { return formatBytes(val); };
-    netOpts.plugins.tooltip.callbacks = { label: function(ctx) { return ctx.dataset.label + ': ' + formatBytes(ctx.parsed.y); } };
-    chartInstances.net = new Chart(netCtx, {
+function syncCrosshair(value) {
+    Object.keys(chartInstances).forEach(function (k) {
+        const c = chartInstances[k];
+        if (c.$crossX === value) return;
+        c.$crossX = value;
+        c.draw();
+    });
+}
+
+function yTick(kind) {
+    return function (v) {
+        if (kind === 'pct') return v + '%';
+        if (kind === 'bytes') return formatBytes(v).replace('/s', '');
+        return Number(v).toFixed(v >= 10 ? 0 : 1).replace(/\.0$/, '');
+    };
+}
+
+function lineChart(canvasId, theme, spec) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return null;
+    const datasets = spec.series.map(function (s, i) {
+        const color = s.color;
+        return {
+            label: s.label,
+            data: [],
+            borderColor: color,
+            backgroundColor: spec.series.length === 1 ? hexToRgba(color, theme.areaAlpha) : color,
+            fill: spec.series.length === 1,
+        };
+    });
+    const tooltip = baseTooltip(theme);
+    tooltip.callbacks.label = function (ctx) {
+        const v = ctx.parsed.y;
+        const txt = spec.kind === 'pct' ? v.toFixed(1) + '%' : spec.kind === 'bytes' ? formatBytes(v) : v.toFixed(2);
+        return (spec.series.length > 1 ? ctx.dataset.label + ': ' : '') + txt;
+    };
+    const xAxis = timeAxis(theme);
+    xAxis.grid = { display: false };
+    if (!spec.showX) xAxis.ticks.display = false;
+    return new Chart(canvas.getContext('2d'), {
         type: 'line',
-        data: {
-            datasets: [
-                { label: 'RX', fill: false, borderColor: chartColors.netRx.border, data: [] },
-                { label: 'TX', fill: false, borderColor: chartColors.netTx.border, data: [] },
-            ],
+        data: { datasets: datasets },
+        plugins: [thresholdPlugin, crosshairPlugin],
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            normalized: true,
+            parsing: false,
+            layout: { padding: { top: 4, bottom: spec.showX ? 0 : 2 } },
+            interaction: { intersect: false, mode: 'index' },
+            onHover: function (evt, els, chart) {
+                if (!chart.scales.x || evt.x == null) return;
+                syncCrosshair(chart.scales.x.getValueForPixel(evt.x));
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: tooltip,
+                decimation: { enabled: true, algorithm: 'lttb', samples: 160, threshold: 200 },
+                vpsThreshold: { value: spec.threshold == null ? null : spec.threshold, color: theme.warn },
+                vpsCrosshair: { color: theme.cross },
+            },
+            scales: {
+                x: xAxis,
+                y: {
+                    min: 0,
+                    max: spec.max || undefined,
+                    grid: { color: theme.grid, drawTicks: false },
+                    border: { display: false },
+                    afterFit: function (axis) { axis.width = 60; },
+                    ticks: { color: theme.tick, font: { size: 10.5, family: theme.mono }, maxTicksLimit: 3, padding: 8, callback: yTick(spec.kind) },
+                },
+            },
+            elements: {
+                line: { tension: 0, borderWidth: 1.5 },
+                point: { radius: 0, hoverRadius: 3, hitRadius: 6, hoverBorderWidth: 2 },
+            },
         },
-        options: netOpts,
+    });
+}
+
+function initCharts() {
+    const theme = chartTheme();
+    const p = theme.palette;
+    chartInstances.cpu = lineChart('chartCpu', theme, { kind: 'load', series: [{ label: 'Load', color: p[0] }] });
+    chartInstances.mem = lineChart('chartMem', theme, { kind: 'pct', max: 100, threshold: DASH_THRESH.mem[0], series: [{ label: 'Memory', color: p[0] }] });
+    chartInstances.disk = lineChart('chartDisk', theme, { kind: 'pct', max: 100, threshold: DASH_THRESH.disk[0], series: [{ label: 'Disk', color: p[0] }] });
+    chartInstances.swap = lineChart('chartSwap', theme, { kind: 'pct', max: 100, threshold: DASH_THRESH.swap[0], series: [{ label: 'Swap', color: p[0] }] });
+    chartInstances.net = lineChart('chartNet', theme, { kind: 'bytes', showX: true, series: [{ label: 'In', color: p[0] }, { label: 'Out', color: p[1] }] });
+    Object.keys(chartInstances).forEach(function (k) { if (!chartInstances[k]) delete chartInstances[k]; });
+    document.querySelectorAll('.res-chart canvas').forEach(function (cv) {
+        cv.addEventListener('mouseleave', function () { syncCrosshair(null); });
+    });
+}
+
+function rethemeCharts() {
+    if (typeof Chart === 'undefined') return;
+    Object.keys(chartInstances).forEach(function (k) { chartInstances[k].destroy(); delete chartInstances[k]; });
+    initCharts();
+    renderCharts();
+}
+
+// --- Stat values -----------------------------------------------------------
+function setMeter(key, pct) {
+    const v = document.getElementById(key + 'Value');
+    const b = document.getElementById(key + 'Bar');
+    const m = document.getElementById(key + 'Meter');
+    if (pct == null || isNaN(pct)) return;
+    const rounded = Math.round(pct);
+    if (v) v.textContent = rounded;
+    if (b) b.style.width = Math.min(rounded, 100) + '%';
+    if (m) {
+        m.className = ('meter ' + meterTone(rounded, key)).trim();
+        m.setAttribute('aria-valuenow', rounded);
+    }
+}
+
+// Refresh the stat values from the newest sample, but only if that sample is
+// newer than the server-rendered values on this page.
+function updateStatCards(last) {
+    if (!last || !last.ts || last.ts <= pageRenderedAt) return;
+    setMeter('mem', last.mem);
+    setMeter('disk', last.disk);
+    setMeter('swap', last.swap);
+    const cpu = document.getElementById('chartCpuValue');
+    if (cpu && last.cpu != null) cpu.textContent = Number(last.cpu).toFixed(2);
+}
+
+function updateLive(ok, lastTs) {
+    const el = document.getElementById('liveIndicator');
+    if (!el) return;
+    el.classList.remove('is-stale', 'is-off');
+    if (!ok) {
+        el.classList.add('is-off');
+        el.textContent = 'Offline · retrying';
+        return;
+    }
+    const stale = lastTs && (Date.now() / 1000 - lastTs) > 900;
+    if (stale) {
+        el.classList.add('is-stale');
+        el.textContent = 'Last sample ' + formatClock(lastTs * 1000);
+    } else {
+        el.textContent = 'Live · updated ' + formatClock(Date.now());
+    }
+}
+
+function renderCharts() {
+    const metrics = metricsCache;
+    const hasData = metrics.length > 0;
+    ['Cpu', 'Mem', 'Disk', 'Swap', 'Net'].forEach(function (n) {
+        const el = document.getElementById('chart' + n + 'Empty');
+        if (el) el.hidden = hasData;
+    });
+    if (!hasData || !chartInstances.cpu) return;
+    const lastTs = metrics[metrics.length - 1].ts;
+    const from = lastTs - rangeHours * 3600;
+    const slice = metrics.filter(function (m) { return m.ts >= from; });
+    const pts = function (key) { return slice.map(function (m) { return { x: m.ts * 1000, y: Number(m[key]) || 0 }; }); };
+    const set = function (name, idx, key) { if (chartInstances[name]) chartInstances[name].data.datasets[idx].data = pts(key); };
+    set('cpu', 0, 'cpu');
+    set('mem', 0, 'mem');
+    set('disk', 0, 'disk');
+    set('swap', 0, 'swap');
+    set('net', 0, 'net_rx');
+    set('net', 1, 'net_tx');
+    // One shared time axis: every chart spans the same interval.
+    const xmin = slice.length ? slice[0].ts * 1000 : null;
+    const xmax = lastTs * 1000;
+    Object.keys(chartInstances).forEach(function (k) {
+        const c = chartInstances[k];
+        if (xmin != null && xmax > xmin) {
+            c.options.scales.x.min = xmin;
+            c.options.scales.x.max = xmax;
+        } else {
+            fitTimeAxis(c);
+        }
+        c.update('none');
     });
 }
 
 function updateCharts(metrics) {
-    if (!metrics || !metrics.length) return;
-
-    // Hide empty states
-    ['Cpu', 'Mem', 'Disk', 'Net'].forEach(n => {
-        const el = document.getElementById('chart' + n + 'Empty');
-        if (el) el.style.display = 'none';
-    });
-
+    if (!Array.isArray(metrics) || !metrics.length) {
+        metricsCache = [];
+        renderCharts();
+        return;
+    }
+    metricsCache = metrics;
     const last = metrics[metrics.length - 1];
-
-    // Update current values
-    document.getElementById('chartCpuValue').textContent = last.cpu.toFixed(2);
-    document.getElementById('chartMemValue').textContent = last.mem.toFixed(1) + '%';
-    document.getElementById('chartDiskValue').textContent = last.disk + '%';
-    document.getElementById('chartNetValue').textContent = formatBytes(last.net_rx) + ' / ' + formatBytes(last.net_tx);
-
-    // Map to chart data
-    const cpuData = metrics.map(m => ({ x: m.ts * 1000, y: m.cpu }));
-    const memData = metrics.map(m => ({ x: m.ts * 1000, y: m.mem }));
-    const diskData = metrics.map(m => ({ x: m.ts * 1000, y: m.disk }));
-    const rxData = metrics.map(m => ({ x: m.ts * 1000, y: m.net_rx }));
-    const txData = metrics.map(m => ({ x: m.ts * 1000, y: m.net_tx }));
-
-    chartInstances.cpu.data.datasets[0].data = cpuData;
-    chartInstances.mem.data.datasets[0].data = memData;
-    chartInstances.disk.data.datasets[0].data = diskData;
-    chartInstances.net.data.datasets[0].data = rxData;
-    chartInstances.net.data.datasets[1].data = txData;
-
-    chartInstances.cpu.update('none');
-    chartInstances.mem.update('none');
-    chartInstances.disk.update('none');
-    chartInstances.net.update('none');
+    updateStatCards(last);
+    const rx = document.getElementById('netRxValue');
+    const tx = document.getElementById('netTxValue');
+    const rxParts = formatBytes(last.net_rx || 0).split(' ');
+    if (rx) rx.textContent = rxParts[0];
+    const rxUnit = document.getElementById('netRxUnit');
+    if (rxUnit) rxUnit.textContent = (rxParts[1] || '') + ' in';
+    if (tx) tx.textContent = formatBytes(last.net_tx || 0);
+    updateLive(true, last.ts);
+    renderCharts();
 }
 
 async function fetchMetrics() {
     try {
         const res = await fetch('/api/metrics');
-        if (res.ok) {
-            const data = await res.json();
-            updateCharts(data);
-        }
-    } catch (e) {}
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        lastFetchOk = true;
+        updateCharts(await res.json());
+    } catch (e) {
+        lastFetchOk = false;
+        updateLive(false);
+    }
 }
 
-// Init charts and start polling
-if (typeof Chart !== 'undefined') {
-    initCharts();
-    fetchMetrics();
-    setInterval(fetchMetrics, 60000);
+function setRange(hours) {
+    rangeHours = hours;
+    document.querySelectorAll('#rangeSeg [data-range]').forEach(function (b) {
+        b.setAttribute('aria-pressed', String(Number(b.dataset.range) === hours));
+    });
+    const meta = document.getElementById('rangeMeta');
+    if (meta) meta.textContent = (hours === 24 ? 'Last 24 hours' : 'Last ' + hours + (hours === 1 ? ' hour' : ' hours')) + ' · 5-minute samples';
+    try { localStorage.setItem('vpsm-dash-range', String(hours)); } catch (e) { /* ignore */ }
+    renderCharts();
 }
 
-// Alert dismiss logic
+document.addEventListener('DOMContentLoaded', function () {
+    if (!document.getElementById('chartCpu')) return;
+    let saved = 24;
+    try { saved = parseInt(localStorage.getItem('vpsm-dash-range'), 10) || 24; } catch (e) { /* ignore */ }
+    if ([1, 6, 24].indexOf(saved) === -1) saved = 24;
+    document.querySelectorAll('#rangeSeg [data-range]').forEach(function (b) {
+        b.addEventListener('click', function () { setRange(Number(b.dataset.range)); });
+    });
+    if (typeof Chart !== 'undefined') {
+        initCharts();
+        onThemeChange(rethemeCharts);
+    } else {
+        ['Cpu', 'Mem', 'Disk', 'Swap', 'Net'].forEach(function (n) {
+            const el = document.getElementById('chart' + n + 'Empty');
+            if (el) el.textContent = 'Charts unavailable';
+        });
+    }
+    setRange(saved);
+    // Metrics are sampled every 5 minutes; poll every 60s while the tab is visible.
+    startVisiblePolling(fetchMetrics, 60000, { immediate: true });
+});
+
+// Swap cleared from the Server actions menu (or the Clear… button above)
+document.addEventListener('vps:swap-cleared', function () {
+    setMeter('swap', 0);
+    const sub = document.getElementById('swapSub');
+    if (sub) sub.textContent = '0.0G / ' + sub.textContent.split('/').pop().trim();
+    const btn = document.getElementById('swapClearBtn');
+    if (btn) btn.hidden = true;
+});
+
+// --- Alerts: dismiss + client-side health score ------------------------------
+function recomputeHealth() {
+    const items = document.querySelectorAll('#alertsList .alert-item');
+    let score = 100;
+    items.forEach(function (it) {
+        const sev = it.dataset.severity;
+        score -= sev === 'error' ? 15 : sev === 'warning' ? 5 : 1;
+    });
+    score = Math.max(0, Math.min(100, score));
+    const label = score >= 90 ? 'Excellent' : score >= 75 ? 'Good' : score >= 50 ? 'Fair' : 'Needs attention';
+    const tone = score >= 75 ? '' : score >= 50 ? 'is-warn' : 'is-err';
+    const wrap = document.getElementById('healthScore');
+    if (!wrap) return;
+    document.getElementById('healthValue').textContent = score;
+    document.getElementById('healthLabel').textContent = label;
+    wrap.className = ('health ' + tone).trim();
+}
+
 function dismissAlert(btn) {
     const item = btn.closest('.alert-item');
     const key = item.dataset.alertKey;
     // Persist dismiss via API
     fetch('/api/alerts/dismiss', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({key: key}),
+    }).then(function(res) {
+        if (!res.ok) showToast('Could not save alert dismissal', 'warning');
     }).catch(function() {});
     // Animate out
-    item.style.transition = 'opacity 0.2s, max-height 0.3s';
+    item.style.transition = 'opacity 0.15s, max-height 0.2s';
     item.style.opacity = '0';
     item.style.maxHeight = item.offsetHeight + 'px';
     setTimeout(function() {
         item.style.maxHeight = '0';
-        item.style.padding = '0 16px';
+        item.style.paddingTop = '0';
+        item.style.paddingBottom = '0';
         item.style.borderBottom = 'none';
-    }, 150);
+    }, 120);
     setTimeout(function() {
         item.remove();
         updateAlertsBadge();
-    }, 400);
+    }, 320);
 }
 
 function updateAlertsBadge() {
-    var remaining = document.querySelectorAll('#alertsList .alert-item');
-    var badge = document.getElementById('alertsBadge');
-    var card = document.getElementById('alertsCard');
-    if (remaining.length === 0) {
-        card.style.display = 'none';
-    } else {
+    const remaining = document.querySelectorAll('#alertsList .alert-item');
+    const badge = document.getElementById('alertsBadge');
+    const empty = document.getElementById('alertsEmpty');
+    if (badge) {
         badge.textContent = remaining.length;
+        badge.hidden = remaining.length === 0;
     }
+    if (empty) empty.hidden = remaining.length !== 0;
+    recomputeHealth();
 }
 
-// Dashboard service restart
-async function dashServiceRestart(name, btn) {
-    var data = await apiCall('/services/restart/' + encodeURIComponent(name), 'POST');
-    if (!data) return;
-    var row = btn.closest('tr');
-    if (row) {
-        var statusCell = row.querySelector('td:nth-child(2)');
-        if (statusCell) statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
+// --- Services (restart/start; stop needs confirmation) ----------------------
+async function dashServiceAction(action, name, btn, confirmed) {
+    if (action === 'stop' && !confirmed) {
+        showConfirm('Stop service', stopConfirmText('service', name), function () {
+            dashServiceAction(action, name, btn, true);
+        }, { destructive: true, confirmLabel: isPanelCritical(name) ? 'Stop anyway' : 'Stop' });
+        return;
     }
+    const data = await withBusy(btn, function () {
+        return apiCall('/services/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
+    });
+    if (!data) return;
+    const row = btn.closest('tr');
+    if (!row) return;
+    const statusCell = row.querySelector('td[data-label="Status"]');
+    if (statusCell) {
+        statusCell.innerHTML = action === 'stop'
+            ? '<span class="badge badge-red"><span class="badge-dot red"></span>inactive</span>'
+            : '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
+    }
+    row.classList.toggle('problem', action === 'stop');
 }
+
+// Kept for older callers
+function dashServiceRestart(name, btn) { return dashServiceAction('restart', name, btn); }
 </script>
 {% endblock %}

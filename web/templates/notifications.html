@@ -4,7 +4,7 @@
 {% block page_title %}Notifications{% endblock %}
 
 {% block content %}
-<div class="stats-grid" style="grid-template-columns: 1fr;">
+<div class="page-stack">
 
     <!-- Push Permission -->
     <div class="card">
@@ -24,9 +24,9 @@
 
             <div id="push-controls" style="display:none;">
                 <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
-                    <button class="btn btn-green" id="btnEnable" onclick="enablePush()">Enable Notifications</button>
-                    <button class="btn btn-red" id="btnDisable" onclick="disablePush()" style="display:none;">Disable Notifications</button>
-                    <button class="btn" id="btnTest" onclick="sendTest()" style="display:none;">Send Test</button>
+                    <button type="button" class="btn btn-primary" id="btnEnable" onclick="enablePush()">Enable Notifications</button>
+                    <button type="button" class="btn btn-red" id="btnDisable" onclick="disablePush()" style="display:none;">Disable Notifications</button>
+                    <button type="button" class="btn" id="btnTest" onclick="sendTest()" style="display:none;">Send Test</button>
                 </div>
                 <p id="push-permission-hint" style="color:var(--text-muted);font-size:12px;display:none;">
                     If the permission prompt doesn't appear, check your browser's notification settings for this site.
@@ -66,8 +66,8 @@
                         <div class="notif-category-desc">Site down, services down, PM2 offline, disk >95%, SSL expired</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-critical" checked><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-critical"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-critical" aria-label="Critical Errors: push notifications" checked><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-critical" aria-label="Critical Errors: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
 
@@ -77,8 +77,8 @@
                         <div class="notif-category-desc">Disk >80%, RAM >85%, swap >50%, high load, SSL &lt;14 days</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-warnings" checked><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-warnings"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-warnings" aria-label="Warnings: push notifications" checked><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-warnings" aria-label="Warnings: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
 
@@ -88,8 +88,8 @@
                         <div class="notif-category-desc">Available package updates</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-updates"><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-updates"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-updates" aria-label="System Updates: push notifications"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-updates" aria-label="System Updates: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
 
@@ -99,8 +99,8 @@
                         <div class="notif-category-desc">Fail2ban bans, suspicious SSH activity</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-security" checked><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-security"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-security" aria-label="Security: push notifications" checked><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-security" aria-label="Security: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
 
@@ -110,8 +110,8 @@
                         <div class="notif-category-desc">High connection counts, SYN floods, single IP spikes</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-ddos" checked><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-ddos"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-ddos" aria-label="DDoS Detection: push notifications" checked><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-ddos" aria-label="DDoS Detection: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
 
@@ -121,8 +121,8 @@
                         <div class="notif-category-desc">Backup failures, no successful backup in 48 hours</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-backup" checked><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-backup"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-backup" aria-label="Backup: push notifications" checked><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-backup" aria-label="Backup: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
 
@@ -132,8 +132,8 @@
                         <div class="notif-category-desc">New VPS Manager release available on GitHub</div>
                     </div>
                     <div class="notif-channel-cols">
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-app_update" checked><span class="toggle-slider"></span></label></div>
-                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-app_update"><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-app_update" aria-label="App Updates: push notifications" checked><span class="toggle-slider"></span></label></div>
+                        <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-email-app_update" aria-label="App Updates: email notifications"><span class="toggle-slider"></span></label></div>
                     </div>
                 </div>
             </div>
@@ -142,7 +142,7 @@
                 <p style="color:var(--text-muted);font-size:12px;">Email notifications require SMTP to be configured. <a href="/settings" style="color:var(--link-color);">Configure SMTP &rarr;</a></p>
             </div>
 
-            <button class="btn btn-green" onclick="saveAllPreferences()" style="margin-top:16px;">Save Preferences</button>
+            <button type="button" class="btn btn-primary" onclick="saveAllPreferences(this)" style="margin-top:16px;">Save Preferences</button>
         </div>
     </div>
 
@@ -155,18 +155,18 @@
         <div class="card-body">
             <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">Manage all registered notification endpoints. You can edit labels and preferences for any device, including ones you can't access directly.</p>
             <div id="subs-list">
-                <p style="color:var(--text-muted);font-size:13px;">Loading subscriptions...</p>
+                <div class="skeleton-stack" aria-busy="true" aria-label="Loading subscriptions"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
             </div>
         </div>
     </div>
 </div>
 
 <!-- Modal for editing subscription preferences -->
-<div id="sub-prefs-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;">
-    <div style="background:var(--card-bg);border:1px solid var(--border-color);border-radius:12px;padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
+<div id="sub-prefs-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(1,4,9,0.65);z-index:1000;align-items:center;justify-content:center;">
+    <div role="dialog" aria-modal="true" aria-labelledby="modal-title" style="background:var(--bg-secondary);border:1px solid var(--border-strong);border-radius:var(--r-lg);box-shadow:var(--shadow-pop);padding:24px;max-width:500px;width:90%;max-height:80vh;overflow-y:auto;">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
             <h3 style="margin:0;font-size:16px;" id="modal-title">Edit Preferences</h3>
-            <button onclick="closeSubModal()" style="background:none;border:none;color:var(--text-secondary);cursor:pointer;font-size:20px;">&times;</button>
+            <button type="button" class="vps-modal-close" onclick="closeSubModal()" aria-label="Close">&times;</button>
         </div>
         <div id="modal-body"></div>
     </div>
@@ -321,20 +321,10 @@
     }
 
     async function sendTest() {
-        try {
-            const res = await fetch('/api/push/test', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
-                body: JSON.stringify({ endpoint: currentSubscription.endpoint }),
-            });
-            if (res.ok) {
-                showToast('Test notification sent', 'success');
-            } else {
-                showToast('Failed to send test', 'error');
-            }
-        } catch (e) {
-            showToast('Error: ' + e.message, 'error');
-        }
+        if (!currentSubscription) return;
+        await withBusy(document.getElementById('btnTest'), function() {
+            return apiCall('/api/push/test', 'POST', { endpoint: currentSubscription.endpoint });
+        });
     }
 
     async function loadPreferences() {
@@ -375,18 +365,26 @@
         }
     }
 
-    async function saveAllPreferences() {
+    async function saveAllPreferences(btn) {
+        return withBusy(btn, doSaveAllPreferences);
+    }
+
+    async function doSaveAllPreferences() {
         try {
             // Save push preferences if subscribed
             if (currentSubscription) {
                 const pushPrefs = { endpoint: currentSubscription.endpoint };
                 const cats = ['critical','warnings','updates','security','ddos','backup','app_update'];
                 cats.forEach(c => { pushPrefs[c] = document.getElementById('pref-push-' + c).checked; });
-                await fetch('/api/push/preferences', {
+                const pushRes = await fetch('/api/push/preferences', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(pushPrefs),
                 });
+                if (!pushRes.ok) {
+                    showToast('Failed to save push preferences', 'error');
+                    return;
+                }
             }
 
             // Save email preferences (always)
@@ -417,7 +415,7 @@
     async function loadAllSubscriptions() {
         try {
             const res = await fetch('/api/push/subscriptions');
-            if (!res.ok) return;
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             allSubscriptions = await res.json();
             renderSubscriptions();
         } catch (e) {
@@ -444,19 +442,19 @@
             });
             const created = sub.created ? new Date(sub.created).toLocaleDateString('nl-NL', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '';
 
-            html += '<div style="border:1px solid var(--border-color);border-radius:8px;padding:14px;margin-bottom:10px;' + (isCurrent ? 'border-color:var(--green);' : '') + '">';
+            html += '<div style="border:1px solid var(--border-color);border-radius:var(--r);padding:14px;margin-bottom:10px;' + (isCurrent ? 'border-color:rgba(63,185,80,0.5);' : '') + '">';
             html += '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;flex-wrap:wrap;">';
             html += '<div style="flex:1;min-width:200px;">';
             html += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">';
             html += '<strong style="font-size:14px;">' + escapeHtml(label) + '</strong>';
-            if (isCurrent) html += '<span style="font-size:11px;background:var(--green);color:#000;padding:1px 8px;border-radius:10px;">This device</span>';
+            if (isCurrent) html += '<span class="badge badge-green" style="font-size:11px;">This device</span>';
             html += '</div>';
-            html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">' + sub.provider + ' &middot; ' + escapeHtml(sub.endpoint_short) + (created ? ' &middot; ' + created : '') + '</div>';
-            html += '<div style="font-size:12px;color:var(--text-secondary);">' + (enabledPrefs.length ? enabledPrefs.join(', ') : '<span style="color:var(--text-muted);">No categories enabled</span>') + '</div>';
+            html += '<div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">' + escapeHtml(sub.provider) + ' &middot; ' + escapeHtml(sub.endpoint_short) + (created ? ' &middot; ' + created : '') + '</div>';
+            html += '<div style="font-size:12px;color:var(--text-secondary);">' + (enabledPrefs.length ? enabledPrefs.map(escapeHtml).join(', ') : '<span style="color:var(--text-muted);">No categories enabled</span>') + '</div>';
             html += '</div>';
             html += '<div style="display:flex;gap:6px;align-items:center;">';
-            html += '<button class="btn" style="font-size:12px;padding:4px 12px;" onclick="editSubPrefs(' + idx + ')">Edit</button>';
-            html += '<button class="btn btn-red" style="font-size:12px;padding:4px 12px;" onclick="deleteSub(' + idx + ')">Delete</button>';
+            html += '<button type="button" class="btn btn-sm" onclick="editSubPrefs(' + idx + ')">Edit</button>';
+            html += '<button type="button" class="btn btn-sm btn-red" onclick="deleteSub(' + idx + ', this)">Delete</button>';
             html += '</div>';
             html += '</div>';
             html += '</div>';
@@ -483,22 +481,22 @@
         ];
 
         let html = '<div style="margin-bottom:14px;">';
-        html += '<label style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:4px;">Label</label>';
-        html += '<input type="text" id="modal-label" value="' + escapeHtml(label) + '" maxlength="50" style="width:100%;background:var(--bg-primary);border:1px solid var(--border-color);color:var(--text-primary);padding:8px 12px;border-radius:6px;font-size:14px;">';
+        html += '<label for="modal-label" style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:4px;">Label</label>';
+        html += '<input type="text" id="modal-label" class="form-control" value="' + escapeHtml(label) + '" maxlength="50">';
         html += '</div>';
         html += '<div style="margin-bottom:14px;">';
         html += '<label style="font-size:13px;color:var(--text-secondary);display:block;margin-bottom:8px;">Categories</label>';
         cats.forEach(c => {
             const checked = prefs[c.key] !== false && (c.key !== 'updates' || prefs[c.key] === true);
             html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;">';
-            html += '<span style="font-size:13px;">' + c.name + '</span>';
-            html += '<label class="toggle-switch"><input type="checkbox" id="modal-pref-' + c.key + '"' + (checked ? ' checked' : '') + '><span class="toggle-slider"></span></label>';
+            html += '<span style="font-size:13px;">' + escapeHtml(c.name) + '</span>';
+            html += '<label class="toggle-switch"><input type="checkbox" id="modal-pref-' + c.key + '" aria-label="' + escapeHtml(c.name) + '"' + (checked ? ' checked' : '') + '><span class="toggle-slider"></span></label>';
             html += '</div>';
         });
         html += '</div>';
         html += '<div style="display:flex;gap:8px;">';
-        html += '<button class="btn btn-green" onclick="saveSubPrefs(' + idx + ')">Save</button>';
-        html += '<button class="btn" onclick="closeSubModal()">Cancel</button>';
+        html += '<button type="button" class="btn btn-primary" onclick="saveSubPrefs(' + idx + ', this)">Save</button>';
+        html += '<button type="button" class="btn" onclick="closeSubModal()">Cancel</button>';
         html += '</div>';
 
         document.getElementById('modal-title').textContent = 'Edit: ' + (label || sub.provider);
@@ -511,9 +509,10 @@
         document.getElementById('sub-prefs-modal').style.display = 'none';
     }
 
-    async function saveSubPrefs(idx) {
+    async function saveSubPrefs(idx, btn) {
         const sub = allSubscriptions[idx];
         if (!sub) return;
+        if (btn) btn.disabled = true;
         const endpoint = sub.endpoint;
         const newLabel = document.getElementById('modal-label').value.trim();
         const cats = ['critical','warnings','updates','security','ddos','backup','app_update'];
@@ -549,14 +548,19 @@
         } catch (e) {
             showToast('Error: ' + e.message, 'error');
         }
+        if (btn) btn.disabled = false;
     }
 
-    async function deleteSub(idx) {
+    function deleteSub(idx, btn) {
         const sub = allSubscriptions[idx];
         if (!sub) return;
         const label = sub.label || sub.provider;
-        if (!confirm('Delete subscription "' + label + '"? This device will no longer receive push notifications.')) return;
+        showConfirm('Delete subscription', 'Delete subscription "' + label + '"? This device will no longer receive push notifications.', function() {
+            withBusy(btn, function() { return doDeleteSub(sub); });
+        });
+    }
 
+    async function doDeleteSub(sub) {
         try {
             const res = await fetch('/api/push/subscriptions/delete', {
                 method: 'POST',
@@ -591,6 +595,13 @@
         }
         return outputArray;
     }
+
+    document.getElementById('sub-prefs-modal').addEventListener('click', function(e) {
+        if (e.target === this) closeSubModal();
+    });
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && !isConfirmOpen()) closeSubModal();
+    });
 
     init();
 </script>

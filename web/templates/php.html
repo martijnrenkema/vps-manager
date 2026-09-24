@@ -4,12 +4,12 @@
 {% block page_title %}PHP Management{% endblock %}
 
 {% block content %}
-<div class="card" style="margin-bottom:24px">
+<div class="card">
     <div class="card-header">{{ icon('package') }} PHP Versions <span class="tooltip-icon" data-bs-toggle="tooltip" title="Installed PHP-FPM versions and their status. FPM (FastCGI Process Manager) handles PHP requests for your websites.">?</span></div>
     <div class="card-body">
         {% if versions %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Version</th>
@@ -22,8 +22,8 @@
                 <tbody>
                     {% for v in versions %}
                     <tr>
-                        <td><strong>PHP {{ v.version }}</strong></td>
-                        <td>
+                        <td data-label="Version"><strong>PHP {{ v.version }}</strong></td>
+                        <td data-label="FPM Status">
                             {% if v.fpm_status == 'active' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                             {% elif v.fpm_status == 'inactive' %}
@@ -32,10 +32,10 @@
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ v.fpm_status }}</span>
                             {% endif %}
                         </td>
-                        <td><code>{{ v.pm }}</code></td>
-                        <td>{{ v.max_children }}</td>
-                        <td>
-                            <button class="btn btn-sm btn-yellow" onclick="restartPhp({{ v.version|tojson }}, this)">Restart FPM</button>
+                        <td data-label="Process Manager"><code>{{ v.pm }}</code></td>
+                        <td data-label="Max Children">{{ v.max_children }}</td>
+                        <td data-label="Actions">
+                            <button type="button" class="btn btn-sm" data-version="{{ v.version }}" onclick="restartPhp(this.dataset.version, this)">Restart FPM</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -50,15 +50,15 @@
 
 {% for v in versions %}
 {% if v.extensions %}
-<div class="card" style="margin-bottom:24px">
+<div class="card">
     <div class="card-header d-flex align-items-center justify-content-between">
-        <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="badge badge-muted" style="font-weight:normal">{{ v.extensions|length }}</span></span>
-        <button class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" style="font-size:.8rem">Show</button>
+        <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="card-meta num">{{ v.extensions|length }}</span></span>
+        <button type="button" class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" aria-expanded="false">Show</button>
     </div>
     <div class="card-body" style="display:none">
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <div class="tag-list">
             {% for ext in v.extensions %}
-            <span class="badge badge-muted" style="font-weight:normal">{{ ext }}</span>
+            <span class="tag">{{ ext }}</span>
             {% endfor %}
         </div>
     </div>
@@ -71,7 +71,7 @@
     <div class="card-body">
         {% if site_mapping %}
         <div class="table-wrap">
-            <table>
+            <table class="table-responsive-cards">
                 <thead>
                     <tr>
                         <th>Site Config</th>
@@ -82,9 +82,9 @@
                 <tbody>
                     {% for s in site_mapping %}
                     <tr>
-                        <td><strong>{{ s.config }}</strong></td>
-                        <td><span class="badge badge-green">PHP {{ s.php_version }}</span></td>
-                        <td><code style="color:var(--text-muted)">{{ s.socket }}</code></td>
+                        <td data-label="Site Config"><strong>{{ s.config }}</strong></td>
+                        <td data-label="PHP Version" class="mono">{{ s.php_version }}</td>
+                        <td data-label="Socket Path"><code class="muted" style="word-break:break-all">{{ s.socket }}</code></td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -104,18 +104,22 @@ function toggleExtensions(btn) {
     if (body.style.display === 'none') {
         body.style.display = '';
         btn.textContent = 'Hide';
+        btn.setAttribute('aria-expanded', 'true');
     } else {
         body.style.display = 'none';
         btn.textContent = 'Show';
+        btn.setAttribute('aria-expanded', 'false');
     }
 }
 async function restartPhp(version, btn) {
     showConfirm('Restart PHP-FPM', 'Restart PHP ' + version + '-FPM? This may briefly interrupt PHP sites.', async function() {
-        var data = await apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
+        var data = await withBusy(btn, function() {
+            return apiCall('/php/restart/' + encodeURIComponent(version), 'POST');
+        });
         if (!data) return;
         var row = btn ? btn.closest('tr') : null;
         if (row) {
-            var statusCell = row.querySelector('td:nth-child(2)');
+            var statusCell = row.querySelector('td[data-label="Status"]');
             if (statusCell) statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
         }
     });

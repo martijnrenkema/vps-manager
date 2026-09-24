@@ -1,201 +1,232 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en" data-theme="dark" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="robots" content="noindex, nofollow">
-    <meta name="theme-color" content="#0d1117">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="VPS Manager">
     <meta name="csrf-token" content="{{ csrf_token() }}">
-    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+    {% include '_theme_head.html' %}
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}">
     <link rel="manifest" href="/manifest.json">
-    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}?v={{ asset_v }}">
     <title>{% block title %}VPS Manager{% endblock %}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap.min.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=15">
+    <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap.min.css') }}?v={{ asset_v }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
     {% block head_extra %}{% endblock %}
 </head>
 <body>
+    {# Icon sprite: 24-grid line icons, drawn at 15-16px with a 1.6 stroke. #}
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+        <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/></symbol>
+        <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+        <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+        <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8l-5-5Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+        <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="1.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></symbol>
+        <symbol id="i-dns" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="6.5" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="6.5" rx="1.5"/><path d="M7 7.25h.01M7 16.75h.01"/></symbol>
+        <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 7l2.6 1.5M17.2 15.5l2.6 1.5M4.2 17l2.6-1.5M17.2 8.5 19.8 7"/></symbol>
+        <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+        <symbol id="i-net" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
+        <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v13c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-13M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5"/></symbol>
+        <symbol id="i-code" viewBox="0 0 24 24"><path d="m9 7-5 5 5 5M15 7l5 5-5 5"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+        <symbol id="i-disk" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M3.5 14h17M7 16.5h.01"/></symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5v11A1.5 1.5 0 0 0 5 20h14a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 19 8h-7l-2-3H5a1.5 1.5 0 0 0-1.5 1.5Z"/></symbol>
+        <symbol id="i-check-shield" viewBox="0 0 24 24"><path d="M12 21s7-3.5 7-9V6l-7-2.5L5 6v6c0 5.5 7 9 7 9Z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l1.5 1.5"/></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 21s7-3.5 7-9V6l-7-2.5L5 6v6c0 5.5 7 9 7 9Z"/></symbol>
+        <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5 8.5v10A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-10M10 12.5h4"/></symbol>
+        <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/></symbol>
+        <symbol id="i-term" viewBox="0 0 24 24"><path d="m5 7 5 5-5 5M12.5 17.5h6.5"/></symbol>
+        <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15L6 16.5ZM10 20.5h4"/></symbol>
+        <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16.5" rx="1.5"/><path d="M9 4.5V3h6v1.5M8.5 11h7M8.5 15h5"/></symbol>
+        <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.75"/><path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18 6l-1.4 1.4M7.4 16.6 6 18M18 18l-1.4-1.4M7.4 7.4 6 6"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+        <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17A8.5 8.5 0 0 0 12 3.5Z" fill="currentColor" stroke="none"/></symbol>
+        <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+        <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+        <symbol id="i-out" viewBox="0 0 24 24"><path d="M14 4.5h4A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5h-4M10 16l-4-4 4-4M6 12h9"/></symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+        <symbol id="i-power" viewBox="0 0 24 24"><path d="M17.7 7.3a8 8 0 1 1-11.4 0M12 3.5V11"/></symbol>
+        <symbol id="i-restart" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/></symbol>
+        <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></symbol>
+        <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 4.3 2.9 17.5A2 2 0 0 0 4.6 20.5h14.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+        <symbol id="i-err" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.5h.01"/></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.5h.01"/></symbol>
+        <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.6-4.9"/></symbol>
+    </svg>
+
+    <div class="nav-progress" id="navProgress" aria-hidden="true"></div>
+
+    {% macro nav_link(endpoint, label, ic, hint=None) -%}
+    {%- set is_active = request.endpoint == endpoint -%}
+    <a href="{{ url_for(endpoint) }}"{% if is_active %} class="active" aria-current="page"{% endif %}>
+        <svg class="i" aria-hidden="true"><use href="#i-{{ ic }}"/></svg><span class="nav-label">{{ label }}</span>
+        {%- if hint %}<span class="nav-hint{% if hint.tone %} is-{{ hint.tone }}{% endif %}" title="{{ hint.title }}">{{ hint.text }}<span class="sr-only"> ({{ hint.title }})</span></span>{% endif %}
+    </a>
+    {%- endmacro %}
+    {% macro nav_group(key, label) -%}
+    <div class="sidebar-group" data-group="{{ key }}">
+        <button type="button" class="sidebar-group-header" aria-expanded="true" aria-controls="sbgrp-{{ key }}" onclick="toggleSidebarGroup(this)">
+            <span>{{ label }}</span>
+            <svg class="sidebar-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></svg>
+        </button>
+        <div class="sidebar-group-items" id="sbgrp-{{ key }}">{{ caller() }}</div>
+    </div>
+    {%- endmacro %}
+    {% set hints = nav_hints or {} %}
+    {% set ws_label = 'Caddy' if web_server == 'caddy' else 'Nginx' %}
+
     <!-- Sidebar -->
-    <nav class="sidebar" id="sidebar">
-        <div class="sidebar-brand">
-            <img src="{{ url_for('static', filename='logo.png') }}" alt="VPS Manager" class="sidebar-logo">
-            <h2>VPS Manager</h2>
-            <div class="subtitle">
-                <span id="serverIp">{{ server_ip }}</span>
-                <button class="ip-copy" onclick="copyIp()" title="Copy IP">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                </button>
+    <nav class="sidebar" id="sidebar" aria-label="Main navigation">
+        <div class="sidebar-host">
+            <span class="host-mark" aria-hidden="true">{{ (global_hostname or 'vps')[:2]|lower }}</span>
+            <div class="host-text">
+                <div class="host-name" title="{{ global_hostname }}">{{ global_hostname }}</div>
+                <div class="host-ip">
+                    <span id="serverIp">{{ server_ip }}</span>
+                    <button type="button" class="ip-copy" onclick="copyIp()" title="Copy IP" aria-label="Copy server IP">
+                        <svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
+        <button type="button" class="sidebar-jump" onclick="openCmdPalette()" aria-label="Jump to a page or action">
+            <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+            <span>Jump to…</span>
+            <kbd class="kbd-shortcut" data-shortcut="k">Ctrl K</kbd>
+        </button>
         <div class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span> Dashboard
-            </a>
-            <div class="sidebar-group" data-group="web">
-                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
-                    <span>Web</span>
-                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-                <div class="sidebar-group-items">
-                    <a href="{{ url_for('websites') }}" class="{% if request.endpoint == 'websites' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Websites
-                    </a>
-                    <a href="{{ url_for('uptime') }}" class="{% if request.endpoint == 'uptime' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span> Uptime
-                    </a>
-                    {% if has_pm2 %}
-                    <a href="{{ url_for('pm2') }}" class="{% if request.endpoint == 'pm2' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span> PM2
-                    </a>
-                    {% endif %}
-                    <a href="{{ url_for('nginx_logs_page') }}" class="{% if request.endpoint == 'nginx_logs_page' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span> {% if web_server == 'caddy' %}Caddy Logs{% else %}Nginx Logs{% endif %}
-                    </a>
-                    <a href="{{ url_for('nginx_config') }}" class="{% if request.endpoint == 'nginx_config' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span> {% if web_server == 'caddy' %}Caddy Config{% else %}Nginx Config{% endif %}
-                    </a>
-                    <a href="{{ url_for('ssl') }}" class="{% if request.endpoint == 'ssl' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> SSL
-                    </a>
-                    <a href="{{ url_for('dns') }}" class="{% if request.endpoint == 'dns' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span> DNS
-                    </a>
-                </div>
-            </div>
-            <div class="sidebar-group" data-group="server">
-                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
-                    <span>Server</span>
-                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-                <div class="sidebar-group-items">
-                    <a href="{{ url_for('services') }}" class="{% if request.endpoint == 'services' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span> Services
-                    </a>
-                    <a href="{{ url_for('processes') }}" class="{% if request.endpoint == 'processes' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span> Processes
-                    </a>
-                    <a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span> Network
-                    </a>
-                    {% if has_mysql %}
-                    <a href="{{ url_for('databases') }}" class="{% if request.endpoint == 'databases' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Databases
-                    </a>
-                    {% endif %}
-                    {% if has_php %}
-                    <a href="{{ url_for('php') }}" class="{% if request.endpoint == 'php' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span> PHP
-                    </a>
-                    {% endif %}
-                    <a href="{{ url_for('cronjobs') }}" class="{% if request.endpoint == 'cronjobs' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Cronjobs
-                    </a>
-                    <a href="{{ url_for('disk') }}" class="{% if request.endpoint == 'disk' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Disk
-                    </a>
-                    <a href="{{ url_for('files') }}" class="{% if request.endpoint == 'files' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></span> Files
-                    </a>
-                </div>
-            </div>
-            <div class="sidebar-group" data-group="security">
-                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
-                    <span>Security</span>
-                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-                <div class="sidebar-group-items">
-                    <a href="{{ url_for('security_audit_page') }}" class="{% if request.endpoint == 'security_audit_page' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></span> Security Audit
-                    </a>
-                    <a href="{{ url_for('ssh_logs_page') }}" class="{% if request.endpoint == 'ssh_logs_page' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> SSH Logs
-                    </a>
-                    <a href="{{ url_for('firewall') }}" class="{% if request.endpoint == 'firewall' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Firewall
-                    </a>
-                    <a href="{{ url_for('backup') }}" class="{% if request.endpoint == 'backup' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Backup
-                    </a>
-                    <a href="{{ url_for('updates') }}" class="{% if request.endpoint == 'updates' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> Updates
-                    </a>
-                </div>
-            </div>
-            <div class="sidebar-group" data-group="tools">
-                <div class="sidebar-group-header" onclick="toggleSidebarGroup(this)">
-                    <span>Tools</span>
-                    <svg class="sidebar-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </div>
-                <div class="sidebar-group-items">
-                    <a href="{{ url_for('terminal') }}" class="{% if request.endpoint == 'terminal' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> Terminal
-                    </a>
-                    <a href="{{ url_for('notifications') }}" class="{% if request.endpoint == 'notifications' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span> Notifications
-                    </a>
-                    <a href="{{ url_for('audit') }}" class="{% if request.endpoint == 'audit' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></span> Audit Log
-                    </a>
-                    <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Settings
-                    </a>
-                </div>
-            </div>
+            {{ nav_link('dashboard', 'Dashboard', 'grid') }}
+            {% call nav_group('web', 'Web') %}
+                {{ nav_link('websites', 'Websites', 'globe') }}
+                {{ nav_link('uptime', 'Uptime', 'pulse') }}
+                {% if has_pm2 %}{{ nav_link('pm2', 'PM2', 'layers', hints.get('pm2')) }}{% endif %}
+                {{ nav_link('nginx_logs_page', ws_label ~ ' logs', 'doc') }}
+                {{ nav_link('nginx_config', ws_label ~ ' config', 'sliders') }}
+                {{ nav_link('ssl', 'SSL', 'lock', hints.get('ssl')) }}
+                {{ nav_link('dns', 'DNS', 'dns') }}
+            {% endcall %}
+            {% call nav_group('server', 'Server') %}
+                {{ nav_link('services', 'Services', 'cog', hints.get('services')) }}
+                {{ nav_link('processes', 'Processes', 'list') }}
+                {{ nav_link('network', 'Network', 'net') }}
+                {% if has_mysql %}{{ nav_link('databases', 'Databases', 'db') }}{% endif %}
+                {% if has_php %}{{ nav_link('php', 'PHP', 'code') }}{% endif %}
+                {{ nav_link('cronjobs', 'Cronjobs', 'clock') }}
+                {{ nav_link('disk', 'Disk', 'disk') }}
+                {{ nav_link('files', 'Files', 'folder') }}
+            {% endcall %}
+            {% call nav_group('security', 'Security') %}
+                {{ nav_link('security_audit_page', 'Security audit', 'check-shield') }}
+                {{ nav_link('ssh_logs_page', 'SSH logs', 'key') }}
+                {{ nav_link('firewall', 'Firewall', 'shield') }}
+                {{ nav_link('backup', 'Backup', 'archive') }}
+                {{ nav_link('updates', 'Updates', 'down', hints.get('updates')) }}
+            {% endcall %}
+            {% call nav_group('tools', 'Tools') %}
+                {{ nav_link('terminal', 'Terminal', 'term') }}
+                {{ nav_link('notifications', 'Notifications', 'bell') }}
+                {{ nav_link('audit', 'Audit log', 'clip') }}
+                {{ nav_link('settings', 'Settings', 'gear') }}
+            {% endcall %}
         </div>
         <div class="sidebar-bottom">
-            <div class="sidebar-version">v{{ app_version }}</div>
-            <a href="#" onclick="doLogout(); return false;">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span> Logout
+            <span class="sidebar-version">v{{ app_version }}</span>
+            <a href="#" role="button" class="sidebar-logout" onclick="doLogout(); return false;">
+                <svg class="i" aria-hidden="true"><use href="#i-out"/></svg>Log out
             </a>
         </div>
     </nav>
+    <div class="sidebar-scrim" onclick="closeSidebar()" aria-hidden="true"></div>
+
+    {% set section_names = {
+        'websites': 'Web', 'uptime': 'Web', 'pm2': 'Web', 'nginx_logs_page': 'Web', 'nginx_config': 'Web', 'ssl': 'Web', 'dns': 'Web',
+        'services': 'Server', 'processes': 'Server', 'network': 'Server', 'databases': 'Server', 'php': 'Server',
+        'cronjobs': 'Server', 'disk': 'Server', 'files': 'Server',
+        'security_audit_page': 'Security', 'ssh_logs_page': 'Security', 'firewall': 'Security', 'backup': 'Security', 'updates': 'Security',
+        'terminal': 'Tools', 'notifications': 'Tools', 'audit': 'Tools', 'settings': 'Tools'
+    } %}
 
     <!-- Main content -->
     <div class="main-content">
-        <div class="top-bar">
-            <div style="display:flex;align-items:center;gap:12px">
-                <button class="hamburger" onclick="event.stopPropagation(); document.getElementById('sidebar').classList.toggle('open')">☰</button>
-                <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+        <header class="top-bar">
+            <div class="top-bar-left">
+                <button type="button" class="icon-btn hamburger" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" onclick="toggleSidebar(event)">
+                    <svg class="i" aria-hidden="true"><use href="#i-menu"/></svg>
+                </button>
+                <h1>{% if section_names.get(request.endpoint) %}<span class="crumb">{{ section_names[request.endpoint] }} <span aria-hidden="true">/</span> </span>{% endif %}{% block page_title %}Dashboard{% endblock %}</h1>
             </div>
             <div class="meta">
-                <div class="notif-bell" id="notifBell" onclick="toggleNotifDropdown(event)">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
-                    <span class="notif-badge" id="notifBadge" style="display:none">0</span>
-                    <div class="notif-dropdown" id="notifDropdown" style="display:none">
-                        <div class="notif-dropdown-header">
-                            <strong>Notifications</strong>
-                            <div style="display:flex;gap:6px;">
-                                <button class="btn btn-sm" onclick="markAllRead(event)">Mark read</button>
-                                <button class="btn btn-sm btn-red" onclick="clearAllNotifications(event)">Clear all</button>
-                            </div>
-                        </div>
-                        <div class="notif-dropdown-body" id="notifDropdownBody">
-                            <div class="empty-state" style="padding:20px;font-size:13px;">Loading...</div>
-                        </div>
+                {% block topbar_extra %}{% endblock %}
+                <div class="menu-wrap">
+                    <button type="button" class="btn btn-sm topbar-menu-btn" id="serverMenuBtn" aria-label="Server actions" aria-haspopup="menu" aria-expanded="false" aria-controls="serverMenu" onclick="toggleServerMenu(event)">
+                        <svg class="i only-sm" aria-hidden="true"><use href="#i-power"/></svg>
+                        <span class="hide-sm">Server actions</span>
+                        <svg class="i chev hide-sm" aria-hidden="true"><use href="#i-chev-d"/></svg>
+                    </button>
+                    <div class="menu-popover" id="serverMenu" role="menu" aria-label="Server actions" hidden>
+                        <div class="menu-label"><span class="mono">{{ global_hostname }}</span> · up {{ global_uptime }}</div>
+                        <button type="button" class="menu-item" role="menuitem" onclick="closeServerMenu(); openCmdPalette()">
+                            <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+                            Search pages &amp; actions <kbd class="kbd-shortcut" data-shortcut="k">Ctrl K</kbd>
+                        </button>
+                        <div class="menu-sep" role="separator"></div>
+                        <button type="button" class="menu-item" role="menuitem" onclick="confirmRestartWebServer()">
+                            <svg class="i" aria-hidden="true"><use href="#i-restart"/></svg>
+                            Restart {{ ws_label }}…
+                        </button>
+                        <button type="button" class="menu-item" role="menuitem" onclick="confirmClearSwap()">
+                            <svg class="i" aria-hidden="true"><use href="#i-swap"/></svg>
+                            Clear swap…
+                        </button>
+                        <div class="menu-sep" role="separator"></div>
+                        <button type="button" class="menu-item danger" role="menuitem" onclick="confirmReboot()">
+                            <svg class="i" aria-hidden="true"><use href="#i-power"/></svg>
+                            Reboot server…
+                        </button>
                     </div>
                 </div>
-                <span>{{ global_hostname }}</span>
-                <span>Up: {{ global_uptime }}</span>
-                <span class="online-reboot" onclick="rebootFromTopbar()" title="Click to reboot server"><span class="uptime-dot"></span>Online</span>
+                <button type="button" class="icon-btn theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Switch to light theme" title="Switch theme">
+                    <svg class="i" aria-hidden="true"><use href="#i-theme"/></svg>
+                </button>
+                <div class="notif-wrap">
+                    <button type="button" class="icon-btn notif-bell" id="notifBell" aria-label="Notifications" aria-haspopup="true" aria-expanded="false" aria-controls="notifDropdown" onclick="toggleNotifDropdown(event)">
+                        <svg class="i" aria-hidden="true"><use href="#i-bell"/></svg>
+                        <span class="notif-badge" id="notifBadge" style="display:none">0</span>
+                    </button>
+                    <div class="notif-dropdown" id="notifDropdown" style="display:none" role="region" aria-label="Notifications">
+                        <div class="notif-dropdown-header">
+                            <strong>Notifications</strong>
+                            <div class="notif-dropdown-actions">
+                                <button type="button" class="btn btn-sm btn-ghost" onclick="markAllRead(event)">Mark read</button>
+                                <button type="button" class="btn btn-sm btn-ghost" onclick="clearAllNotifications(event)">Clear all</button>
+                            </div>
+                        </div>
+                        <div class="notif-dropdown-body" id="notifDropdownBody"></div>
+                    </div>
+                </div>
             </div>
-        </div>
-        <div class="page-content">
+        </header>
+        <main class="page-content" id="main">
             {% block content %}{% endblock %}
-        </div>
+        </main>
     </div>
 
     <!-- Toast container -->
-    <div class="toast-container" id="toastContainer"></div>
+    <div class="toast-container" id="toastContainer" aria-live="polite" aria-relevant="additions"></div>
 
     <!-- Log modal -->
     <div class="modal-overlay" id="logModal">
-        <div class="vps-modal">
+        <div class="vps-modal" role="dialog" aria-modal="true" aria-labelledby="logModalTitle">
             <div class="vps-modal-header">
                 <h3 id="logModalTitle">Logs</h3>
-                <button class="vps-modal-close" onclick="closeLogModal()">&times;</button>
+                <button type="button" class="vps-modal-close" onclick="closeLogModal()" aria-label="Close">&times;</button>
             </div>
             <div class="vps-modal-body">
                 <pre id="logModalContent">Loading...</pre>
@@ -205,507 +236,44 @@
 
     <!-- Confirm overlay -->
     <div class="confirm-overlay" id="confirmOverlay">
-        <div class="confirm-box">
+        <div class="confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
             <h3 id="confirmTitle">Confirmation</h3>
             <p id="confirmMessage">Are you sure?</p>
             <div class="btn-group">
-                <button class="btn" onclick="closeConfirm()">Cancel</button>
-                <button class="btn btn-red" id="confirmBtn" onclick="executeConfirm()">Confirm</button>
+                <button type="button" class="btn" onclick="closeConfirm()">Cancel</button>
+                <button type="button" class="btn btn-primary" id="confirmBtn" onclick="executeConfirm()">Confirm</button>
             </div>
         </div>
     </div>
 
     <!-- Command Palette -->
     <div class="cmd-palette-overlay" id="cmdPalette">
-        <div class="cmd-palette">
-            <input type="text" id="cmdInput" placeholder="Search pages and actions..." autocomplete="off">
-            <div class="cmd-results" id="cmdResults"></div>
+        <div class="cmd-palette" role="dialog" aria-modal="true" aria-label="Command palette">
+            <input type="text" id="cmdInput" placeholder="Search pages and actions..." autocomplete="off" role="combobox" aria-expanded="true" aria-controls="cmdResults" aria-label="Search pages and actions">
+            <div class="cmd-results" id="cmdResults" role="listbox"></div>
         </div>
     </div>
 
     <script>
-        // CSRF token for AJAX requests
-        const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-
-        // Logout via een CSRF-beschermde POST (geen GET-link die via <img src>
-        // misbruikt kan worden om iemand geforceerd uit te loggen).
-        function doLogout() {
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.action = '/logout';
-            const input = document.createElement('input');
-            input.type = 'hidden';
-            input.name = 'csrf_token';
-            input.value = csrfToken;
-            form.appendChild(input);
-            document.body.appendChild(form);
-            form.submit();
-        }
-
-        // HTML escaping helper. Escapet ook quotes zodat het veilig is in
-        // attribuut-context (title="...") — de div.textContent-truc laat " en '
-        // ongemoeid, wat attribuut-injectie (stored XSS) mogelijk maakte.
-        function escHtml(s) {
-            return String(s == null ? '' : s)
-                .replace(/&/g, '&amp;')
-                .replace(/</g, '&lt;')
-                .replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;')
-                .replace(/'/g, '&#39;');
-        }
-
-        // Toast notifications
-        function showToast(message, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const toast = document.createElement('div');
-            toast.className = `toast ${type}`;
-            const iconSpan = document.createElement('span');
-            iconSpan.textContent = type === 'success' ? '✓' : type === 'info' ? 'ℹ' : type === 'warning' ? '⚠' : '✗';
-            toast.appendChild(iconSpan);
-            toast.appendChild(document.createTextNode(' ' + message));
-            container.appendChild(toast);
-            setTimeout(() => toast.remove(), 4000);
-        }
-
-        // AJAX helper (body: optional object, sent as JSON)
-        async function apiCall(url, method = 'GET', body = null) {
-            try {
-                const opts = { method, headers: {'X-CSRFToken': csrfToken} };
-                if (body !== null) {
-                    opts.headers['Content-Type'] = 'application/json';
-                    opts.body = JSON.stringify(body);
-                }
-                const res = await fetch(url, opts);
-                const data = await res.json();
-                if (res.ok) {
-                    showToast(data.message || 'OK', 'success');
-                } else {
-                    showToast(data.message || 'Error', 'error');
-                }
-                return data;
-            } catch (e) {
-                showToast('Connection error', 'error');
-                return null;
-            }
-        }
-
-        // PM2 actions
-        async function pm2Action(action, name, btn) {
-            const data = await apiCall('/pm2/' + encodeURIComponent(action) + '/' + encodeURIComponent(name), 'POST');
-            if (!data) return;
-            // In-place update: find the row and update status badge
-            const row = btn ? btn.closest('tr') : null;
-            if (row) {
-                const statusCell = row.querySelector('td:nth-child(3)');
-                if (statusCell) {
-                    const newStatus = (action === 'stop') ? 'stopped' : 'online';
-                    if (newStatus === 'online') {
-                        statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>online</span>';
-                    } else {
-                        statusCell.innerHTML = '<span class="badge badge-yellow"><span class="badge-dot yellow"></span>stopped</span>';
-                    }
-                }
-            } else {
-                setTimeout(() => location.reload(), 1500);
-            }
-        }
-
-        // PM2 logs modal
-        async function showLogs(name) {
-            const modal = document.getElementById('logModal');
-            modal.style.display = 'flex';
-            document.getElementById('logModalTitle').textContent = 'Logs: ' + name;
-            document.getElementById('logModalContent').textContent = 'Loading...';
-            try {
-                const res = await fetch('/pm2/logs/' + encodeURIComponent(name));
-                const data = await res.json();
-                document.getElementById('logModalContent').textContent = data.logs || 'No logs';
-            } catch (e) {
-                document.getElementById('logModalContent').textContent = 'Failed to load logs';
-            }
-        }
-
-        function closeLogModal() {
-            document.getElementById('logModal').style.display = 'none';
-        }
-
-        // Reboot from topbar online dot
-        function rebootFromTopbar() {
-            showConfirm('Server Reboot', 'Are you sure you want to reboot the VPS? All services will be temporarily unavailable.', async function() { await apiCall('/reboot', 'POST'); });
-        }
-
-        // Confirm dialog
-        let confirmCallback = null;
-
-        function showConfirm(title, message, callback) {
-            document.getElementById('confirmTitle').textContent = title;
-            document.getElementById('confirmMessage').textContent = message;
-            confirmCallback = callback;
-            document.getElementById('confirmOverlay').classList.add('active');
-        }
-
-        function closeConfirm() {
-            document.getElementById('confirmOverlay').classList.remove('active');
-            confirmCallback = null;
-        }
-
-        function executeConfirm() {
-            if (confirmCallback) confirmCallback();
-            closeConfirm();
-        }
-
-        // Close modal on backdrop click
-        document.getElementById('logModal').addEventListener('click', function(e) {
-            if (e.target === this) closeLogModal();
-        });
-        document.getElementById('confirmOverlay').addEventListener('click', function(e) {
-            if (e.target === this) closeConfirm();
-        });
-
-        // Copy IP to clipboard
-        function copyIp() {
-            const ip = document.getElementById('serverIp').textContent;
-            navigator.clipboard.writeText(ip).then(() => {
-                showToast('IP copied', 'success');
-            });
-        }
-
-        // Close sidebar on mobile when clicking content
-        document.querySelector('.main-content').addEventListener('click', function() {
-            document.getElementById('sidebar').classList.remove('open');
-        });
-
-        // Notification dropdown
-        function toggleNotifDropdown(e) {
-            e.stopPropagation();
-            const dropdown = document.getElementById('notifDropdown');
-            const isOpen = dropdown.style.display === 'flex';
-            dropdown.style.display = isOpen ? 'none' : 'flex';
-            if (!isOpen) loadNotifHistory();
-        }
-
-        function closeNotifDropdown() {
-            document.getElementById('notifDropdown').style.display = 'none';
-        }
-
-        function escNotif(str) {
-            const d = document.createElement('div');
-            d.textContent = str || '';
-            return d.innerHTML;
-        }
-
-        async function loadNotifHistory() {
-            const body = document.getElementById('notifDropdownBody');
-            try {
-                const res = await fetch('/api/notifications/history');
-                const items = await res.json();
-                if (!items.length) {
-                    body.innerHTML = '<div class="empty-state" style="padding:20px;font-size:13px;">No notifications yet</div>';
-                    return;
-                }
-                const categoryColors = {
-                    critical: 'var(--red)', error: 'var(--red)',
-                    warning: 'var(--yellow)', warnings: 'var(--yellow)',
-                    security: 'var(--purple)', ddos: 'var(--red)',
-                    backup: 'var(--cyan)', updates: 'var(--accent)',
-                    test: 'var(--green)',
-                };
-                body.innerHTML = items.slice(0, 50).map((item, idx) => {
-                    const d = new Date(item.timestamp);
-                    const time = d.toLocaleDateString('nl-NL', {day:'2-digit',month:'2-digit'}) + ' ' + d.toLocaleTimeString('nl-NL', {hour:'2-digit',minute:'2-digit'});
-                    const cat = escNotif(item.category);
-                    const color = categoryColors[item.category] || 'var(--text-muted)';
-                    const unread = item.read ? '' : ' notif-item-unread';
-                    const count = item.count > 1 ? ` <span style="opacity:0.5">(${item.count}x)</span>` : '';
-                    return `<div class="notif-item${unread}" data-notif-idx="${idx}"><div class="notif-item-bar" style="background:${color}"></div><div class="notif-item-content"><div class="notif-item-body">${escNotif(item.body)}${count}</div><div class="notif-item-time">${time} &middot; ${cat}</div></div><button class="notif-dismiss-btn" onclick="dismissNotification(event, ${idx})" title="Dismiss">&times;</button></div>`;
-                }).join('');
-            } catch (e) {
-                body.innerHTML = '<div class="empty-state" style="padding:20px;font-size:13px;">Could not load notifications</div>';
-            }
-        }
-
-        async function dismissNotification(e, idx) {
-            e.stopPropagation();
-            try {
-                await fetch('/api/notifications/dismiss', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: JSON.stringify({index: idx}),
-                });
-                const item = document.querySelector(`.notif-item[data-notif-idx="${idx}"]`);
-                if (item) {
-                    item.style.transition = 'opacity 0.2s, max-height 0.3s';
-                    item.style.opacity = '0';
-                    item.style.maxHeight = item.offsetHeight + 'px';
-                    setTimeout(() => { item.style.maxHeight = '0'; item.style.padding = '0'; }, 150);
-                    setTimeout(() => { item.remove(); updateNotifBadge(); }, 350);
-                }
-            } catch (e) {}
-        }
-
-        async function markAllRead(e) {
-            e.stopPropagation();
-            try {
-                await fetch('/api/notifications/read', {method:'POST', headers:{'X-CSRFToken':csrfToken}});
-                const badge = document.getElementById('notifBadge');
-                badge.style.display = 'none';
-                badge.textContent = '0';
-                document.querySelectorAll('.notif-item-unread').forEach(el => el.classList.remove('notif-item-unread'));
-            } catch (e) {}
-        }
-
-        async function clearAllNotifications(e) {
-            e.stopPropagation();
-            try {
-                await fetch('/api/notifications/clear', {method:'POST', headers:{'X-CSRFToken':csrfToken}});
-                const badge = document.getElementById('notifBadge');
-                badge.style.display = 'none';
-                badge.textContent = '0';
-                document.getElementById('notifDropdownBody').innerHTML = '<div class="empty-state" style="padding:20px;font-size:13px;">No notifications yet</div>';
-            } catch (e) {}
-        }
-
-        // Fetch unread count from API (always fresh, independent of page cache)
-        async function updateNotifBadge() {
-            try {
-                const res = await fetch('/api/notifications/history');
-                const items = await res.json();
-                const unread = items.filter(i => !i.read).length;
-                const badge = document.getElementById('notifBadge');
-                if (unread > 0) {
-                    badge.textContent = unread;
-                    badge.style.display = 'flex';
-                } else {
-                    badge.style.display = 'none';
-                }
-            } catch (e) {}
-        }
-        updateNotifBadge();
-
-        // Close dropdown when clicking outside
-        document.addEventListener('click', function(e) {
-            if (!e.target.closest('.notif-bell')) closeNotifDropdown();
-        });
-
-        // Sidebar groups
-        function toggleSidebarGroup(header) {
-            const group = header.closest('.sidebar-group');
-            group.classList.toggle('collapsed');
-            saveSidebarState();
-        }
-
-        function saveSidebarState() {
-            const state = {};
-            document.querySelectorAll('.sidebar-group').forEach(g => {
-                state[g.dataset.group] = g.classList.contains('collapsed');
-            });
-            localStorage.setItem('sidebarGroups', JSON.stringify(state));
-        }
-
-        (function initSidebarGroups() {
-            try {
-                const state = JSON.parse(localStorage.getItem('sidebarGroups') || '{}');
-                document.querySelectorAll('.sidebar-group').forEach(g => {
-                    const key = g.dataset.group;
-                    const hasActive = g.querySelector('.sidebar-nav a.active, .sidebar-group-items a.active');
-                    if (hasActive) {
-                        g.classList.remove('collapsed');
-                    } else if (state[key]) {
-                        g.classList.add('collapsed');
-                    }
-                });
-            } catch (e) {}
-        })();
-
-        // Command Palette
-        const cmdPages = [
-            {label: 'Dashboard', url: '/', keywords: 'home overview stats'},
-            {label: 'Websites', url: '/websites', keywords: 'sites domains nginx caddy'},
-            {label: 'Uptime', url: '/uptime', keywords: 'monitor status check'},
-            {% if has_pm2 %}{label: 'PM2 Processes', url: '/pm2', keywords: 'node process manager'},{% endif %}
-            {label: '{% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} Logs', url: '/web-logs', keywords: 'error access log nginx caddy'},
-            {label: '{% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} Config', url: '/web-config', keywords: 'configuration edit site caddyfile'},
-            {label: 'SSL Certificates', url: '/ssl', keywords: 'https lets encrypt renew caddy auto'},
-            {label: 'DNS Records', url: '/dns', keywords: 'domain lookup'},
-            {label: 'Services', url: '/services', keywords: 'systemd systemctl restart'},
-            {label: 'Processes', url: '/processes', keywords: 'top kill pid cpu memory'},
-            {label: 'Network', url: '/network', keywords: 'interfaces ports connections'},
-            {% if has_mysql %}{label: 'Databases', url: '/databases', keywords: 'mariadb mysql phpmyadmin'},{% endif %}
-            {% if has_php %}{label: 'PHP', url: '/php', keywords: 'fpm version restart'},{% endif %}
-            {label: 'Cronjobs', url: '/cronjobs', keywords: 'cron schedule timer'},
-            {label: 'Disk Usage', url: '/disk', keywords: 'space storage'},
-            {label: 'Files', url: '/files', keywords: 'browser upload download'},
-            {label: 'SSH Logs', url: '/ssh-logs', keywords: 'ssh auth brute force login failed ban'},
-            {label: 'Firewall', url: '/firewall', keywords: 'ufw fail2ban security ban'},
-            {label: 'Backup', url: '/backup', keywords: 'restore nas'},
-            {label: 'Updates', url: '/updates', keywords: 'packages security upgrade'},
-            {label: 'Terminal', url: '/terminal', keywords: 'ssh command shell'},
-            {label: 'Notifications', url: '/notifications', keywords: 'push alerts subscribe'},
-            {label: 'Audit Log', url: '/audit', keywords: 'history actions log'},
-            {label: 'Settings', url: '/settings', keywords: 'config password 2fa thresholds'},
-            // Actions
-            {label: 'Reboot Server', keywords: 'restart shutdown power', type: 'action', action: function() {
-                closeCmdPalette();
-                showConfirm('Server Reboot', 'Are you sure you want to reboot the VPS? All services will be temporarily unavailable.', function() { apiCall('/reboot', 'POST'); });
-            }},
-            {label: '{% if web_server == "caddy" %}Reload Caddy{% else %}Renew All SSL{% endif %}', keywords: 'certificate https lets encrypt renew caddy', type: 'action', action: function() {
-                closeCmdPalette();
-                showConfirm('{% if web_server == "caddy" %}Reload Caddy{% else %}SSL Renewal{% endif %}', '{% if web_server == "caddy" %}Reload Caddy to trigger certificate check?{% else %}Force renew all certificates?{% endif %}', async function() {
-                    var data = await apiCall('/ssl/renew', 'POST', {});
-                    if (data) showToast('{% if web_server == "caddy" %}Caddy reloaded{% else %}SSL renewal started{% endif %}', 'success');
-                });
-            }},
-            {label: 'Validate {% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} Config', keywords: 'test nginx caddy configuration check validate', type: 'action', action: async function() {
-                closeCmdPalette();
-                var res = await fetch('/api/webserver/validate', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
-                var data = await res.json();
-                showToast(data.valid ? 'Config OK' : 'Config invalid', data.valid ? 'success' : 'error');
-            }},
-            {label: 'Check for Updates', keywords: 'upgrade version new release', type: 'action', action: async function() {
-                closeCmdPalette();
-                showToast('Checking for updates...', 'success');
-                var res = await fetch('/api/update/check');
-                var data = await res.json();
-                if (data.available) {
-                    showToast('Update available: ' + data.latest, 'success');
-                    window.location.href = '/updates';
-                } else {
-                    showToast('Already up to date', 'success');
-                }
-            }},
-            {label: 'Restart {% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %}', keywords: 'reload web server nginx caddy', type: 'action', action: function() {
-                closeCmdPalette();
-                showConfirm('Restart {% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %}', 'Restart the {% if web_server == "caddy" %}Caddy{% else %}Nginx{% endif %} web server?', function() { apiCall('/services/restart/{% if web_server == "caddy" %}caddy{% else %}nginx{% endif %}', 'POST'); });
-            }},
-            {% if has_php %}
-            {label: 'Restart PHP-FPM', keywords: 'php fpm reload', type: 'action', action: function() {
-                closeCmdPalette();
-                showConfirm('Restart PHP-FPM', 'Restart PHP-FPM? This may briefly interrupt PHP sites.', function() { apiCall('/services/restart/php8.3-fpm', 'POST'); });
-            }},
-            {% endif %}
-            {% if has_mysql %}
-            {label: 'Restart MariaDB', keywords: 'mysql database reload', type: 'action', action: function() {
-                closeCmdPalette();
-                showConfirm('Restart MariaDB', 'Restart the MariaDB database server?', function() { apiCall('/services/restart/mariadb', 'POST'); });
-            }},
-            {% endif %}
-            {label: 'Clear Audit Log', keywords: 'delete history wipe', type: 'action', action: function() {
-                closeCmdPalette();
-                showConfirm('Clear Audit Log', 'Delete all audit log entries?', function() { apiCall('/api/audit/clear', 'POST'); });
-            }},
-            {label: 'Test Push Notification', keywords: 'notify alert test', type: 'action', action: async function() {
-                closeCmdPalette();
-                await fetch('/api/push/test', {method: 'POST', headers: {'X-CSRFToken': csrfToken}});
-                showToast('Test notification sent', 'success');
-            }},
-            {label: 'Detect Services', keywords: 'discover scan systemd', type: 'action', action: function() {
-                closeCmdPalette();
-                window.location.href = '/settings';
-            }},
-            {label: 'Logout', keywords: 'sign out exit session', type: 'action', action: function() {
-                doLogout();
-            }},
-        ];
-        let cmdSelectedIdx = 0;
-        let cmdFiltered = [];
-
-        function openCmdPalette() {
-            const overlay = document.getElementById('cmdPalette');
-            overlay.classList.add('active');
-            const input = document.getElementById('cmdInput');
-            input.value = '';
-            input.focus();
-            cmdSelectedIdx = 0;
-            filterCmd('');
-        }
-
-        function closeCmdPalette() {
-            document.getElementById('cmdPalette').classList.remove('active');
-        }
-
-        function filterCmd(query) {
-            const q = query.toLowerCase();
-            cmdFiltered = q ? cmdPages.filter(p =>
-                p.label.toLowerCase().includes(q) || p.keywords.toLowerCase().includes(q)
-            ) : cmdPages;
-            cmdSelectedIdx = 0;
-            renderCmdResults();
-        }
-
-        function renderCmdResults() {
-            const container = document.getElementById('cmdResults');
-            container.innerHTML = cmdFiltered.map((p, i) =>
-                `<div class="cmd-result-item${i === cmdSelectedIdx ? ' selected' : ''}" onmouseenter="cmdSelectedIdx=${i};renderCmdResults()" onclick="navigateCmd(${i})">
-                    <span class="cmd-label">${escHtml(p.label)}</span>
-                    ${p.type === 'action' ? '<span class="cmd-type">Action</span>' : '<span class="cmd-type" style="opacity:0.4">Page</span>'}
-                </div>`
-            ).join('');
-        }
-
-        function navigateCmd(idx) {
-            var item = cmdFiltered[idx];
-            if (!item) return;
-            if (item.action) {
-                item.action();
-            } else if (item.url) {
-                window.location.href = item.url;
-            }
-        }
-
-        document.getElementById('cmdInput').addEventListener('input', function() {
-            filterCmd(this.value);
-        });
-
-        document.getElementById('cmdInput').addEventListener('keydown', function(e) {
-            if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                cmdSelectedIdx = Math.min(cmdSelectedIdx + 1, cmdFiltered.length - 1);
-                renderCmdResults();
-            } else if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                cmdSelectedIdx = Math.max(cmdSelectedIdx - 1, 0);
-                renderCmdResults();
-            } else if (e.key === 'Enter') {
-                e.preventDefault();
-                navigateCmd(cmdSelectedIdx);
-            }
-        });
-
-        document.getElementById('cmdPalette').addEventListener('click', function(e) {
-            if (e.target === this) closeCmdPalette();
-        });
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', function(e) {
-            if (e.key === 'Escape') {
-                if (document.getElementById('cmdPalette').classList.contains('active')) {
-                    closeCmdPalette();
-                    return;
-                }
-                closeLogModal();
-                closeConfirm();
-                closeNotifDropdown();
-            }
-            if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-                e.preventDefault();
-                openCmdPalette();
-            }
-        });
+        window.VPS_CONFIG = {{ {'webServer': web_server or 'nginx', 'hasPm2': (has_pm2 and true) or false, 'hasMysql': (has_mysql and true) or false, 'hasPhp': (has_php and true) or false}|tojson }};
     </script>
-    <script src="{{ url_for('static', filename='vendor/bootstrap.bundle.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='app.js') }}?v={{ asset_v }}"></script>
+    <script src="{{ url_for('static', filename='vendor/bootstrap.bundle.min.js') }}?v={{ asset_v }}"></script>
     <script>
         // Initialize Bootstrap tooltips
-        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-            new bootstrap.Tooltip(el);
-        });
+        if (window.bootstrap) {
+            document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+                new bootstrap.Tooltip(el);
+            });
+        }
     </script>
     {% block scripts %}{% endblock %}
     <!-- PWA install banner -->
     <div class="pwa-install-banner" id="pwaBanner" style="display:none;">
         <span id="pwaBannerText">Install VPS Manager as app</span>
         <div style="display:flex;gap:8px;align-items:center;">
-            <button class="btn btn-green btn-sm" id="pwaBannerInstall" onclick="installPwa()">Install</button>
-            <button class="btn btn-sm" onclick="dismissPwaBanner()" style="padding:4px 6px;font-size:16px;line-height:1;">&times;</button>
+            <button type="button" class="btn btn-primary btn-sm" id="pwaBannerInstall" onclick="installPwa()">Install</button>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="dismissPwaBanner()" aria-label="Dismiss install banner" style="padding:0 8px;font-size:16px;line-height:1;">&times;</button>
         </div>
     </div>
 
@@ -724,8 +292,12 @@
             showPwaBanner();
         });
 
+        function pwaDismissed() {
+            try { return !!localStorage.getItem('pwa-banner-dismissed'); } catch (e) { return false; }
+        }
+
         function showPwaBanner() {
-            if (localStorage.getItem('pwa-banner-dismissed')) return;
+            if (pwaDismissed()) return;
             if (window.matchMedia('(display-mode: standalone)').matches) return;
             document.getElementById('pwaBanner').style.display = 'flex';
         }
@@ -743,12 +315,12 @@
 
         function dismissPwaBanner() {
             document.getElementById('pwaBanner').style.display = 'none';
-            localStorage.setItem('pwa-banner-dismissed', '1');
+            try { localStorage.setItem('pwa-banner-dismissed', '1'); } catch (e) {}
         }
 
         // iOS: show manual install hint
         if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.matchMedia('(display-mode: standalone)').matches) {
-            if (!localStorage.getItem('pwa-banner-dismissed')) {
+            if (!pwaDismissed()) {
                 const banner = document.getElementById('pwaBanner');
                 document.getElementById('pwaBannerText').innerHTML = 'Tap <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:-3px;"><path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg> then <strong>"Add to Home Screen"</strong>';
                 document.getElementById('pwaBannerInstall').style.display = 'none';
