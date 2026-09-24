@@ -10,16 +10,16 @@
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Query DNS records for any domain. A/AAAA = IP address, MX = mail server, CNAME = alias, TXT = verification records." style="margin-left:0">?</span>
     </div>
     <div class="card-body">
-        <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)">
-            <div class="form-group" style="margin-bottom:0;flex:1;min-width:200px">
-                <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Domain</label>
-                <select id="domainSelect" class="form-control">
+        <div class="form-row form-row-sep">
+            <div class="form-group grow" style="max-width:420px">
+                <label for="domainSelect">Domain</label>
+                <select id="domainSelect" class="form-control mono">
                     {% for d in domains %}
                     <option value="{{ d }}">{{ d }}</option>
                     {% endfor %}
                 </select>
             </div>
-            <button class="btn btn-green" onclick="lookupDns()">{{ icon('refresh') }} Lookup</button>
+            <button type="button" class="btn btn-primary" onclick="lookupDns()">Look up</button>
         </div>
         <div id="dnsResults">
             <div class="empty-state">Select a domain and click Lookup to view DNS records.</div>
@@ -57,14 +57,12 @@ async function lookupDns() {
 
         let html = '<div class="table-wrap"><table><thead><tr><th>Type</th><th>Value</th></tr></thead><tbody>';
         const typeOrder = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'];
-        const typeColors = { A: 'badge-green', AAAA: 'badge-green', CNAME: 'badge-yellow', MX: 'badge-yellow', TXT: '', NS: '' };
 
         for (const rtype of typeOrder) {
             if (!data.records[rtype]) continue;
             for (const val of data.records[rtype]) {
-                const badgeClass = typeColors[rtype] || '';
-                html += '<tr><td><span class="badge ' + badgeClass + '">' + escHtml(rtype) + '</span></td>';
-                html += '<td><code style="color:var(--text-secondary);word-break:break-all">' + escHtml(val) + '</code></td></tr>';
+                html += '<tr><td style="width:80px"><span class="tag">' + escHtml(rtype) + '</span></td>';
+                html += '<td><code style="word-break:break-all">' + escHtml(val) + '</code></td></tr>';
             }
         }
         html += '</tbody></table></div>';

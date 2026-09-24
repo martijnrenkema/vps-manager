@@ -5,7 +5,7 @@
 
 {% block content %}
 <!-- Status Overview -->
-<div class="card" style="margin-bottom:16px">
+<div class="card">
     <div class="card-header">{{ icon('activity') }} Backup Health <span class="tooltip-icon" data-bs-toggle="tooltip" title="Overview of automated backup status. Backups pull data from the VPS to NAS storage.">?</span></div>
     <div class="card-body">
         {% if data.status and data.status.last_success and data.status.last_success is mapping %}
@@ -56,7 +56,7 @@
 
 <!-- NAS Transfer Stats -->
 {% if data.nas_pull %}
-<div class="card" style="margin-bottom:16px">
+<div class="card">
     <div class="card-header">{{ icon('download-cloud') }} Last NAS Pull</div>
     <div class="card-body">
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:16px">
@@ -92,9 +92,9 @@
 
 <!-- History Table -->
 {% if data.history %}
-<div class="card" style="margin-bottom:16px">
+<div class="card">
     <div class="card-header">{{ icon('clock') }} Run History</div>
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         <div class="table-wrap">
         <table class="table" style="margin:0;font-size:13px">
             <thead>
@@ -152,9 +152,9 @@
 
 <!-- Site Backups -->
 {% if data.site_backups %}
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('folder') }} Site Backups</div>
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         <div class="table-wrap">
         <table class="table" style="margin:0;font-size:13px">
             <thead>
@@ -184,9 +184,9 @@
 {% endif %}
 
 <!-- Database Backup Files -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('database') }} Database Backups</div>
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         {% if data.db_files %}
             <div class="table-wrap">
             <table class="table" style="margin:0;font-size:13px">

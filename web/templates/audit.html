@@ -4,31 +4,31 @@
 {% block page_title %}Audit Log{% endblock %}
 
 {% block content %}
-<div class="file-toolbar" style="margin-bottom:16px">
-    <div class="btn-group" style="flex-wrap:wrap;gap:6px">
-        <button class="btn btn-sm filter-btn active" data-filter="" onclick="filterAction(this, '')">All</button>
-        <button class="btn btn-sm filter-btn" data-filter="login" onclick="filterAction(this, 'login')">Login</button>
-        <button class="btn btn-sm filter-btn" data-filter="logout" onclick="filterAction(this, 'logout')">Logout</button>
-        <button class="btn btn-sm filter-btn" data-filter="config_update" onclick="filterAction(this, 'config_update')">Config</button>
-        <button class="btn btn-sm filter-btn" data-filter="service_restart" onclick="filterAction(this, 'service_restart')">Services</button>
-        <button class="btn btn-sm filter-btn" data-filter="firewall_ban" onclick="filterAction(this, 'firewall_ban')">Firewall</button>
-        <button class="btn btn-sm filter-btn" data-filter="file_" onclick="filterAction(this, 'file_')">Files</button>
-        <button class="btn btn-sm filter-btn" data-filter="cronjob_" onclick="filterAction(this, 'cronjob_')">Cronjobs</button>
-        <button class="btn btn-sm filter-btn" data-filter="nginx_" onclick="filterAction(this, 'nginx_')">Nginx</button>
+<div class="file-toolbar">
+    <div class="seg audit-filters" role="group" aria-label="Filter by action">
+        <button type="button" class="filter-btn active" data-filter="" onclick="filterAction(this, '')">All</button>
+        <button type="button" class="filter-btn" data-filter="login" onclick="filterAction(this, 'login')">Login</button>
+        <button type="button" class="filter-btn" data-filter="logout" onclick="filterAction(this, 'logout')">Logout</button>
+        <button type="button" class="filter-btn" data-filter="config_update" onclick="filterAction(this, 'config_update')">Config</button>
+        <button type="button" class="filter-btn" data-filter="service_restart" onclick="filterAction(this, 'service_restart')">Services</button>
+        <button type="button" class="filter-btn" data-filter="firewall_ban" onclick="filterAction(this, 'firewall_ban')">Firewall</button>
+        <button type="button" class="filter-btn" data-filter="file_" onclick="filterAction(this, 'file_')">Files</button>
+        <button type="button" class="filter-btn" data-filter="cronjob_" onclick="filterAction(this, 'cronjob_')">Cronjobs</button>
+        <button type="button" class="filter-btn" data-filter="nginx_" onclick="filterAction(this, 'nginx_')">Nginx</button>
     </div>
     <div class="btn-group">
-        <input type="text" class="form-control" id="auditSearch" placeholder="Search..." style="width:200px;padding:4px 10px;font-size:12px" oninput="renderAuditLog()">
-        <button class="btn btn-sm btn-red" onclick="clearAuditLog()">{{ icon('trash') }} Clear</button>
+        <input type="text" class="form-control form-control-sm" id="auditSearch" placeholder="Search…" aria-label="Search audit log" style="width:200px" oninput="renderAuditLog()">
+        <button type="button" class="btn btn-sm btn-ghost btn-red" onclick="clearAuditLog()">Clear log…</button>
     </div>
 </div>
 
 <div class="card">
-    <div class="card-body" style="padding:0">
+    <div class="card-body flush">
         <div class="table-wrap">
             <table>
                 <thead>
                     <tr>
-                        <th style="width:160px">Timestamp</th>
+                        <th style="width:170px">Timestamp</th>
                         <th style="width:80px">User</th>
                         <th style="width:120px">IP</th>
                         <th style="width:160px">Action</th>
@@ -43,7 +43,7 @@
     </div>
 </div>
 
-<div style="display:flex;justify-content:center;gap:8px;margin-top:16px" id="auditPagination"></div>
+<div class="pager" id="auditPagination"></div>
 {% endblock %}
 
 {% block scripts %}
@@ -141,9 +141,9 @@ function renderAuditLog() {
             ? Object.entries(entry.details).map(([k,v]) => `<span style="color:var(--text-muted)">${escHtml(k)}:</span> <code>${escHtml(typeof v === 'object' ? JSON.stringify(v) : String(v))}</code>`).join(' &nbsp; ')
             : '<span style="color:var(--text-muted)">-</span>';
         return `<tr>
-            <td style="font-size:12px;font-family:monospace;color:var(--text-secondary)">${escHtml(ts)}</td>
+            <td class="mono muted" style="font-size:12px;white-space:nowrap">${escHtml(ts)}</td>
             <td>${escHtml(entry.user || '-')}</td>
-            <td style="font-size:12px;font-family:monospace">${escHtml(entry.ip || '-')}</td>
+            <td class="mono" style="font-size:12px;white-space:nowrap">${escHtml(entry.ip || '-')}</td>
             <td><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:${color};margin-right:6px"></span>${escHtml(entry.action || '-')}</td>
             <td style="font-size:12px">${details}</td>
         </tr>`;
@@ -175,10 +175,11 @@ loadAuditLog();
 </script>
 
 <style>
-.filter-btn.active {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: rgba(88, 166, 255, 0.1);
+.audit-filters { flex-wrap: wrap; }
+.seg .filter-btn.active {
+    background: var(--surface-2);
+    color: var(--text);
+    box-shadow: 0 0 0 1px var(--line-strong);
 }
 </style>
 {% endblock %}

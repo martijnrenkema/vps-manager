@@ -138,18 +138,19 @@ csrf = CSRFProtect(app)
 # request.remote_addr de echte client-IP is (rate limiting + audit logs).
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
 
-# Content-Security-Policy: allowlist alleen de CDN/fonts die de templates echt
-# gebruiken. 'unsafe-inline' is nodig omdat de templates inline scripts/styles
-# bevatten; de CSP is een tweede verdedigingslaag bovenop escHtml().
+# Content-Security-Policy: alles (ook Chart.js en fonts) wordt lokaal geserveerd,
+# dus geen externe bronnen. 'unsafe-inline' is nodig omdat de templates inline
+# scripts/styles bevatten; de CSP is een tweede verdedigingslaag bovenop escHtml().
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; "
-    "font-src 'self' https://fonts.gstatic.com; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self'; "
     "img-src 'self' data:; "
     "connect-src 'self'; "
     "frame-ancestors 'none'; "
-    "base-uri 'self'"
+    "base-uri 'self'; "
+    "form-action 'self'"
 )
 
 
@@ -1515,10 +1516,81 @@ def get_available_features():
     return features
 
 
+def _peek_cache(func_name, *args, **kwargs):
+    """Return a _ttl_cache'd result only if it is already in the cache.
+
+    Never calls the getter (no subprocess, no background refresh), so it is
+    safe to use on every page render. Returns None when the entry is missing
+    or older than its max age.
+    """
+    key = (func_name, args, tuple(sorted(kwargs.items())))
+    with _cache_lock:
+        entry = _cache_store.get(key)
+    if not entry:
+        return None
+    result, ts, max_age = entry
+    if time.time() - ts > max_age:
+        return None
+    return result
+
+
+def get_sidebar_hints():
+    """Small status hints for the sidebar (e.g. "PM2 1 err", "SSL 9d").
+
+    Built exclusively from data other pages already put in the cache; unknown
+    values are simply omitted. Each hint: {'text', 'tone' ('err'|'warn'|''), 'title'}.
+    """
+    hints = {}
+    try:
+        pm2 = _peek_cache('get_pm2_processes')
+        if isinstance(pm2, list) and pm2:
+            errored = [p for p in pm2 if p.get('status') in ('errored', 'error')]
+            down = [p for p in pm2 if p.get('status') not in ('online', 'launching')]
+            if errored:
+                hints['pm2'] = {'text': f"{len(errored)} err", 'tone': 'err',
+                                'title': f"{len(errored)} process(es) errored"}
+            elif down:
+                hints['pm2'] = {'text': f"{len(down)} off", 'tone': 'warn',
+                                'title': f"{len(down)} process(es) not online"}
+
+        services = _peek_cache('get_services_status')
+        if isinstance(services, list) and services:
+            down = [s for s in services if s.get('status') != 'active']
+            if down:
+                hints['services'] = {'text': f"{len(down)} off", 'tone': 'err',
+                                     'title': f"{len(down)} service(s) not running"}
+
+        cert_getter = 'get_caddy_certificates' if CONFIG.get('web_server') == 'caddy' else 'get_ssl_certificates'
+        certs = _peek_cache(cert_getter)
+        if isinstance(certs, list):
+            days = [c.get('days_left') for c in certs if isinstance(c.get('days_left'), int)]
+            if days:
+                soonest = min(days)
+                thr = CONFIG.get('thresholds', {})
+                if soonest <= 30:
+                    tone = ('err' if soonest <= thr.get('ssl_critical_days', 3)
+                            else 'warn' if soonest <= thr.get('ssl_warning_days', 14) else '')
+                    hints['ssl'] = {'text': f"{max(soonest, 0)}d", 'tone': tone,
+                                    'title': 'Days until the first certificate expires'}
+
+        updates = _peek_cache('get_system_updates')
+        if isinstance(updates, list):
+            installable = [u for u in updates if u.get('category') in ('security', 'regular')]
+            if installable:
+                sec = sum(1 for u in installable if u.get('category') == 'security')
+                hints['updates'] = {'text': str(len(installable)), 'tone': 'warn' if sec else '',
+                                    'title': f"{len(installable)} updates available"
+                                             + (f", {sec} security" if sec else '')}
+    except Exception:
+        logger.debug('Sidebar hints failed', exc_info=True)
+    return hints
+
+
 @app.context_processor
 def inject_global_info():
     features = get_available_features()
     return {
+        'nav_hints': get_sidebar_hints(),
         'server_ip': get_server_ip(),
         'global_hostname': get_server_hostname(),
         'global_uptime': get_server_uptime_short(),
@@ -4700,7 +4772,7 @@ def dashboard():
     alerts = [a for a in alerts if a.get('key') not in dismissed]
     health = compute_health_score(alerts)
     return render_template('dashboard.html', data=data, services=services, pm2=pm2, ssl=ssl,
-                           alerts=alerts, health=health)
+                           alerts=alerts, health=health, thresholds=CONFIG.get('thresholds', {}))
 
 
 @app.route('/api/alerts/dismiss', methods=['POST'])

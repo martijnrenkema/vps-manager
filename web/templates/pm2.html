@@ -13,22 +13,22 @@
                 <thead>
                     <tr>
                         <th style="width:32px"><input type="checkbox" class="bulk-check" aria-label="Select all processes" onchange="toggleSelectAll(this, 'pm2')"></th>
-                        <th>ID</th>
+                        <th class="num">ID</th>
                         <th>Process</th>
                         <th>Status</th>
-                        <th>CPU</th>
-                        <th>Memory</th>
-                        <th>Uptime</th>
-                        <th>Restarts</th>
-                        <th>Actions</th>
+                        <th class="num">CPU</th>
+                        <th class="num">Memory</th>
+                        <th class="num">Uptime</th>
+                        <th class="num">Restarts</th>
+                        <th class="r"><span class="sr-only">Actions</span></th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for p in processes %}
-                    <tr>
+                    {% for p in (processes|rejectattr('status', 'equalto', 'online')|list) + (processes|selectattr('status', 'equalto', 'online')|list) %}
+                    <tr{% if p.status != 'online' %} class="problem{% if p.status == 'stopped' %} is-warn{% endif %}"{% endif %}>
                         <td><input type="checkbox" class="bulk-check" data-name="{{ p.name }}" data-group="pm2" aria-label="Select {{ p.name }}" onchange="updateBulkBar('pm2')"></td>
-                        <td data-label="ID">{{ p.pm_id }}</td>
-                        <td data-label="Process"><strong>{{ p.name }}</strong></td>
+                        <td data-label="ID" class="num muted">{{ p.pm_id }}</td>
+                        <td data-label="Process" class="name">{{ p.name }}</td>
                         <td data-label="Status">
                             {% if p.status == 'online' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>online</span>
@@ -38,19 +38,20 @@
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ p.status }}</span>
                             {% endif %}
                         </td>
-                        <td data-label="CPU">{{ p.cpu }}%</td>
-                        <td data-label="Memory">{{ p.memory }} MB</td>
-                        <td data-label="Uptime">{{ p.uptime }}</td>
-                        <td data-label="Restarts">{{ p.restarts }}</td>
-                        <td data-label="Actions">
-                            <div class="btn-group">
-                                <button type="button" class="btn btn-sm btn-green" data-name="{{ p.name }}" onclick="pm2Action('restart', this.dataset.name, this)">Restart</button>
+                        <td data-label="CPU" class="num">{{ p.cpu }}%</td>
+                        <td data-label="Memory" class="num">{{ p.memory }} MB</td>
+                        <td data-label="Uptime" class="num muted">{{ p.uptime }}</td>
+                        <td data-label="Restarts" class="num{% if (p.restarts or 0) > 5 %} text-err{% elif not p.restarts %} muted{% endif %}">{{ p.restarts }}</td>
+                        <td data-label="Actions" class="r">
+                            <div class="btn-group row-act">
+                                <button type="button" class="btn btn-sm btn-ghost" data-name="{{ p.name }}" onclick="showLogs(this.dataset.name)">Logs</button>
                                 {% if p.status == 'online' %}
-                                    <button type="button" class="btn btn-sm btn-yellow" data-name="{{ p.name }}" onclick="pm2Action('stop', this.dataset.name, this)">Stop</button>
+                                    <button type="button" class="btn btn-sm btn-ghost" data-name="{{ p.name }}" onclick="pm2Action('restart', this.dataset.name, this)">Restart</button>
+                                    <button type="button" class="btn btn-sm btn-ghost btn-red" data-name="{{ p.name }}" onclick="pm2Action('stop', this.dataset.name, this)">Stop</button>
                                 {% else %}
-                                    <button type="button" class="btn btn-sm btn-green" data-name="{{ p.name }}" onclick="pm2Action('start', this.dataset.name, this)">Start</button>
+                                    <button type="button" class="btn btn-sm btn-ghost" data-name="{{ p.name }}" onclick="pm2Action('restart', this.dataset.name, this)">Restart</button>
+                                    <button type="button" class="btn btn-sm btn-primary" data-name="{{ p.name }}" onclick="pm2Action('start', this.dataset.name, this)">Start</button>
                                 {% endif %}
-                                <button type="button" class="btn btn-sm" data-name="{{ p.name }}" onclick="showLogs(this.dataset.name)">Logs</button>
                             </div>
                         </td>
                     </tr>
@@ -61,8 +62,8 @@
         <div class="bulk-bar" id="pm2BulkBar" style="display:none">
             <span id="pm2BulkCount">0 selected</span>
             <div class="btn-group">
-                <button type="button" class="btn btn-sm btn-green" onclick="bulkPm2Action('restart')">Restart selected</button>
-                <button type="button" class="btn btn-sm btn-yellow" onclick="bulkPm2Action('stop')">Stop selected</button>
+                <button type="button" class="btn btn-sm" onclick="bulkPm2Action('restart')">Restart selected</button>
+                <button type="button" class="btn btn-sm btn-red" onclick="bulkPm2Action('stop')">Stop selected</button>
             </div>
         </div>
         {% else %}

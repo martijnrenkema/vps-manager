@@ -41,17 +41,17 @@
 
     <!-- File table -->
     <div class="card">
-        <div class="card-body" style="padding:0">
+        <div class="card-body flush">
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
                             <th style="width:40px"></th>
                             <th>Name</th>
-                            <th style="width:80px">Owner</th>
-                            <th style="width:100px">Size</th>
-                            <th style="width:160px">Modified</th>
-                            <th style="width:100px">Actions</th>
+                            <th class="hide-sm" style="width:90px">Owner</th>
+                            <th class="num" style="width:90px">Size</th>
+                            <th class="hide-sm" style="width:150px">Modified</th>
+                            <th class="r" style="width:120px"><span class="sr-only">Actions</span></th>
                         </tr>
                     </thead>
                     <tbody id="fileList">
@@ -285,7 +285,7 @@ function renderFiles(data) {
     const tbody = document.getElementById('fileList');
     tbody.innerHTML = '';
 
-    const dirIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--yellow)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
+    const dirIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>';
     const fileIcon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>';
 
     // Parent directory link
@@ -339,6 +339,7 @@ function renderFiles(data) {
 
         // Owner cell
         const ownerTd = document.createElement('td');
+        ownerTd.className = 'mono hide-sm';
         ownerTd.style.fontSize = '12px';
         // Markeer bestanden waarvan de owner afwijkt van de owner van de map
         if (item.owner && item.owner !== '?' && currentDirInfo.owner && item.owner !== currentDirInfo.owner) {
@@ -350,8 +351,11 @@ function renderFiles(data) {
 
         // Size & modified cells
         const sizeTd = document.createElement('td');
+        sizeTd.className = 'num';
         sizeTd.textContent = item.size;
         const modTd = document.createElement('td');
+        modTd.className = 'tnum muted hide-sm';
+        modTd.style.whiteSpace = 'nowrap';
         modTd.textContent = item.modified;
 
         // Actions cell
@@ -361,7 +365,7 @@ function renderFiles(data) {
             // Edit button for text files
             if (isEditable(item.name)) {
                 const ed = document.createElement('button');
-                ed.className = 'btn btn-sm';
+                ed.className = 'btn btn-sm btn-ghost';
                 ed.type = 'button';
                 ed.title = 'Edit';
                 ed.setAttribute('aria-label', 'Edit ' + item.name);
@@ -372,7 +376,7 @@ function renderFiles(data) {
             }
             const dl = document.createElement('a');
             dl.href = '/files/download?path=' + encodeURIComponent(fullPath);
-            dl.className = 'btn btn-sm';
+            dl.className = 'btn btn-sm btn-ghost';
             dl.title = 'Download';
             dl.setAttribute('aria-label', 'Download ' + item.name);
             dl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
@@ -381,7 +385,7 @@ function renderFiles(data) {
         } else if (item.type === 'dir') {
             const dl = document.createElement('a');
             dl.href = '/files/download?path=' + encodeURIComponent(fullPath);
-            dl.className = 'btn btn-sm';
+            dl.className = 'btn btn-sm btn-ghost';
             dl.title = 'Download as .tar.gz';
             dl.setAttribute('aria-label', 'Download ' + item.name + ' as .tar.gz');
             dl.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>';
@@ -389,7 +393,7 @@ function renderFiles(data) {
             actTd.appendChild(document.createTextNode(' '));
         }
         const del = document.createElement('button');
-        del.className = 'btn btn-sm btn-red';
+        del.className = 'btn btn-sm btn-ghost btn-red';
         del.type = 'button';
         del.title = 'Delete';
         del.setAttribute('aria-label', 'Delete ' + item.name);

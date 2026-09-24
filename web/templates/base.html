@@ -1,226 +1,221 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="dark">
+<html lang="en" data-theme="dark" data-bs-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="robots" content="noindex, nofollow">
-    <meta name="theme-color" content="#0b0e14">
-    <meta name="color-scheme" content="dark">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="VPS Manager">
     <meta name="csrf-token" content="{{ csrf_token() }}">
+    {% include '_theme_head.html' %}
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}?v={{ asset_v }}">
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}?v={{ asset_v }}">
     <title>{% block title %}VPS Manager{% endblock %}</title>
-    <link rel="preload" as="font" type="font/woff2" href="{{ url_for('static', filename='vendor/fonts/inter-latin.woff2') }}?v={{ asset_v }}" crossorigin>
-    <style>
-        /* Local Inter (no CDN). Declared here so the URL carries ?v= and matches the preload. */
-        @font-face {
-            font-family: 'Inter';
-            font-style: normal;
-            font-weight: 400 700;
-            font-display: swap;
-            src: url('{{ url_for('static', filename='vendor/fonts/inter-latin.woff2') }}?v={{ asset_v }}') format('woff2');
-            unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
-                U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+2074, U+20AC, U+2122, U+2191,
-                U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
-        }
-    </style>
     <link rel="stylesheet" href="{{ url_for('static', filename='vendor/bootstrap.min.css') }}?v={{ asset_v }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ asset_v }}">
     {% block head_extra %}{% endblock %}
 </head>
 <body>
+    {# Icon sprite: 24-grid line icons, drawn at 15-16px with a 1.6 stroke. #}
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+        <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/></symbol>
+        <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+        <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+        <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+        <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8l-5-5Z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+        <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
+        <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="1.5"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></symbol>
+        <symbol id="i-dns" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="6.5" rx="1.5"/><rect x="3.5" y="13.5" width="17" height="6.5" rx="1.5"/><path d="M7 7.25h.01M7 16.75h.01"/></symbol>
+        <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M4.2 7l2.6 1.5M17.2 15.5l2.6 1.5M4.2 17l2.6-1.5M17.2 8.5 19.8 7"/></symbol>
+        <symbol id="i-list" viewBox="0 0 24 24"><path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></symbol>
+        <symbol id="i-net" viewBox="0 0 24 24"><path d="M7 4v16M7 20l-3-3M7 20l3-3M17 20V4M17 4l-3 3M17 4l3 3"/></symbol>
+        <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v13c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-13M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5"/></symbol>
+        <symbol id="i-code" viewBox="0 0 24 24"><path d="m9 7-5 5 5 5M15 7l5 5-5 5"/></symbol>
+        <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+        <symbol id="i-disk" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="1.5"/><path d="M3.5 14h17M7 16.5h.01"/></symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5v11A1.5 1.5 0 0 0 5 20h14a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 19 8h-7l-2-3H5a1.5 1.5 0 0 0-1.5 1.5Z"/></symbol>
+        <symbol id="i-check-shield" viewBox="0 0 24 24"><path d="M12 21s7-3.5 7-9V6l-7-2.5L5 6v6c0 5.5 7 9 7 9Z"/><path d="m9 12 2 2 4-4"/></symbol>
+        <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l1.5 1.5"/></symbol>
+        <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 21s7-3.5 7-9V6l-7-2.5L5 6v6c0 5.5 7 9 7 9Z"/></symbol>
+        <symbol id="i-archive" viewBox="0 0 24 24"><rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5 8.5v10A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5v-10M10 12.5h4"/></symbol>
+        <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M4.5 19.5h15"/></symbol>
+        <symbol id="i-term" viewBox="0 0 24 24"><path d="m5 7 5 5-5 5M12.5 17.5h6.5"/></symbol>
+        <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 1.5h-15L6 16.5ZM10 20.5h4"/></symbol>
+        <symbol id="i-clip" viewBox="0 0 24 24"><rect x="5" y="4.5" width="14" height="16.5" rx="1.5"/><path d="M9 4.5V3h6v1.5M8.5 11h7M8.5 15h5"/></symbol>
+        <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.75"/><path d="M12 3.5v2M12 18.5v2M20.5 12h-2M5.5 12h-2M18 6l-1.4 1.4M7.4 16.6 6 18M18 18l-1.4-1.4M7.4 7.4 6 6"/></symbol>
+        <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+        <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+        <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17A8.5 8.5 0 0 0 12 3.5Z" fill="currentColor" stroke="none"/></symbol>
+        <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+        <symbol id="i-chev-d" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></symbol>
+        <symbol id="i-out" viewBox="0 0 24 24"><path d="M14 4.5h4A1.5 1.5 0 0 1 19.5 6v12a1.5 1.5 0 0 1-1.5 1.5h-4M10 16l-4-4 4-4M6 12h9"/></symbol>
+        <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="11" height="11" rx="1.5"/><path d="M15.5 8.5V6A1.5 1.5 0 0 0 14 4.5H6A1.5 1.5 0 0 0 4.5 6v8A1.5 1.5 0 0 0 6 15.5h2.5"/></symbol>
+        <symbol id="i-power" viewBox="0 0 24 24"><path d="M17.7 7.3a8 8 0 1 1-11.4 0M12 3.5V11"/></symbol>
+        <symbol id="i-restart" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3L4.5 9"/><path d="M4.5 4.5V9H9"/></symbol>
+        <symbol id="i-swap" viewBox="0 0 24 24"><path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5"/></symbol>
+        <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 4.3 2.9 17.5A2 2 0 0 0 4.6 20.5h14.8a2 2 0 0 0 1.7-3L13.7 4.3a2 2 0 0 0-3.4 0Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+        <symbol id="i-err" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5v5.5M12 16.5h.01"/></symbol>
+        <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 11v5.5M12 7.5h.01"/></symbol>
+        <symbol id="i-ok" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="m8.5 12.2 2.4 2.4 4.6-4.9"/></symbol>
+    </svg>
+
     <div class="nav-progress" id="navProgress" aria-hidden="true"></div>
+
+    {% macro nav_link(endpoint, label, ic, hint=None) -%}
+    {%- set is_active = request.endpoint == endpoint -%}
+    <a href="{{ url_for(endpoint) }}"{% if is_active %} class="active" aria-current="page"{% endif %}>
+        <svg class="i" aria-hidden="true"><use href="#i-{{ ic }}"/></svg><span class="nav-label">{{ label }}</span>
+        {%- if hint %}<span class="nav-hint{% if hint.tone %} is-{{ hint.tone }}{% endif %}" title="{{ hint.title }}">{{ hint.text }}<span class="sr-only"> ({{ hint.title }})</span></span>{% endif %}
+    </a>
+    {%- endmacro %}
+    {% macro nav_group(key, label) -%}
+    <div class="sidebar-group" data-group="{{ key }}">
+        <button type="button" class="sidebar-group-header" aria-expanded="true" aria-controls="sbgrp-{{ key }}" onclick="toggleSidebarGroup(this)">
+            <span>{{ label }}</span>
+            <svg class="sidebar-chevron" aria-hidden="true" viewBox="0 0 24 24"><path d="m6 9.5 6 6 6-6"/></svg>
+        </button>
+        <div class="sidebar-group-items" id="sbgrp-{{ key }}">{{ caller() }}</div>
+    </div>
+    {%- endmacro %}
+    {% set hints = nav_hints or {} %}
+    {% set ws_label = 'Caddy' if web_server == 'caddy' else 'Nginx' %}
+
     <!-- Sidebar -->
     <nav class="sidebar" id="sidebar" aria-label="Main navigation">
-        <div class="sidebar-brand">
-            <img src="{{ url_for('static', filename='logo.png') }}?v={{ asset_v }}" alt="VPS Manager" class="sidebar-logo" width="91" height="40">
-            <h2>VPS Manager</h2>
-            <div class="subtitle">
-                <span id="serverIp">{{ server_ip }}</span>
-                <button type="button" class="ip-copy" onclick="copyIp()" title="Copy IP" aria-label="Copy server IP">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                </button>
+        <div class="sidebar-host">
+            <span class="host-mark" aria-hidden="true">{{ (global_hostname or 'vps')[:2]|lower }}</span>
+            <div class="host-text">
+                <div class="host-name" title="{{ global_hostname }}">{{ global_hostname }}</div>
+                <div class="host-ip">
+                    <span id="serverIp">{{ server_ip }}</span>
+                    <button type="button" class="ip-copy" onclick="copyIp()" title="Copy IP" aria-label="Copy server IP">
+                        <svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>
+                    </button>
+                </div>
             </div>
         </div>
+        <button type="button" class="sidebar-jump" onclick="openCmdPalette()" aria-label="Jump to a page or action">
+            <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+            <span>Jump to…</span>
+            <kbd class="kbd-shortcut" data-shortcut="k">Ctrl K</kbd>
+        </button>
         <div class="sidebar-nav">
-            <a href="{{ url_for('dashboard') }}" class="{% if request.endpoint == 'dashboard' %}active{% endif %}">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg></span> Dashboard
-            </a>
-            <div class="sidebar-group" data-group="web">
-                <button type="button" class="sidebar-group-header" aria-expanded="true" aria-controls="sbgrp-web" onclick="toggleSidebarGroup(this)">
-                    <span>Web</span>
-                    <svg class="sidebar-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-                <div class="sidebar-group-items" id="sbgrp-web">
-                    <a href="{{ url_for('websites') }}" class="{% if request.endpoint == 'websites' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span> Websites
-                    </a>
-                    <a href="{{ url_for('uptime') }}" class="{% if request.endpoint == 'uptime' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span> Uptime
-                    </a>
-                    {% if has_pm2 %}
-                    <a href="{{ url_for('pm2') }}" class="{% if request.endpoint == 'pm2' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span> PM2
-                    </a>
-                    {% endif %}
-                    <a href="{{ url_for('nginx_logs_page') }}" class="{% if request.endpoint == 'nginx_logs_page' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span> {% if web_server == 'caddy' %}Caddy Logs{% else %}Nginx Logs{% endif %}
-                    </a>
-                    <a href="{{ url_for('nginx_config') }}" class="{% if request.endpoint == 'nginx_config' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span> {% if web_server == 'caddy' %}Caddy Config{% else %}Nginx Config{% endif %}
-                    </a>
-                    <a href="{{ url_for('ssl') }}" class="{% if request.endpoint == 'ssl' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span> SSL
-                    </a>
-                    <a href="{{ url_for('dns') }}" class="{% if request.endpoint == 'dns' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></span> DNS
-                    </a>
-                </div>
-            </div>
-            <div class="sidebar-group" data-group="server">
-                <button type="button" class="sidebar-group-header" aria-expanded="true" aria-controls="sbgrp-server" onclick="toggleSidebarGroup(this)">
-                    <span>Server</span>
-                    <svg class="sidebar-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-                <div class="sidebar-group-items" id="sbgrp-server">
-                    <a href="{{ url_for('services') }}" class="{% if request.endpoint == 'services' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span> Services
-                    </a>
-                    <a href="{{ url_for('processes') }}" class="{% if request.endpoint == 'processes' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></span> Processes
-                    </a>
-                    <a href="{{ url_for('network') }}" class="{% if request.endpoint == 'network' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></svg></span> Network
-                    </a>
-                    {% if has_mysql %}
-                    <a href="{{ url_for('databases') }}" class="{% if request.endpoint == 'databases' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg></span> Databases
-                    </a>
-                    {% endif %}
-                    {% if has_php %}
-                    <a href="{{ url_for('php') }}" class="{% if request.endpoint == 'php' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg></span> PHP
-                    </a>
-                    {% endif %}
-                    <a href="{{ url_for('cronjobs') }}" class="{% if request.endpoint == 'cronjobs' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></span> Cronjobs
-                    </a>
-                    <a href="{{ url_for('disk') }}" class="{% if request.endpoint == 'disk' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span> Disk
-                    </a>
-                    <a href="{{ url_for('files') }}" class="{% if request.endpoint == 'files' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg></span> Files
-                    </a>
-                </div>
-            </div>
-            <div class="sidebar-group" data-group="security">
-                <button type="button" class="sidebar-group-header" aria-expanded="true" aria-controls="sbgrp-security" onclick="toggleSidebarGroup(this)">
-                    <span>Security</span>
-                    <svg class="sidebar-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-                <div class="sidebar-group-items" id="sbgrp-security">
-                    <a href="{{ url_for('security_audit_page') }}" class="{% if request.endpoint == 'security_audit_page' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg></span> Security Audit
-                    </a>
-                    <a href="{{ url_for('ssh_logs_page') }}" class="{% if request.endpoint == 'ssh_logs_page' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> SSH Logs
-                    </a>
-                    <a href="{{ url_for('firewall') }}" class="{% if request.endpoint == 'firewall' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span> Firewall
-                    </a>
-                    <a href="{{ url_for('backup') }}" class="{% if request.endpoint == 'backup' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg></span> Backup
-                    </a>
-                    <a href="{{ url_for('updates') }}" class="{% if request.endpoint == 'updates' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></span> Updates
-                    </a>
-                </div>
-            </div>
-            <div class="sidebar-group" data-group="tools">
-                <button type="button" class="sidebar-group-header" aria-expanded="true" aria-controls="sbgrp-tools" onclick="toggleSidebarGroup(this)">
-                    <span>Tools</span>
-                    <svg class="sidebar-chevron" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-                </button>
-                <div class="sidebar-group-items" id="sbgrp-tools">
-                    <a href="{{ url_for('terminal') }}" class="{% if request.endpoint == 'terminal' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></span> Terminal
-                    </a>
-                    <a href="{{ url_for('notifications') }}" class="{% if request.endpoint == 'notifications' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></span> Notifications
-                    </a>
-                    <a href="{{ url_for('audit') }}" class="{% if request.endpoint == 'audit' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg></span> Audit Log
-                    </a>
-                    <a href="{{ url_for('settings') }}" class="{% if request.endpoint == 'settings' %}active{% endif %}">
-                        <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></span> Settings
-                    </a>
-                </div>
-            </div>
+            {{ nav_link('dashboard', 'Dashboard', 'grid') }}
+            {% call nav_group('web', 'Web') %}
+                {{ nav_link('websites', 'Websites', 'globe') }}
+                {{ nav_link('uptime', 'Uptime', 'pulse') }}
+                {% if has_pm2 %}{{ nav_link('pm2', 'PM2', 'layers', hints.get('pm2')) }}{% endif %}
+                {{ nav_link('nginx_logs_page', ws_label ~ ' logs', 'doc') }}
+                {{ nav_link('nginx_config', ws_label ~ ' config', 'sliders') }}
+                {{ nav_link('ssl', 'SSL', 'lock', hints.get('ssl')) }}
+                {{ nav_link('dns', 'DNS', 'dns') }}
+            {% endcall %}
+            {% call nav_group('server', 'Server') %}
+                {{ nav_link('services', 'Services', 'cog', hints.get('services')) }}
+                {{ nav_link('processes', 'Processes', 'list') }}
+                {{ nav_link('network', 'Network', 'net') }}
+                {% if has_mysql %}{{ nav_link('databases', 'Databases', 'db') }}{% endif %}
+                {% if has_php %}{{ nav_link('php', 'PHP', 'code') }}{% endif %}
+                {{ nav_link('cronjobs', 'Cronjobs', 'clock') }}
+                {{ nav_link('disk', 'Disk', 'disk') }}
+                {{ nav_link('files', 'Files', 'folder') }}
+            {% endcall %}
+            {% call nav_group('security', 'Security') %}
+                {{ nav_link('security_audit_page', 'Security audit', 'check-shield') }}
+                {{ nav_link('ssh_logs_page', 'SSH logs', 'key') }}
+                {{ nav_link('firewall', 'Firewall', 'shield') }}
+                {{ nav_link('backup', 'Backup', 'archive') }}
+                {{ nav_link('updates', 'Updates', 'down', hints.get('updates')) }}
+            {% endcall %}
+            {% call nav_group('tools', 'Tools') %}
+                {{ nav_link('terminal', 'Terminal', 'term') }}
+                {{ nav_link('notifications', 'Notifications', 'bell') }}
+                {{ nav_link('audit', 'Audit log', 'clip') }}
+                {{ nav_link('settings', 'Settings', 'gear') }}
+            {% endcall %}
         </div>
         <div class="sidebar-bottom">
-            <div class="sidebar-version">v{{ app_version }}</div>
-            <a href="#" role="button" onclick="doLogout(); return false;">
-                <span class="icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></span> Logout
+            <span class="sidebar-version">v{{ app_version }}</span>
+            <a href="#" role="button" class="sidebar-logout" onclick="doLogout(); return false;">
+                <svg class="i" aria-hidden="true"><use href="#i-out"/></svg>Log out
             </a>
         </div>
     </nav>
     <div class="sidebar-scrim" onclick="closeSidebar()" aria-hidden="true"></div>
+
+    {% set section_names = {
+        'websites': 'Web', 'uptime': 'Web', 'pm2': 'Web', 'nginx_logs_page': 'Web', 'nginx_config': 'Web', 'ssl': 'Web', 'dns': 'Web',
+        'services': 'Server', 'processes': 'Server', 'network': 'Server', 'databases': 'Server', 'php': 'Server',
+        'cronjobs': 'Server', 'disk': 'Server', 'files': 'Server',
+        'security_audit_page': 'Security', 'ssh_logs_page': 'Security', 'firewall': 'Security', 'backup': 'Security', 'updates': 'Security',
+        'terminal': 'Tools', 'notifications': 'Tools', 'audit': 'Tools', 'settings': 'Tools'
+    } %}
 
     <!-- Main content -->
     <div class="main-content">
         <header class="top-bar">
             <div class="top-bar-left">
                 <button type="button" class="icon-btn hamburger" aria-label="Open navigation" aria-controls="sidebar" aria-expanded="false" onclick="toggleSidebar(event)">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+                    <svg class="i" aria-hidden="true"><use href="#i-menu"/></svg>
                 </button>
-                <h1>{% block page_title %}Dashboard{% endblock %}</h1>
+                <h1>{% if section_names.get(request.endpoint) %}<span class="crumb">{{ section_names[request.endpoint] }} <span aria-hidden="true">/</span> </span>{% endif %}{% block page_title %}Dashboard{% endblock %}</h1>
             </div>
             <div class="meta">
-                <span class="meta-item">{{ global_hostname }}</span>
-                <span class="meta-item meta-muted">Up {{ global_uptime }}</span>
-                <span class="status-chip" role="status" title="Server is online"><span class="uptime-dot" aria-hidden="true"></span><span class="status-text">Online</span></span>
+                {% block topbar_extra %}{% endblock %}
+                <div class="menu-wrap">
+                    <button type="button" class="btn btn-sm topbar-menu-btn" id="serverMenuBtn" aria-label="Server actions" aria-haspopup="menu" aria-expanded="false" aria-controls="serverMenu" onclick="toggleServerMenu(event)">
+                        <svg class="i only-sm" aria-hidden="true"><use href="#i-power"/></svg>
+                        <span class="hide-sm">Server actions</span>
+                        <svg class="i chev hide-sm" aria-hidden="true"><use href="#i-chev-d"/></svg>
+                    </button>
+                    <div class="menu-popover" id="serverMenu" role="menu" aria-label="Server actions" hidden>
+                        <div class="menu-label"><span class="mono">{{ global_hostname }}</span> · up {{ global_uptime }}</div>
+                        <button type="button" class="menu-item" role="menuitem" onclick="closeServerMenu(); openCmdPalette()">
+                            <svg class="i" aria-hidden="true"><use href="#i-search"/></svg>
+                            Search pages &amp; actions <kbd class="kbd-shortcut" data-shortcut="k">Ctrl K</kbd>
+                        </button>
+                        <div class="menu-sep" role="separator"></div>
+                        <button type="button" class="menu-item" role="menuitem" onclick="confirmRestartWebServer()">
+                            <svg class="i" aria-hidden="true"><use href="#i-restart"/></svg>
+                            Restart {{ ws_label }}…
+                        </button>
+                        <button type="button" class="menu-item" role="menuitem" onclick="confirmClearSwap()">
+                            <svg class="i" aria-hidden="true"><use href="#i-swap"/></svg>
+                            Clear swap…
+                        </button>
+                        <div class="menu-sep" role="separator"></div>
+                        <button type="button" class="menu-item danger" role="menuitem" onclick="confirmReboot()">
+                            <svg class="i" aria-hidden="true"><use href="#i-power"/></svg>
+                            Reboot server…
+                        </button>
+                    </div>
+                </div>
+                <button type="button" class="icon-btn theme-toggle" id="themeToggle" onclick="toggleTheme()" aria-label="Switch to light theme" title="Switch theme">
+                    <svg class="i" aria-hidden="true"><use href="#i-theme"/></svg>
+                </button>
                 <div class="notif-wrap">
                     <button type="button" class="icon-btn notif-bell" id="notifBell" aria-label="Notifications" aria-haspopup="true" aria-expanded="false" aria-controls="notifDropdown" onclick="toggleNotifDropdown(event)">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                        <svg class="i" aria-hidden="true"><use href="#i-bell"/></svg>
                         <span class="notif-badge" id="notifBadge" style="display:none">0</span>
                     </button>
                     <div class="notif-dropdown" id="notifDropdown" style="display:none" role="region" aria-label="Notifications">
                         <div class="notif-dropdown-header">
                             <strong>Notifications</strong>
-                            <div style="display:flex;gap:6px;">
-                                <button type="button" class="btn btn-sm" onclick="markAllRead(event)">Mark read</button>
-                                <button type="button" class="btn btn-sm btn-red" onclick="clearAllNotifications(event)">Clear all</button>
+                            <div class="notif-dropdown-actions">
+                                <button type="button" class="btn btn-sm btn-ghost" onclick="markAllRead(event)">Mark read</button>
+                                <button type="button" class="btn btn-sm btn-ghost" onclick="clearAllNotifications(event)">Clear all</button>
                             </div>
                         </div>
                         <div class="notif-dropdown-body" id="notifDropdownBody"></div>
                     </div>
                 </div>
-                <div class="menu-wrap">
-                    <button type="button" class="icon-btn" id="serverMenuBtn" aria-label="Server actions" aria-haspopup="menu" aria-expanded="false" aria-controls="serverMenu" onclick="toggleServerMenu(event)">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
-                    </button>
-                    <div class="menu-popover" id="serverMenu" role="menu" aria-label="Server actions" hidden>
-                        <div class="menu-label">{{ global_hostname }}</div>
-                        <button type="button" class="menu-item" role="menuitem" onclick="closeServerMenu(); openCmdPalette()">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                            Search pages &amp; actions <kbd>Ctrl K</kbd>
-                        </button>
-                        <div class="menu-sep" role="separator"></div>
-                        <button type="button" class="menu-item danger" role="menuitem" onclick="confirmReboot()">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
-                            Reboot server…
-                        </button>
-                    </div>
-                </div>
             </div>
         </header>
-        <div class="page-content">
+        <main class="page-content" id="main">
             {% block content %}{% endblock %}
-        </div>
+        </main>
     </div>
 
     <!-- Toast container -->

@@ -48,7 +48,7 @@
                     {{ icon('edit') }} <span id="editorTitle">Select a config file</span>
                 </div>
                 <div class="btn-group" id="editorActions" style="display:none;flex-wrap:wrap;gap:6px">
-                    <button class="btn btn-sm btn-green" id="btnSave" onclick="saveConfig()" disabled>{{ icon('save') }} Save</button>
+                    <button class="btn btn-sm btn-primary" id="btnSave" onclick="saveConfig()" disabled>{{ icon('save') }} Save</button>
                     <button class="btn btn-sm" onclick="validateConfig()">{{ icon('check') }} Validate</button>
                     <button class="btn btn-sm btn-green" id="btnEnable" onclick="toggleSite('enable')" style="display:none">{{ icon('toggle-right') }} Enable</button>
                     <button class="btn btn-sm btn-yellow" id="btnDisable" onclick="toggleSite('disable')" style="display:none">{{ icon('toggle-left') }} Disable</button>

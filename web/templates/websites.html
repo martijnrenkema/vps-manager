@@ -17,7 +17,7 @@
                         <th>Type</th>
                         <th>Location</th>
                         <th>Config</th>
-                        <th>Actions</th>
+                        <th class="r"><span class="sr-only">Actions</span></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -25,32 +25,22 @@
                     <tr>
                         <td data-label="Domain">
                             {% for d in site.domains %}
-                                <a href="https://{{ d }}" target="_blank" style="color:var(--accent);text-decoration:none">{{ d }}</a>
+                                <a href="https://{{ d }}" target="_blank" rel="noopener noreferrer" class="ext-link mono">{{ d }}</a>
                                 {% if not loop.last %}<br>{% endif %}
                             {% endfor %}
                         </td>
                         <td data-label="HTTP">
                             {% set code = site.http_status %}
-                            {% if code in ['200', '301', '302', '307'] %}
-                                <span class="badge badge-green">{{ code }}</span>
-                            {% elif code in ['403', '404'] %}
-                                <span class="badge badge-yellow">{{ code }}</span>
-                            {% else %}
-                                <span class="badge badge-red">{{ code }}</span>
-                            {% endif %}
+                            <span class="mono{% if code in ['403', '404'] %} text-warn{% elif code not in ['200', '301', '302', '307', '308'] %} text-err{% endif %}">{{ code }}</span>
                         </td>
-                        <td data-label="Type">
-                            {% if site.type == 'proxy' %}
-                                <span class="badge badge-yellow">proxy</span>
-                            {% else %}
-                                <span class="badge badge-green">static</span>
-                            {% endif %}
-                        </td>
+                        <td data-label="Type"><span class="tag">{{ 'proxy' if site.type == 'proxy' else 'static' }}</span></td>
                         <td data-label="Location"><code>{{ site.location }}</code></td>
-                        <td data-label="Config"><code style="color:var(--text-muted)">{{ site.config }}</code></td>
-                        <td data-label="Actions" style="white-space:nowrap">
-                            <a href="/web-config?select={{ site.config|urlencode }}" class="btn btn-sm" title="Edit config">{{ icon('edit') }} Config</a>
-                            <a href="/web-logs" class="btn btn-sm" title="View logs">{{ icon('file-text') }} Logs</a>
+                        <td data-label="Config"><code class="muted">{{ site.config }}</code></td>
+                        <td data-label="Actions" class="r">
+                            <span class="btn-group row-act">
+                                <a href="/web-config?select={{ site.config|urlencode }}" class="btn btn-sm btn-ghost" title="Edit config">Config</a>
+                                <a href="/web-logs" class="btn btn-sm btn-ghost" title="View logs">Logs</a>
+                            </span>
                         </td>
                     </tr>
                     {% endfor %}

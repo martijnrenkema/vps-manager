@@ -4,7 +4,7 @@
 {% block page_title %}PHP Management{% endblock %}
 
 {% block content %}
-<div class="card" style="margin-bottom:24px">
+<div class="card">
     <div class="card-header">{{ icon('package') }} PHP Versions <span class="tooltip-icon" data-bs-toggle="tooltip" title="Installed PHP-FPM versions and their status. FPM (FastCGI Process Manager) handles PHP requests for your websites.">?</span></div>
     <div class="card-body">
         {% if versions %}
@@ -35,7 +35,7 @@
                         <td data-label="Process Manager"><code>{{ v.pm }}</code></td>
                         <td data-label="Max Children">{{ v.max_children }}</td>
                         <td data-label="Actions">
-                            <button type="button" class="btn btn-sm btn-yellow" data-version="{{ v.version }}" onclick="restartPhp(this.dataset.version, this)">Restart FPM</button>
+                            <button type="button" class="btn btn-sm" data-version="{{ v.version }}" onclick="restartPhp(this.dataset.version, this)">Restart FPM</button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -50,15 +50,15 @@
 
 {% for v in versions %}
 {% if v.extensions %}
-<div class="card" style="margin-bottom:24px">
+<div class="card">
     <div class="card-header d-flex align-items-center justify-content-between">
-        <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="badge badge-muted" style="font-weight:normal">{{ v.extensions|length }}</span></span>
+        <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="card-meta num">{{ v.extensions|length }}</span></span>
         <button type="button" class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" aria-expanded="false">Show</button>
     </div>
     <div class="card-body" style="display:none">
-        <div style="display:flex;flex-wrap:wrap;gap:6px">
+        <div class="tag-list">
             {% for ext in v.extensions %}
-            <span class="badge badge-muted" style="font-weight:normal">{{ ext }}</span>
+            <span class="tag">{{ ext }}</span>
             {% endfor %}
         </div>
     </div>
@@ -83,8 +83,8 @@
                     {% for s in site_mapping %}
                     <tr>
                         <td data-label="Site Config"><strong>{{ s.config }}</strong></td>
-                        <td data-label="PHP Version"><span class="badge badge-green">PHP {{ s.php_version }}</span></td>
-                        <td data-label="Socket Path"><code style="color:var(--text-muted);word-break:break-all">{{ s.socket }}</code></td>
+                        <td data-label="PHP Version" class="mono">{{ s.php_version }}</td>
+                        <td data-label="Socket Path"><code class="muted" style="word-break:break-all">{{ s.socket }}</code></td>
                     </tr>
                     {% endfor %}
                 </tbody>

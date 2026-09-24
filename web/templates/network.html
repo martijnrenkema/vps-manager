@@ -5,24 +5,24 @@
 
 {% block content %}
 <div class="stats-grid">
-    <div class="stat-card" style="--tone:var(--accent)">
+    <div class="stat-card">
         <div class="label">Active Connections</div>
         <div class="value">{{ connections }}</div>
         <div class="sub">Established TCP</div>
     </div>
-    <div class="stat-card" style="--tone:var(--green)">
+    <div class="stat-card">
         <div class="label">Interfaces</div>
         <div class="value">{{ interfaces|length }}</div>
         <div class="sub">Network interfaces</div>
     </div>
-    <div class="stat-card" style="--tone:var(--purple)">
+    <div class="stat-card">
         <div class="label">Listening Ports</div>
         <div class="value">{{ ports|length }}</div>
         <div class="sub">Open ports</div>
     </div>
 </div>
 
-<div class="card" style="margin-bottom:24px">
+<div class="card">
     <div class="card-header">{{ icon('globe') }} Network Interfaces <span class="tooltip-icon" data-bs-toggle="tooltip" title="Physical and virtual network adapters on the server with their IP addresses and traffic statistics.">?</span></div>
     <div class="card-body">
         {% if interfaces %}
@@ -45,10 +45,10 @@
                             {% if iface.state == 'up' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>up</span>
                             {% else %}
-                                <span class="badge badge-red"><span class="badge-dot red"></span>{{ iface.state }}</span>
+                                <span class="st off">{{ iface.state }}</span>
                             {% endif %}
                         </td>
-                        <td data-label="MAC"><code style="color:var(--text-muted)">{{ iface.mac }}</code></td>
+                        <td data-label="MAC"><code class="muted">{{ iface.mac }}</code></td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -77,10 +77,10 @@
                 <tbody>
                     {% for p in ports %}
                     <tr>
-                        <td data-label="Port"><strong>{{ p.port }}</strong></td>
-                        <td data-label="Address"><code style="color:var(--text-muted)">{{ p.local }}</code></td>
-                        <td data-label="Process">{{ p.process or '-' }}</td>
-                        <td data-label="State"><span class="badge badge-green">LISTEN</span></td>
+                        <td data-label="Port" class="mono">{{ p.port }}</td>
+                        <td data-label="Address"><code class="muted">{{ p.local }}</code></td>
+                        <td data-label="Process" class="mono">{{ p.process or '–' }}</td>
+                        <td data-label="State"><span class="tag">LISTEN</span></td>
                     </tr>
                     {% endfor %}
                 </tbody>

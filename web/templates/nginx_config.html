@@ -10,7 +10,7 @@
         <div class="card" style="margin-bottom:0;height:100%">
             <div class="card-header">{{ icon('file-text') }} Site Configs <span class="tooltip-icon" data-bs-toggle="tooltip" title="Nginx configuration files. 'Enabled' configs are active (symlinked to sites-enabled). 'Available' configs exist but are not active.">?</span></div>
             <div class="card-body" style="padding:8px">
-                <div style="font-size:12px;font-weight:500;color:var(--green);padding:8px 8px 4px">Enabled</div>
+                <div class="config-group-label">Enabled</div>
                 <div id="enabledConfigs">
                     {% for name in configs.enabled %}
                     <div class="nginx-config-item" data-name="{{ name }}" data-type="enabled" onclick="loadConfig(this.dataset.name, this.dataset.type)">
@@ -19,7 +19,7 @@
                     {% endfor %}
                 </div>
                 {% if configs.available %}
-                <div style="font-size:12px;font-weight:500;color:var(--text-muted);padding:12px 8px 4px">Available (disabled)</div>
+                <div class="config-group-label">Available (disabled)</div>
                 <div id="availableConfigs">
                     {% for name in configs.available %}
                     <div class="nginx-config-item" data-name="{{ name }}" data-type="available" onclick="loadConfig(this.dataset.name, this.dataset.type)">
@@ -40,7 +40,7 @@
                     {{ icon('edit') }} <span id="editorTitle">Select a config file</span>
                 </div>
                 <div class="btn-group" id="editorActions" style="display:none;flex-wrap:wrap;gap:6px">
-                    <button class="btn btn-sm btn-green" id="btnSave" onclick="saveConfig()" disabled>{{ icon('save') }} Save</button>
+                    <button class="btn btn-sm btn-primary" id="btnSave" onclick="saveConfig()" disabled>{{ icon('save') }} Save</button>
                     <button class="btn btn-sm" onclick="validateConfig()">{{ icon('check') }} Validate</button>
                     <button class="btn btn-sm btn-green" id="btnEnable" onclick="enableConfig()" style="display:none">{{ icon('toggle-right') }} Enable</button>
                     <button class="btn btn-sm btn-yellow" id="btnDisable" onclick="disableConfig()" style="display:none">{{ icon('toggle-left') }} Disable</button>

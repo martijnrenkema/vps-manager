@@ -14,26 +14,16 @@
             {% if data.ufw_rules %}
             <div class="table-wrap">
                 <table class="table-responsive-cards" id="ufwRulesTable">
-                    <thead><tr><th>#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:60px"><span class="sr-only">Actions</span></th></tr></thead>
+                    <thead><tr><th class="num">#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:48px"><span class="sr-only">Actions</span></th></tr></thead>
                     <tbody>
                         {% for rule in data.ufw_rules %}
                         <tr>
-                            <td data-label="#">{{ rule.number }}</td>
-                            <td data-label="To"><span><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>{% endif %}</span></td>
-                            <td data-label="Action">
-                                {% if rule.action == 'ALLOW' %}
-                                    <span class="badge badge-green">{{ rule.action }}</span>
-                                {% elif rule.action == 'DENY' or rule.action == 'REJECT' %}
-                                    <span class="badge badge-red">{{ rule.action }}</span>
-                                {% elif rule.action == 'LIMIT' %}
-                                    <span class="badge badge-yellow">{{ rule.action }}</span>
-                                {% else %}
-                                    <span class="badge">{{ rule.action }}</span>
-                                {% endif %}
-                            </td>
-                            <td data-label="From">{{ rule.from_addr }}</td>
-                            <td data-label="Comment"><span style="color:var(--text-muted);font-size:12px">{{ rule.comment }}</span></td>
-                            <td data-label=""><button type="button" class="btn btn-sm btn-red" aria-label="Delete rule {{ rule.number }}" title="Delete rule" data-rule="{{ rule.number }}" data-to="{{ rule.to }}" data-action="{{ rule.action }}" data-from="{{ rule.from_addr }}" data-v6="{{ '1' if rule.v6 else '0' }}" onclick="deleteUfwRule(this)">{{ icon('trash') }}</button></td>
+                            <td data-label="#" class="num muted">{{ rule.number }}</td>
+                            <td data-label="To"><span><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="tag">v6</span>{% endif %}</span></td>
+                            <td data-label="Action"><span class="verb verb-{{ rule.action|lower }}">{{ rule.action }}</span></td>
+                            <td data-label="From" class="mono">{{ rule.from_addr }}</td>
+                            <td data-label="Comment"><span class="muted">{{ rule.comment }}</span></td>
+                            <td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule {{ rule.number }}" title="Delete rule" data-rule="{{ rule.number }}" data-to="{{ rule.to }}" data-action="{{ rule.action }}" data-from="{{ rule.from_addr }}" data-v6="{{ '1' if rule.v6 else '0' }}" onclick="deleteUfwRule(this)">{{ icon('trash') }}</button></td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -46,37 +36,37 @@
             {% endif %}
 
             <!-- Add Rule Form -->
-            <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
-                <div style="font-size:12.5px;font-weight:500;color:var(--text-muted);margin-bottom:8px">Add rule</div>
-                <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
-                    <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label for="ufwPort" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Port</label>
-                        <input type="number" id="ufwPort" class="form-control" placeholder="80" min="1" max="65535" style="width:90px">
+            <div class="subform">
+                <div class="subform-title">Add rule</div>
+                <div class="form-row">
+                    <div class="form-group w-sm">
+                        <label for="ufwPort">Port</label>
+                        <input type="number" id="ufwPort" class="form-control" placeholder="80" min="1" max="65535">
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label for="ufwProto" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Protocol</label>
-                        <select id="ufwProto" class="form-control" style="width:90px">
+                    <div class="form-group w-sm">
+                        <label for="ufwProto">Protocol</label>
+                        <select id="ufwProto" class="form-control">
                             <option value="tcp">TCP</option>
                             <option value="udp">UDP</option>
                             <option value="any">Both</option>
                         </select>
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:150px;flex:1">
-                        <label for="ufwFrom" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">From IP (blank = Anywhere)</label>
-                        <input type="text" id="ufwFrom" class="form-control" placeholder="Anywhere">
+                    <div class="form-group grow">
+                        <label for="ufwFrom">From IP <span class="muted">(blank = anywhere)</span></label>
+                        <input type="text" id="ufwFrom" class="form-control mono" placeholder="Anywhere">
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:90px">
-                        <label for="ufwAction" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Action</label>
-                        <select id="ufwAction" class="form-control" style="width:90px">
+                    <div class="form-group w-sm">
+                        <label for="ufwAction">Action</label>
+                        <select id="ufwAction" class="form-control">
                             <option value="allow">Allow</option>
                             <option value="deny">Deny</option>
                         </select>
                     </div>
-                    <div class="form-group" style="margin-bottom:0;min-width:120px;flex:1">
-                        <label for="ufwComment" style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px">Comment (optional)</label>
+                    <div class="form-group grow">
+                        <label for="ufwComment">Comment <span class="muted">(optional)</span></label>
                         <input type="text" id="ufwComment" class="form-control" placeholder="e.g. Nginx reverse proxy">
                     </div>
-                    <button type="button" class="btn btn-green" onclick="addUfwRule(this)">+ Add</button>
+                    <button type="button" class="btn btn-primary" onclick="addUfwRule(this)">Add rule</button>
                 </div>
             </div>
         </div>
@@ -90,7 +80,7 @@
             {% if data.jails %}
             <div class="table-wrap">
                 <table class="table-responsive-cards">
-                    <thead><tr><th>Jail</th><th>Status</th><th>Currently Banned</th><th>Total Banned</th></tr></thead>
+                    <thead><tr><th>Jail</th><th>Status</th><th class="num">Banned now</th><th class="num">Total banned</th></tr></thead>
                     <tbody>
                         {% for jail in data.jails %}
                         <tr>
@@ -99,17 +89,11 @@
                                 {% if jail.status == 'active' %}
                                     <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
                                 {% else %}
-                                    <span class="badge badge-red">{{ jail.status }}</span>
+                                    <span class="badge badge-red"><span class="badge-dot red"></span>{{ jail.status }}</span>
                                 {% endif %}
                             </td>
-                            <td data-label="Currently Banned">
-                                {% if jail.banned > 0 %}
-                                    <span class="badge badge-yellow">{{ jail.banned }}</span>
-                                {% else %}
-                                    <span style="color:var(--text-muted)">0</span>
-                                {% endif %}
-                            </td>
-                            <td data-label="Total Banned" style="color:var(--text-muted)">{{ jail.total_banned }}</td>
+                            <td data-label="Banned now" class="num{% if jail.banned > 0 %} text-warn{% else %} muted{% endif %}">{{ jail.banned }}</td>
+                            <td data-label="Total banned" class="num muted">{{ jail.total_banned }}</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -119,60 +103,46 @@
                 <div class="empty-state">Unable to retrieve fail2ban status</div>
             {% endif %}
         </div>
-    </div>
-</div>
-
-<!-- Fail2ban Config -->
-<div class="grid-2col" style="margin-top:16px">
-    <div class="card">
-        <div class="card-header">
-            {{ icon('list') }} Jail Configuration
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span>
-        </div>
-        <div class="card-body">
-            {% if data.f2b_config %}
-            <div class="table-wrap">
-                <table>
-                    <tbody>
-                        <tr><td><strong>Ban Time</strong></td><td>{{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} <span class="badge badge-red" style="margin-left:8px">Permanent</span>{% endif %}</td></tr>
-                        <tr><td><strong>Find Time</strong></td><td>{{ data.f2b_config.findtime or '?' }}</td></tr>
-                        <tr><td><strong>Max Retry</strong></td><td>{{ data.f2b_config.maxretry or '?' }}</td></tr>
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-                <div class="empty-state">Unable to retrieve fail2ban config</div>
-            {% endif %}
-        </div>
+        <div class="card-subhead">Jail configuration <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span></div>
+        {% if data.f2b_config %}
+        <dl class="facts">
+            <div><dt>Ban time</dt><dd>{{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} <span class="badge badge-red">permanent</span>{% endif %}</dd></div>
+            <div><dt>Find time</dt><dd>{{ data.f2b_config.findtime or '?' }}</dd></div>
+            <div><dt>Max retry</dt><dd>{{ data.f2b_config.maxretry or '?' }}</dd></div>
+        </dl>
+        {% else %}
+        <div class="empty-state">Unable to retrieve fail2ban config</div>
+        {% endif %}
     </div>
 </div>
 
 <!-- DDoS Detection -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
         {{ icon('activity') }} DDoS Detection
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Real-time connection monitoring. High connection counts from a single IP or many SYN_RECV connections can indicate a DDoS attack.">?</span>
     </div>
     <div class="card-body">
         {% if data.ddos %}
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:16px">
-            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+        {% set d = data.ddos %}
+        <div class="stats-grid inset">
+            <div class="stat-card">
                 <div class="label">Established</div>
-                <div class="value" style="font-size:24px;color:{% if data.ddos.total_connections > data.ddos.conn_threshold %}var(--red){% elif data.ddos.total_connections > data.ddos.conn_threshold * 0.7 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.ddos.total_connections }}</div>
-                <div class="sub">threshold: {{ data.ddos.conn_threshold }}</div>
+                <div class="value{% if d.total_connections > d.conn_threshold %} text-err{% elif d.total_connections > d.conn_threshold * 0.7 %} text-warn{% endif %}">{{ d.total_connections }}</div>
+                <div class="sub">threshold {{ d.conn_threshold }}</div>
             </div>
-            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
+            <div class="stat-card">
                 <div class="label">SYN_RECV</div>
-                <div class="value" style="font-size:24px;color:{% if data.ddos.syn_recv > data.ddos.syn_threshold %}var(--red){% elif data.ddos.syn_recv > data.ddos.syn_threshold * 0.5 %}var(--yellow){% else %}var(--green){% endif %}">{{ data.ddos.syn_recv }}</div>
-                <div class="sub">threshold: {{ data.ddos.syn_threshold }}</div>
+                <div class="value{% if d.syn_recv > d.syn_threshold %} text-err{% elif d.syn_recv > d.syn_threshold * 0.5 %} text-warn{% endif %}">{{ d.syn_recv }}</div>
+                <div class="sub">threshold {{ d.syn_threshold }}</div>
             </div>
-            <div class="stat-card" style="border:none;padding:12px;background:var(--bg-tertiary);border-radius:8px">
-                <div class="label">Top IP</div>
-                {% if data.ddos.top_ips %}
-                <div class="value" style="font-size:16px;color:{% if data.ddos.top_ips[0].count > data.ddos.ip_threshold %}var(--red){% else %}var(--text){% endif %}">{{ data.ddos.top_ips[0].count }}x</div>
-                <div class="sub">{{ data.ddos.top_ips[0].ip }}</div>
+            <div class="stat-card">
+                <div class="label">Top source</div>
+                {% if d.top_ips %}
+                <div class="value{% if d.top_ips[0].count > d.ip_threshold %} text-err{% endif %}">{{ d.top_ips[0].count }}<small class="unit">conns</small></div>
+                <div class="sub mono">{{ d.top_ips[0].ip }}</div>
                 {% else %}
-                <div class="value" style="font-size:24px;color:var(--green)">0</div>
+                <div class="value">0</div>
                 <div class="sub">no connections</div>
                 {% endif %}
             </div>
@@ -180,18 +150,12 @@
         {% if data.ddos.top_ips|length > 1 %}
         <div class="table-wrap">
             <table>
-                <thead><tr><th>IP Address</th><th>Connections</th></tr></thead>
+                <thead><tr><th>IP address</th><th class="num">Connections</th></tr></thead>
                 <tbody>
                     {% for entry in data.ddos.top_ips %}
                     <tr>
                         <td><code>{{ entry.ip }}</code></td>
-                        <td>
-                            {% if entry.count > data.ddos.ip_threshold %}
-                                <span class="badge badge-red">{{ entry.count }}</span>
-                            {% else %}
-                                {{ entry.count }}
-                            {% endif %}
-                        </td>
+                        <td class="num{% if entry.count > data.ddos.ip_threshold %} text-err{% endif %}">{{ entry.count }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -204,18 +168,18 @@
     </div>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
     <div class="card-body">
         {% if data.sessions %}
             <pre>{{ data.sessions }}</pre>
         {% else %}
-            <span style="color:var(--text-muted)">No active sessions</span>
+            <div class="empty-state">No active sessions</div>
         {% endif %}
     </div>
 </div>
 
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</div>
     <div class="card-body">
         {% if data.auth_log %}
@@ -227,19 +191,19 @@
 </div>
 
 <!-- Ban IP -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
         {{ icon('ban') }} Ban IP Address
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Permanently ban an IP address via fail2ban and add a UFW deny rule. The IP will be blocked immediately.">?</span>
     </div>
     <div class="card-body">
-        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
-            <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
-                <label for="banIpInput" style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">IP Address</label>
-                <input type="text" id="banIpInput" class="form-control" placeholder="e.g. 1.2.3.4">
+        <div class="form-row">
+            <div class="form-group grow">
+                <label for="banIpInput">IP address</label>
+                <input type="text" id="banIpInput" class="form-control mono" placeholder="e.g. 1.2.3.4">
             </div>
-            <div class="form-group" style="min-width:150px;margin-bottom:0">
-                <label for="banJailSelect" style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Jail</label>
+            <div class="form-group w-md">
+                <label for="banJailSelect">Jail</label>
                 <select id="banJailSelect" class="form-control">
                     {% if data.jails %}
                         {% for jail in data.jails %}
@@ -250,35 +214,35 @@
                     {% endif %}
                 </select>
             </div>
-            <button type="button" class="btn btn-red" onclick="banIp()" id="banBtn">{{ icon('ban') }} Ban</button>
+            <button type="button" class="btn btn-red" onclick="banIp()" id="banBtn">Ban IP…</button>
         </div>
     </div>
 </div>
 
 <!-- Currently Banned IPs (structured) -->
-<div class="card" style="margin-top:16px">
-    <div class="card-header" style="flex-wrap:wrap">
-        {{ icon('shield') }} Currently Banned IPs <span id="bannedCount" style="color:var(--text-muted);font-weight:normal"></span>
-        <div style="display:flex;gap:8px;align-items:center;margin-left:auto;flex:1 1 240px;justify-content:flex-end;min-width:0">
-            <input type="text" id="bannedSearch" class="form-control" placeholder="Search IP, jail, country..." aria-label="Search banned IPs" style="flex:1 1 120px;min-width:0;max-width:180px;height:30px;font-size:12px" oninput="bannedPage=1;renderBannedIps()">
-            <select id="bannedPerPageSelect" class="form-control" aria-label="Banned IPs per page" style="width:auto;height:30px;font-size:12px;padding:2px 8px" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
+<div class="card">
+    <div class="card-header">
+        {{ icon('shield') }} Currently banned IPs <span id="bannedCount" class="card-meta"></span>
+        <div class="card-tools">
+            <input type="text" id="bannedSearch" class="form-control form-control-sm" placeholder="Search IP, jail, country…" aria-label="Search banned IPs" oninput="bannedPage=1;renderBannedIps()">
+            <select id="bannedPerPageSelect" class="form-control form-control-sm" aria-label="Banned IPs per page" onchange="bannedPerPage=parseInt(this.value);bannedPage=1;renderBannedIps()">
                 <option value="25">25</option>
                 <option value="50">50</option>
                 <option value="100">100</option>
             </select>
-            <button type="button" class="btn btn-sm" onclick="loadBannedIps()" aria-label="Refresh banned IPs" title="Refresh">{{ icon('refresh') }}</button>
+            <button type="button" class="btn btn-sm btn-ghost" onclick="loadBannedIps()" aria-label="Refresh banned IPs" title="Refresh">{{ icon('refresh') }}</button>
         </div>
     </div>
     <div class="card-body">
         <div id="bannedIpsContainer">
             <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
         </div>
-        <div style="display:flex;justify-content:center;gap:8px;margin-top:16px" id="bannedPagination"></div>
+        <div class="pager" id="bannedPagination"></div>
     </div>
 </div>
 
 <!-- Whitelist Management -->
-<div class="card" style="margin-top:16px">
+<div class="card">
     <div class="card-header">
         {{ icon('list') }} Fail2ban Whitelist (ignoreip)
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="IPs in this whitelist will never be banned by fail2ban. Always keep 127.0.0.1 and your own IP here to avoid locking yourself out.">?</span>
@@ -287,13 +251,13 @@
         <div id="whitelistContainer">
             <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
         </div>
-        <div style="display:flex;gap:12px;align-items:flex-end;margin-top:16px;flex-wrap:wrap">
-            <div class="form-group" style="flex:1;min-width:200px;margin-bottom:0">
-                <label for="whitelistInput" style="font-size:12px;color:var(--text-muted);margin-bottom:4px;display:block">Add IP / CIDR / hostname</label>
-                <input type="text" id="whitelistInput" class="form-control" placeholder="e.g. 192.168.1.0/24" onkeydown="if (event.key === 'Enter') { event.preventDefault(); addWhitelistIp(); }">
+        <div class="form-row" style="margin-top:14px">
+            <div class="form-group grow">
+                <label for="whitelistInput">Add IP / CIDR / hostname</label>
+                <input type="text" id="whitelistInput" class="form-control mono" placeholder="e.g. 192.168.1.0/24" onkeydown="if (event.key === 'Enter') { event.preventDefault(); addWhitelistIp(); }">
             </div>
             <button type="button" class="btn" onclick="addWhitelistIp()">+ Add</button>
-            <button type="button" class="btn btn-green" onclick="saveWhitelist()" id="saveWhitelistBtn" disabled title="Available once the current whitelist has loaded">{{ icon('save') }} Save</button>
+            <button type="button" class="btn btn-primary" onclick="saveWhitelist()" id="saveWhitelistBtn" disabled title="Available once the current whitelist has loaded">{{ icon('save') }} Save</button>
         </div>
     </div>
 </div>
@@ -382,15 +346,12 @@
             const tbody = document.querySelector('#ufwRulesTable tbody');
             if (!tbody) { location.reload(); return; }
             tbody.innerHTML = rules.map(r => {
-                let badge = 'badge';
-                if (r.action === 'ALLOW') badge = 'badge badge-green';
-                else if (r.action === 'DENY' || r.action === 'REJECT') badge = 'badge badge-red';
-                else if (r.action === 'LIMIT') badge = 'badge badge-yellow';
-                const v6 = r.v6 ? ' <span class="badge" style="font-size:10px;padding:1px 5px;background:var(--bg-tertiary);color:var(--text-muted)">v6</span>' : '';
-                const comment = r.comment ? `<span style="color:var(--text-muted);font-size:12px">${escHtml(r.comment)}</span>` : '';
+                const verb = 'verb verb-' + String(r.action || '').toLowerCase().replace(/[^a-z]/g, '');
+                const v6 = r.v6 ? ' <span class="tag">v6</span>' : '';
+                const comment = r.comment ? `<span class="muted">${escHtml(r.comment)}</span>` : '';
                 const num = escHtml(String(r.number));
-                return `<tr><td data-label="#">${num}</td><td data-label="To"><span><code>${escHtml(r.to)}</code>${v6}</span></td><td data-label="Action"><span class="${badge}">${escHtml(r.action)}</span></td><td data-label="From">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
-                    `<td data-label=""><button type="button" class="btn btn-sm btn-red" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
+                return `<tr><td data-label="#" class="num muted">${num}</td><td data-label="To"><span><code>${escHtml(r.to)}</code>${v6}</span></td><td data-label="Action"><span class="${verb}">${escHtml(r.action)}</span></td><td data-label="From" class="mono">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
+                    `<td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
             }).join('');
         } catch (e) {
             showToast('Could not refresh firewall rules', 'error');
@@ -529,7 +490,7 @@
 
         if (filtered.length === 0) {
             container.innerHTML = allBannedIps.length === 0
-                ? '<span class="badge badge-green">No banned IPs</span>'
+                ? '<div class="empty-state">No banned IPs right now</div>'
                 : '<div class="empty-state">No matching IPs found</div>';
             pagDiv.innerHTML = '';
             return;
@@ -634,7 +595,7 @@
     function renderWhitelist() {
         const container = document.getElementById('whitelistContainer');
         if (whitelistIps.length === 0) {
-            container.innerHTML = '<span style="color:var(--text-muted)">No whitelisted IPs</span>';
+            container.innerHTML = '<div class="muted" style="padding:2px 0 4px">No whitelisted IPs</div>';
             return;
         }
         let html = '<div class="table-wrap"><table><thead><tr><th>IP / CIDR</th><th style="width:80px">Action</th></tr></thead><tbody>';

@@ -14,10 +14,12 @@ const OFFLINE_HTML = '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"
     '<meta name="viewport" content="width=device-width, initial-scale=1">' +
     '<title>Offline - VPS Manager</title><style>' +
     'body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;' +
-    'background:#0b0e14;color:#e6edf3;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}' +
-    'main{max-width:360px;padding:24px;text-align:center}h1{font-size:18px;margin:0 0 8px}' +
-    'p{color:#8b949e;margin:0 0 20px}button{background:#2f6feb;color:#fff;border:0;border-radius:8px;' +
-    'padding:9px 16px;font:inherit;cursor:pointer}</style></head><body><main>' +
+    'background:#0f0f0e;color:#ebeae5;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}' +
+    '@media (prefers-color-scheme: light){body{background:#f7f7f5;color:#1b1b19}p{color:#55544f!important}' +
+    'button{background:#1b1b19!important;color:#fff!important}}' +
+    'main{max-width:360px;padding:24px;text-align:center}h1{font-size:16px;font-weight:600;margin:0 0 8px}' +
+    'p{color:#a3a199;margin:0 0 20px}button{background:#ebeae5;color:#111110;border:0;border-radius:4px;' +
+    'padding:7px 14px;font:inherit;font-weight:500;cursor:pointer}</style></head><body><main>' +
     '<h1>You are offline</h1><p>VPS Manager can\'t reach the server right now. Check your connection and try again.</p>' +
     '<button onclick="location.reload()">Retry</button></main></body></html>';
 

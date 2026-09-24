@@ -382,14 +382,23 @@ function cssVar(name, fallback) {
 }
 
 function chartTheme() {
+    const area = parseFloat(cssVar('--chart-area', '0.07'));
     return {
-        grid: cssVar('--chart-grid', 'rgba(255,255,255,0.06)'),
-        tick: cssVar('--chart-tick', '#8b949e'),
-        text: cssVar('--text-primary', '#e6edf3'),
-        textSecondary: cssVar('--text-secondary', '#b1bac4'),
-        tooltipBg: cssVar('--bg-tertiary', '#1b212c'),
-        tooltipBorder: cssVar('--border-strong', 'rgba(255,255,255,0.14)'),
+        grid: cssVar('--chart-grid', '#232321'),
+        tick: cssVar('--chart-tick', '#7b7970'),
+        cross: cssVar('--chart-cross', '#5a5953'),
+        text: cssVar('--text', '#ebeae5'),
+        textSecondary: cssVar('--text-2', '#a3a199'),
+        tooltipBg: cssVar('--surface', '#151514'),
+        tooltipBorder: cssVar('--line-strong', '#34342f'),
+        surface: cssVar('--surface', '#151514'),
+        warn: cssVar('--warn', '#e5a93a'),
+        err: cssVar('--err', '#f0705e'),
+        areaAlpha: isNaN(area) ? 0.07 : area,
+        mono: cssVar('--font-mono', 'monospace'),
         palette: [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) { return cssVar('--chart-' + i); }).filter(Boolean),
+        // Categorical series (one colour per entity, fixed order; no status hues)
+        cat: [1, 2, 3, 4, 5].map(function (i) { return cssVar('--cat-' + i); }).filter(Boolean),
     };
 }
 
@@ -424,12 +433,12 @@ function clockTicks(axis) {
 function timeAxis(theme) {
     return {
         type: 'linear',
-        grid: { color: theme.grid },
+        grid: { display: false, color: theme.grid },
         border: { display: false },
         afterBuildTicks: clockTicks,
         ticks: {
             color: theme.tick,
-            font: { size: 11 },
+            font: { size: 10.5, family: theme.mono },
             maxRotation: 0,
             callback: function (v) { return formatClock(v); },
         },
@@ -459,9 +468,12 @@ function baseTooltip(theme) {
         borderWidth: 1,
         titleColor: theme.text,
         bodyColor: theme.textSecondary,
-        padding: 10,
-        titleFont: { size: 12 },
-        bodyFont: { size: 12 },
+        padding: 8,
+        cornerRadius: 4,
+        boxWidth: 8,
+        boxHeight: 2,
+        titleFont: { size: 11.5, family: theme.mono, weight: '400' },
+        bodyFont: { size: 12, family: theme.mono },
         callbacks: {
             title: function (items) { return items.length ? formatClock(items[0].parsed.x) : ''; },
         },
@@ -628,6 +640,81 @@ function confirmReboot() {
 
 // Kept for backwards compatibility with older markup.
 function rebootFromTopbar() { confirmReboot(); }
+
+/* Server actions menu: clear swap / restart web server (confirm first). */
+function confirmClearSwap() {
+    closeServerMenu();
+    showConfirm('Clear swap',
+        'Move everything in swap back into RAM (swapoff + swapon)? This can take a while and needs enough free memory.',
+        async function () {
+            const data = await apiCall('/swap/clear', 'POST');
+            if (data) document.dispatchEvent(new CustomEvent('vps:swap-cleared', { detail: data }));
+        },
+        { destructive: true, confirmLabel: 'Clear swap' });
+}
+
+function confirmRestartWebServer() {
+    closeServerMenu();
+    const name = VPS.webServer === 'caddy' ? 'Caddy' : 'Nginx';
+    const unit = VPS.webServer === 'caddy' ? 'caddy' : 'nginx';
+    showConfirm('Restart ' + name,
+        'Restart the ' + name + ' web server? Sites (and this panel, if it runs behind ' + name + ') are briefly unavailable.',
+        function () { apiCall('/services/restart/' + unit, 'POST'); },
+        { confirmLabel: 'Restart' });
+}
+
+/* ------------------------------------------------------------------------ *
+ * Theme: dark / light. The inline script in _theme_head.html applies the
+ * stored choice (or the OS preference) before first paint; here we handle the
+ * toggle, follow OS changes while no explicit choice is stored, and notify
+ * pages (charts) via the 'vps:themechange' event.
+ * ------------------------------------------------------------------------ */
+const THEME_KEY = 'vpsm-theme';
+const THEME_COLORS = { dark: '#0f0f0e', light: '#f7f7f5' };
+
+function storedTheme() {
+    try {
+        const t = localStorage.getItem(THEME_KEY);
+        return (t === 'light' || t === 'dark') ? t : null;
+    } catch (e) { return null; }
+}
+
+function systemTheme() {
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+}
+
+function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+}
+
+function applyTheme(theme) {
+    const root = document.documentElement;
+    const prev = currentTheme();
+    root.setAttribute('data-theme', theme);
+    root.setAttribute('data-bs-theme', theme);
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', THEME_COLORS[theme] || THEME_COLORS.dark);
+    const btn = document.getElementById('themeToggle');
+    if (btn) btn.setAttribute('aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme');
+    if (prev !== theme) document.dispatchEvent(new CustomEvent('vps:themechange', { detail: { theme: theme } }));
+}
+
+function setThemePreference(pref) {
+    try {
+        if (pref === 'light' || pref === 'dark') localStorage.setItem(THEME_KEY, pref);
+        else localStorage.removeItem(THEME_KEY);
+    } catch (e) { /* storage blocked: still switch for this page */ }
+    applyTheme(pref === 'light' || pref === 'dark' ? pref : systemTheme());
+}
+
+function toggleTheme() {
+    setThemePreference(currentTheme() === 'dark' ? 'light' : 'dark');
+}
+
+/* Register a callback for theme switches (e.g. to re-colour Chart.js charts). */
+function onThemeChange(cb) {
+    document.addEventListener('vps:themechange', function (e) { cb(e.detail && e.detail.theme); });
+}
 
 /* ------------------------------------------------------------------------ *
  * Top-bar: copy IP, server menu, mobile sidebar
@@ -1020,6 +1107,9 @@ const cmdPages = (function buildCmdPages() {
         },
         { label: 'Test Push Notification', type: 'action', keywords: 'notify alert test', action: cmdTestPush },
         { label: 'Detect Services', type: 'action', keywords: 'discover scan systemd', action: function () { location.href = '/settings'; } },
+        { label: 'Clear Swap…', type: 'action', keywords: 'swap memory swapoff swapon', action: confirmClearSwap },
+        { label: 'Switch Theme (Dark / Light)', type: 'action', keywords: 'theme dark light mode appearance colour color', action: toggleTheme },
+        { label: 'Theme: Follow System', type: 'action', keywords: 'theme auto system os appearance', action: function () { setThemePreference(null); } },
         { label: 'Reboot Server…', type: 'action', danger: true, keywords: 'restart shutdown power reboot', action: confirmReboot },
         { label: 'Logout', type: 'action', keywords: 'sign out exit session', action: doLogout }
     );
@@ -1134,6 +1224,21 @@ function isInternalNavigation(a, e) {
  * ------------------------------------------------------------------------ */
 (function wireUp() {
     initSidebarGroups();
+
+    // Theme: sync the toggle label; follow the OS while no explicit choice is stored.
+    applyTheme(currentTheme());
+    if (window.matchMedia) {
+        const mq = window.matchMedia('(prefers-color-scheme: light)');
+        const onSystemChange = function () { if (!storedTheme()) applyTheme(systemTheme()); };
+        if (mq.addEventListener) mq.addEventListener('change', onSystemChange);
+        else if (mq.addListener) mq.addListener(onSystemChange);
+    }
+
+    // Shortcut hints: ⌘K on Apple platforms, Ctrl K elsewhere.
+    const isMac = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+    document.querySelectorAll('kbd.kbd-shortcut[data-shortcut]').forEach(function (k) {
+        k.textContent = (isMac ? '\u2318' : 'Ctrl ') + k.dataset.shortcut.toUpperCase();
+    });
 
     const logModal = document.getElementById('logModal');
     if (logModal) {

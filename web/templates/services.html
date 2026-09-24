@@ -5,7 +5,8 @@
 
 {% block content %}
 <div class="card">
-    <div class="card-header">{{ icon('activity') }} Service Status <span class="tooltip-icon" data-bs-toggle="tooltip" title="System services managed by systemd. Services marked 'active' are currently running.">?</span></div>
+    {% set n_down = (services or [])|rejectattr('status', 'equalto', 'active')|list|length %}
+    <div class="card-header">{{ icon('activity') }} systemd units <span class="card-meta num">{{ (services or [])|length }} monitored{% if n_down %} · <span class="text-err">{{ n_down }} not running</span>{% endif %}</span> <span class="tooltip-icon" data-bs-toggle="tooltip" title="System services managed by systemd. Services marked 'active' are currently running.">?</span></div>
     <div class="card-body">
         {% if services %}
         <div class="table-wrap">
@@ -13,17 +14,18 @@
                 <thead>
                     <tr>
                         <th style="width:32px"><input type="checkbox" class="bulk-check" aria-label="Select all services" onchange="toggleSelectAll(this, 'svc')"></th>
-                        <th>Service</th>
+                        <th>Unit</th>
                         <th>Status</th>
-                        <th>Uptime</th>
-                        <th>Actions</th>
+                        <th>Active for</th>
+                        <th class="r"><span class="sr-only">Actions</span></th>
                     </tr>
                 </thead>
                 <tbody>
-                    {% for svc in services %}
-                    <tr>
+                    {% set svc_bad = services|rejectattr('status', 'equalto', 'active')|list %}
+                    {% for svc in svc_bad + (services|selectattr('status', 'equalto', 'active')|list) %}
+                    <tr{% if svc.status != 'active' %} class="problem{% if svc.status == 'inactive' %} is-warn{% endif %}"{% endif %}>
                         <td><input type="checkbox" class="bulk-check" data-name="{{ svc.name }}" data-group="svc" aria-label="Select {{ svc.name }}" onchange="updateBulkBar('svc')"></td>
-                        <td data-label="Service"><strong>{{ svc.name }}</strong></td>
+                        <td data-label="Unit" class="name">{{ svc.name }}</td>
                         <td data-label="Status">
                             {% if svc.status == 'active' %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>active</span>
@@ -33,14 +35,15 @@
                                 <span class="badge badge-red"><span class="badge-dot red"></span>{{ svc.status }}</span>
                             {% endif %}
                         </td>
-                        <td data-label="Uptime"><span style="color:var(--text-secondary)">{{ svc.uptime or '-' }}</span></td>
-                        <td data-label="Actions">
-                            <div class="btn-group">
-                                <button type="button" class="btn btn-sm btn-yellow" data-name="{{ svc.name }}" onclick="serviceAction('restart', this.dataset.name, this)">Restart</button>
+                        <td data-label="Active for" class="muted">{{ svc.uptime or '–' }}</td>
+                        <td data-label="Actions" class="r">
+                            <div class="btn-group row-act">
                                 {% if svc.status == 'active' %}
-                                    <button type="button" class="btn btn-sm btn-red" data-name="{{ svc.name }}" onclick="serviceAction('stop', this.dataset.name, this)">Stop</button>
+                                    <button type="button" class="btn btn-sm btn-ghost" data-name="{{ svc.name }}" onclick="serviceAction('restart', this.dataset.name, this)">Restart</button>
+                                    <button type="button" class="btn btn-sm btn-ghost btn-red" data-name="{{ svc.name }}" onclick="serviceAction('stop', this.dataset.name, this)">Stop</button>
                                 {% else %}
-                                    <button type="button" class="btn btn-sm btn-green" data-name="{{ svc.name }}" onclick="serviceAction('start', this.dataset.name, this)">Start</button>
+                                    <button type="button" class="btn btn-sm btn-ghost" data-name="{{ svc.name }}" onclick="serviceAction('restart', this.dataset.name, this)">Restart</button>
+                                    <button type="button" class="btn btn-sm btn-primary" data-name="{{ svc.name }}" onclick="serviceAction('start', this.dataset.name, this)">Start</button>
                                 {% endif %}
                             </div>
                         </td>
@@ -52,7 +55,7 @@
         <div class="bulk-bar" id="svcBulkBar" style="display:none">
             <span id="svcBulkCount">0 selected</span>
             <div class="btn-group">
-                <button type="button" class="btn btn-sm btn-yellow" onclick="bulkServiceAction('restart', this)">Restart selected</button>
+                <button type="button" class="btn btn-sm" onclick="bulkServiceAction('restart', this)">Restart selected</button>
             </div>
         </div>
         {% else %}

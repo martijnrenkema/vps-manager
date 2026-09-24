@@ -1,0 +1,33 @@
+{# Shared <head> fragment (base.html + login.html): theme bootstrap + local fonts.
+   Runs before the first paint so a light-theme user never sees a dark flash.
+   Stored choice ("light"/"dark") wins; without one we follow the OS. #}
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0f0f0e">
+<script>
+(function () {
+    var d = document.documentElement, t = null;
+    try { t = localStorage.getItem('vpsm-theme'); } catch (e) {}
+    if (t !== 'light' && t !== 'dark') {
+        t = (window.matchMedia && matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+    }
+    d.setAttribute('data-theme', t);
+    d.setAttribute('data-bs-theme', t);
+    var m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute('content', t === 'light' ? '#f7f7f5' : '#0f0f0e');
+})();
+</script>
+<link rel="preload" as="font" type="font/woff2" href="{{ url_for('static', filename='vendor/fonts/ibm-plex-sans-latin-400-normal.woff2') }}?v={{ asset_v }}" crossorigin>
+<style>
+    /* IBM Plex (SIL OFL 1.1), self-hosted. Declared inline so the URLs carry ?v=
+       and match the preload above. */
+    @font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 400; font-display: swap;
+        src: url('{{ url_for('static', filename='vendor/fonts/ibm-plex-sans-latin-400-normal.woff2') }}?v={{ asset_v }}') format('woff2'); }
+    @font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 500; font-display: swap;
+        src: url('{{ url_for('static', filename='vendor/fonts/ibm-plex-sans-latin-500-normal.woff2') }}?v={{ asset_v }}') format('woff2'); }
+    @font-face { font-family: 'IBM Plex Sans'; font-style: normal; font-weight: 600 700; font-display: swap;
+        src: url('{{ url_for('static', filename='vendor/fonts/ibm-plex-sans-latin-600-normal.woff2') }}?v={{ asset_v }}') format('woff2'); }
+    @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 400; font-display: swap;
+        src: url('{{ url_for('static', filename='vendor/fonts/ibm-plex-mono-latin-400-normal.woff2') }}?v={{ asset_v }}') format('woff2'); }
+    @font-face { font-family: 'IBM Plex Mono'; font-style: normal; font-weight: 500 700; font-display: swap;
+        src: url('{{ url_for('static', filename='vendor/fonts/ibm-plex-mono-latin-500-normal.woff2') }}?v={{ asset_v }}') format('woff2'); }
+</style>

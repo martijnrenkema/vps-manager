@@ -5,24 +5,24 @@
 
 {% block content %}
 <div class="stats-grid">
-    <div class="stat-card" style="--tone:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">
+    <div class="stat-card">
         <div class="label">Security Score <span class="tooltip-icon" data-bs-toggle="tooltip" title="Percentage of hardening checks that pass. Warnings count half; informational checks are not scored.">?</span></div>
-        <div class="value" style="color:{% if data.score >= 80 %}var(--green){% elif data.score >= 50 %}var(--yellow){% else %}var(--red){% endif %}">{{ data.score }}<span style="font-size:14px;color:var(--text-muted)">/100</span></div>
+        <div class="value{% if data.score < 50 %} text-err{% elif data.score < 80 %} text-warn{% endif %}">{{ data.score }}<small>/ 100</small></div>
         <div class="sub">Checked at {{ data.generated_at }}</div>
     </div>
-    <div class="stat-card" style="--tone:var(--green)">
+    <div class="stat-card">
         <div class="label">Passed</div>
-        <div class="value" style="color:var(--green)">{{ data.summary.ok }}</div>
+        <div class="value">{{ data.summary.ok }}</div>
         <div class="sub">checks OK</div>
     </div>
-    <div class="stat-card" style="--tone:var(--yellow)">
+    <div class="stat-card">
         <div class="label">Warnings</div>
-        <div class="value" style="color:{% if data.summary.warn %}var(--yellow){% else %}var(--text-muted){% endif %}">{{ data.summary.warn }}</div>
+        <div class="value{% if data.summary.warn %} text-warn{% else %} muted{% endif %}">{{ data.summary.warn }}</div>
         <div class="sub">recommendations</div>
     </div>
-    <div class="stat-card" style="--tone:var(--red)">
+    <div class="stat-card">
         <div class="label">Failed</div>
-        <div class="value" style="color:{% if data.summary.fail %}var(--red){% else %}var(--text-muted){% endif %}">{{ data.summary.fail }}</div>
+        <div class="value{% if data.summary.fail %} text-err{% else %} muted{% endif %}">{{ data.summary.fail }}</div>
         <div class="sub">need action</div>
     </div>
 </div>
@@ -30,7 +30,7 @@
 <div class="card">
     <div class="card-header">
         {{ icon('shield') }} Hardening Checks
-        <button class="btn btn-sm" style="margin-left:auto" id="rerunBtn" onclick="rerunAudit(this)">Re-run audit</button>
+        <button type="button" class="btn btn-sm" style="margin-left:auto" id="rerunBtn" onclick="rerunAudit(this)">Re-run audit</button>
     </div>
     <div class="card-body">
         <div class="table-wrap">
@@ -58,8 +58,8 @@
                             {% endif %}
                         </td>
                         <td data-label="Check"><strong>{{ c.label }}</strong></td>
-                        <td data-label="Details"><span style="color:var(--text-secondary)">{{ c.details }}</span></td>
-                        <td data-label="Recommendation"><span style="color:var(--text-muted)">{{ c.recommendation or '—' }}</span></td>
+                        <td data-label="Details" class="text-secondary">{{ c.details }}</td>
+                        <td data-label="Recommendation" class="muted">{{ c.recommendation or '—' }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -68,7 +68,7 @@
     </div>
 </div>
 
-<div class="card" style="margin-top:24px">
+<div class="card">
     <div class="card-header">{{ icon('activity') }} Self-healing Services</div>
     <div class="card-body">
         <p style="color:var(--text-secondary);margin:0 0 16px">
@@ -87,7 +87,7 @@
                 <input type="number" id="healMax" class="form-control" style="width:80px" min="1" max="20"
                        value="{{ auto_heal.get('max_restarts_per_day', 3) }}">
             </label>
-            <button class="btn btn-sm btn-green" onclick="saveAutoHeal(this)">Save</button>
+            <button type="button" class="btn btn-sm btn-primary" onclick="saveAutoHeal(this)">Save</button>
         </div>
     </div>
 </div>
