@@ -1,6 +1,8 @@
 # v2.0.1 — Backup Script Fixes
 
-A small release that fixes two problems in the backup script. The dashboard itself is unchanged.
+A small release that fixes two problems in the backup script. The dashboard itself is unchanged. The README now has new screenshots of the v2.0 design.
+
+![VPS Manager v2 dashboard](https://raw.githubusercontent.com/martijnrenkema/vps-manager/v2.0.1/docs/screenshots/dashboard-dark.png)
 
 ## Upgrading
 

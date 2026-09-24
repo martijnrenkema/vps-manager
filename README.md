@@ -7,12 +7,29 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 ![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04_LTS-orange)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-![VPS Manager Dashboard](screenshot.jpg)
+![VPS Manager dashboard in the dark theme](docs/screenshots/dashboard-dark.png)
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/dashboard-light.png" alt="Dashboard in the light theme"><br><sub>Light theme: follows your OS or the toggle</sub></td>
+    <td width="50%"><img src="docs/screenshots/websites.png" alt="Websites page with HTTP status per site"><br><sub>Websites with live HTTP status</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/backup.png" alt="Backup status with NAS pull verification"><br><sub>Backup health and NAS pull verification</sub></td>
+    <td width="50%"><img src="docs/screenshots/security.png" alt="Security audit with hardening checks"><br><sub>Security audit with recommendations</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/pm2-light.png" alt="PM2 process management"><br><sub>PM2 processes with bulk actions</sub></td>
+    <td width="50%"></td>
+  </tr>
+</table>
+
+<sub>Screenshots use fictional demo data.</sub>
 
 ## Features
 
 ### Server Management
-- **Server Overview** - CPU, RAM, disk, swap, load average, uptime with real-time metrics charts
+- **Server Overview** - CPU, RAM, disk, swap, load average and network with 1h/6h/24h charts, alert thresholds drawn in
 - **Service Monitoring** - Nginx, PHP-FPM, MariaDB, Fail2ban status with restart/stop/start and bulk actions
 - **Process Manager** - Top 25 processes sorted by memory or CPU, kill functionality
 - **Network Overview** - Network interfaces, listening ports, active connection count
@@ -46,17 +63,20 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **Terminal Allowlist** - Command allowlist approach with subshell escape blocking, all blocked commands logged
 - **Symlink Protection** - File browser resolves symlinks to prevent directory traversal escapes
 - **Atomic JSON Writes** - All config and state files written atomically via temp file + rename to prevent corruption
-- **Minimal External Dependencies** - Bootstrap and fonts served locally; only Chart.js (dashboard/uptime charts) is loaded from a CDN
+- **No External Resources** - Bootstrap, Chart.js and the IBM Plex fonts are served locally; the browser never contacts a CDN
 
 ### UX & Interface
+- **Graphite Design** - Calm dark and light themes that use colour only for status; follows the OS setting or a toggle
+- **Needs Attention** - Dashboard list of everything that needs action, with a 0-100 health score
+- **Sidebar Status Hints** - Problems visible from every page, e.g. `SSL 9d`, `PM2 1 err`, `Services 1 off`
 - **Command Palette** - Quick navigation with `Ctrl+K` / `Cmd+K`, fuzzy search across all pages
-- **Collapsible Sidebar** - Grouped navigation (Web, Server, Security, Tools) with persistent state
+- **Grouped Sidebar** - Navigation grouped into Web, Server, Security and Tools
 - **Info Tooltips** - Contextual help on all card headers explaining technical concepts
 - **In-place Updates** - Actions update the UI instantly without page reloads
 - **Bulk Actions** - Select multiple PM2 processes or services for batch restart/stop
 - **Mobile Responsive** - Card-based table layout on small screens
 - **Dashboard Quick Actions** - Restart services and PM2 processes directly from the dashboard
-- **Persistent Alert Dismiss** - Dismissed alerts stay hidden across sessions
+- **Alert Dismiss** - A dismissed alert stays hidden while the problem lasts and comes back if it returns
 - **Push Notifications** - Web Push alerts for critical events, configurable categories, deduplication
 - **PWA Support** - Install as a standalone app on desktop and mobile (see below)
 - **Settings Panel** - All configuration via web UI, config validation, password management
@@ -372,6 +392,7 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 ### v2.0.1 - Backup Script Fixes
 - **Fix: `.backup_env` overrides were applied too late** - The script derived `SKIP_CONFIG_DIRS`, the checksum file and the lock file from the defaults *before* reading `.backup_env`. A custom `SKIP_DIRS` therefore still copied `.env`/`wp-config.php` from the skipped directories, and a custom `BACKUP_DIR` wrote the checksum manifest and lock file to the default location. `.backup_env` is now read first
 - **Database users and grants are backed up again** - A restore brought back every table but no DB user or privilege, so no site could connect. `vps-backup.sh` now writes `databases/_grants_DATE.sql.gz` (MariaDB `mysqldump --system=users`); on MySQL it logs a warning instead of failing the backup
+- **README** - New screenshots of the v2.0 design (with fictional demo data) and an updated feature list
 - **Docs** - Installing the manager outside `/var/www/vps-manager` needs `BACKUP_ENV` in the cron line plus `SKIP_DIRS`/`MANAGER_DATA_DIR` in `.backup_env`; see *VPS Backup Script*
 
 ### v2.0.0 - New Design, Much Faster, Security & Reliability Overhaul
