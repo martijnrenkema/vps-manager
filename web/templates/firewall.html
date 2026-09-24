@@ -7,28 +7,29 @@
 <div class="grid-2col">
     <div class="card">
         <div class="card-header">
-            {{ icon('shield') }} UFW Firewall Rules
-            <span class="tooltip-icon" data-bs-toggle="tooltip" title="UFW (Uncomplicated Firewall) controls which network connections are allowed or blocked on the server.">?</span>
+            {{ icon('shield') }} UFW Firewall Rules <span id="ufwCount" class="card-meta"></span>
+            <span class="tooltip-icon" data-bs-toggle="tooltip" title="UFW (Uncomplicated Firewall) controls which network connections are allowed or blocked on the server. Rules are checked top to bottom and the first match wins.">?</span>
+            <div class="card-tools">
+                <input type="text" id="ufwSearch" class="form-control form-control-sm" placeholder="Search port, IP, comment…" aria-label="Search firewall rules" oninput="ufwPage=1;renderUfwRules()">
+                <select id="ufwSourceSelect" class="form-control form-control-sm" aria-label="Rule source" onchange="ufwPage=1;renderUfwRules()">
+                    <option value="all">All rules</option>
+                    <option value="manual">Manual only</option>
+                    <option value="fail2ban">Fail2ban only</option>
+                </select>
+                <select id="ufwPerPageSelect" class="form-control form-control-sm" aria-label="Rules per page" onchange="ufwPerPage=parseInt(this.value);ufwPage=1;renderUfwRules()">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
         </div>
         <div class="card-body">
             {% if data.ufw_rules %}
-            <div class="table-wrap">
-                <table class="table-responsive-cards" id="ufwRulesTable">
-                    <thead><tr><th class="num">#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:48px"><span class="sr-only">Actions</span></th></tr></thead>
-                    <tbody>
-                        {% for rule in data.ufw_rules %}
-                        <tr>
-                            <td data-label="#" class="num muted">{{ rule.number }}</td>
-                            <td data-label="To"><span><code>{{ rule.to }}</code>{% if rule.v6 %} <span class="tag">v6</span>{% endif %}</span></td>
-                            <td data-label="Action"><span class="verb verb-{{ rule.action|lower }}">{{ rule.action }}</span></td>
-                            <td data-label="From" class="mono">{{ rule.from_addr }}</td>
-                            <td data-label="Comment"><span class="muted">{{ rule.comment }}</span></td>
-                            <td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule {{ rule.number }}" title="Delete rule" data-rule="{{ rule.number }}" data-to="{{ rule.to }}" data-action="{{ rule.action }}" data-from="{{ rule.from_addr }}" data-v6="{{ '1' if rule.v6 else '0' }}" onclick="deleteUfwRule(this)">{{ icon('trash') }}</button></td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <script id="ufwRulesData" type="application/json">{{ data.ufw_rules | tojson }}</script>
+            <div id="ufwRulesContainer">
+                <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
             </div>
+            <div class="pager" id="ufwPagination"></div>
             {% elif data.ufw %}
                 <pre>{{ data.ufw }}</pre>
             {% else %}
@@ -57,7 +58,7 @@
                     </div>
                     <div class="form-group w-sm">
                         <label for="ufwAction">Action</label>
-                        <select id="ufwAction" class="form-control">
+                        <select id="ufwAction" class="form-control" title="Deny rules are placed at the top so they take precedence over allow rules">
                             <option value="allow">Allow</option>
                             <option value="deny">Deny</option>
                         </select>
@@ -200,7 +201,7 @@
         <div class="form-row">
             <div class="form-group grow">
                 <label for="banIpInput">IP address</label>
-                <input type="text" id="banIpInput" class="form-control mono" placeholder="e.g. 1.2.3.4">
+                <input type="text" id="banIpInput" class="form-control mono" placeholder="e.g. 1.2.3.4 or 2001:db8::1">
             </div>
             <div class="form-group w-md">
                 <label for="banJailSelect">Jail</label>
@@ -258,6 +259,7 @@
             </div>
             <button type="button" class="btn" onclick="addWhitelistIp()">+ Add</button>
             <button type="button" class="btn btn-primary" onclick="saveWhitelist()" id="saveWhitelistBtn" disabled title="Available once the current whitelist has loaded">{{ icon('save') }} Save</button>
+            <span id="whitelistDirtyHint" class="text-warn" style="align-self:center;font-size:12px" hidden>Unsaved changes</span>
         </div>
     </div>
 </div>
@@ -268,7 +270,111 @@
 <script>
     let whitelistIps = [];
 
+    // --- Shared ---
+    // POST JSON to a firewall endpoint. A 409 {status:'confirm'} (lock-out risk:
+    // SSH port, own IP) is shown as a confirmation; confirming resends the same
+    // request with confirm:true. onDone(res, data) handles the final answer.
+    async function firewallPost(url, body, title, onDone) {
+        let res, data = {};
+        try {
+            res = await fetch(url, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body),
+            });
+            try { data = await res.json(); } catch (e) { data = {}; }
+        } catch (e) {
+            showToast('Connection error', 'error');
+            return;
+        }
+        if (res.status === 409 && data.status === 'confirm' && !body.confirm) {
+            showConfirm(title, data.message, function() {
+                firewallPost(url, Object.assign({}, body, {confirm: true}), title, onDone);
+            }, { destructive: true, confirmLabel: 'Do it anyway' });
+            return;
+        }
+        onDone(res, data);
+    }
+
+    // Prev/next pager shared by the UFW and banned-IP tables; the buttons call
+    // <prefix>Goto(n), e.g. pagerHtml('ufw', ...) calls ufwGoto(n).
+    function pagerHtml(prefix, page, totalPages, count, noun) {
+        if (totalPages <= 1) return `<span class="muted" style="font-size:12px">${count} ${noun}</span>`;
+        let html = '';
+        if (page > 1) html += `<button type="button" class="btn btn-sm" onclick="${prefix}Goto(${page - 1})">Prev</button>`;
+        html += `<span style="color:var(--text-secondary);font-size:12px;padding:4px 8px">Page ${page}/${totalPages} (${count} ${noun})</span>`;
+        if (page < totalPages) html += `<button type="button" class="btn btn-sm" onclick="${prefix}Goto(${page + 1})">Next</button>`;
+        return html;
+    }
+
     // --- UFW Rules ---
+    let allUfwRules = [];
+    let ufwPage = 1;
+    let ufwPerPage = 25;
+
+    const TRASH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+
+    function isFail2banRule(r) {
+        return /fail2ban/i.test(r.comment || '');
+    }
+
+    function ufwGoto(n) { ufwPage = n; renderUfwRules(); }
+
+    function renderUfwRules() {
+        const container = document.getElementById('ufwRulesContainer');
+        if (!container) return;
+        const pagDiv = document.getElementById('ufwPagination');
+        const search = (document.getElementById('ufwSearch').value || '').trim().toLowerCase();
+        const source = document.getElementById('ufwSourceSelect').value;
+
+        let filtered = allUfwRules;
+        if (source !== 'all') {
+            filtered = filtered.filter(r => isFail2banRule(r) === (source === 'fail2ban'));
+        }
+        if (search) {
+            filtered = filtered.filter(r =>
+                [r.number, r.to, r.action, r.from_addr, r.comment, r.v6 ? 'v6' : '']
+                    .some(v => String(v || '').toLowerCase().includes(search)));
+        }
+        document.getElementById('ufwCount').textContent =
+            filtered.length === allUfwRules.length ? `(${allUfwRules.length})` : `(${filtered.length} of ${allUfwRules.length})`;
+
+        if (filtered.length === 0) {
+            container.innerHTML = allUfwRules.length === 0
+                ? '<div class="empty-state">No firewall rules</div>'
+                : '<div class="empty-state">No matching rules found</div>';
+            pagDiv.innerHTML = '';
+            return;
+        }
+
+        const totalPages = Math.max(1, Math.ceil(filtered.length / ufwPerPage));
+        if (ufwPage > totalPages) ufwPage = totalPages;
+        const start = (ufwPage - 1) * ufwPerPage;
+        const rows = filtered.slice(start, start + ufwPerPage).map(r => {
+            const verb = 'verb verb-' + String(r.action || '').toLowerCase().replace(/[^a-z]/g, '');
+            const v6 = r.v6 ? ' <span class="tag">v6</span>' : '';
+            const comment = r.comment ? `<span class="muted">${escHtml(r.comment)}</span>` : '';
+            const num = escHtml(String(r.number));
+            return `<tr><td data-label="#" class="num muted">${num}</td><td data-label="To"><span><code>${escHtml(r.to)}</code>${v6}</span></td><td data-label="Action"><span class="${verb}">${escHtml(r.action)}</span></td><td data-label="From" class="mono">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
+                `<td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
+        }).join('');
+        container.innerHTML = '<div class="table-wrap"><table class="table-responsive-cards" id="ufwRulesTable"><thead><tr><th class="num">#</th><th>To</th><th>Action</th><th>From</th><th>Comment</th><th style="width:48px"><span class="sr-only">Actions</span></th></tr></thead><tbody>' +
+            rows + '</tbody></table></div>';
+        pagDiv.innerHTML = pagerHtml('ufw', ufwPage, totalPages, filtered.length, 'rules');
+    }
+
+    async function refreshUfwTable() {
+        if (!document.getElementById('ufwRulesContainer')) { location.reload(); return; }
+        try {
+            const res = await fetch('/api/firewall/ufw-rules');
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            allUfwRules = await res.json();
+            renderUfwRules();
+        } catch (e) {
+            showToast('Could not refresh firewall rules', 'error');
+        }
+    }
+
     async function addUfwRule(btn) {
         const port = document.getElementById('ufwPort').value.trim();
         const proto = document.getElementById('ufwProto').value;
@@ -281,13 +387,7 @@
             showToast('Port must be between 1 and 65535', 'error'); return;
         }
         await withBusy(btn, async function() {
-            try {
-                const res = await fetch('/firewall/ufw/add', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({port, proto, from_ip, action, comment}),
-                });
-                const data = await res.json();
+            await firewallPost('/firewall/ufw/add', {port, proto, from_ip, action, comment}, 'Add UFW rule', function(res, data) {
                 if (res.ok) {
                     showToast(data.message, 'success');
                     document.getElementById('ufwPort').value = '';
@@ -297,9 +397,7 @@
                 } else {
                     showToast(data.message || 'Failed to add rule', 'error');
                 }
-            } catch (e) {
-                showToast('Connection error', 'error');
-            }
+            });
         });
     }
 
@@ -312,14 +410,7 @@
         const desc = `#${ruleNumber}: ${d.action} ${d.to} from ${d.from}${expected.v6 ? ' (v6)' : ''}`;
         showConfirm('Delete UFW rule', `Delete rule ${desc}?`, async function() {
             await withBusy(btn, async function() {
-                try {
-                    const res = await fetch('/firewall/ufw/delete', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({rule_number: ruleNumber, expected: expected}),
-                    });
-                    let data = {};
-                    try { data = await res.json(); } catch (e) { data = {}; }
+                await firewallPost('/firewall/ufw/delete', {rule_number: ruleNumber, expected: expected}, 'Delete UFW rule', function(res, data) {
                     if (res.ok && data.status !== 'error') {
                         showToast(data.message || 'Rule deleted', 'success');
                         refreshUfwTable();
@@ -329,64 +420,35 @@
                     } else {
                         showToast(data.message || 'Failed to delete rule', 'error');
                     }
-                } catch (e) {
-                    showToast('Connection error', 'error');
-                }
+                });
             });
         });
     }
 
-    const TRASH_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
-
-    async function refreshUfwTable() {
-        try {
-            const res = await fetch('/api/firewall/ufw-rules');
-            if (!res.ok) throw new Error('HTTP ' + res.status);
-            const rules = await res.json();
-            const tbody = document.querySelector('#ufwRulesTable tbody');
-            if (!tbody) { location.reload(); return; }
-            tbody.innerHTML = rules.map(r => {
-                const verb = 'verb verb-' + String(r.action || '').toLowerCase().replace(/[^a-z]/g, '');
-                const v6 = r.v6 ? ' <span class="tag">v6</span>' : '';
-                const comment = r.comment ? `<span class="muted">${escHtml(r.comment)}</span>` : '';
-                const num = escHtml(String(r.number));
-                return `<tr><td data-label="#" class="num muted">${num}</td><td data-label="To"><span><code>${escHtml(r.to)}</code>${v6}</span></td><td data-label="Action"><span class="${verb}">${escHtml(r.action)}</span></td><td data-label="From" class="mono">${escHtml(r.from_addr)}</td><td data-label="Comment">${comment}</td>` +
-                    `<td data-label="" class="r"><button type="button" class="btn btn-sm btn-ghost btn-red row-act" aria-label="Delete rule ${num}" title="Delete rule" data-rule="${num}" data-to="${escHtml(r.to)}" data-action="${escHtml(r.action)}" data-from="${escHtml(r.from_addr)}" data-v6="${r.v6 ? '1' : '0'}" onclick="deleteUfwRule(this)">${TRASH_ICON}</button></td></tr>`;
-            }).join('');
-        } catch (e) {
-            showToast('Could not refresh firewall rules', 'error');
-        }
-    }
-
     // --- Ban IP ---
-    async function banIp() {
+    function banIp() {
         const ip = document.getElementById('banIpInput').value.trim();
         const jail = document.getElementById('banJailSelect').value;
         if (!ip) { showToast('Enter an IP address', 'error'); return; }
-        if (!/^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/.test(ip)) {
-            showToast('Invalid IPv4 address', 'error'); return;
+        // Rough client-side check (IPv4 or IPv6); the server validates strictly
+        const ipv4 = /^(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)$/;
+        const ipv6 = /^[0-9a-fA-F:.]{2,45}$/;
+        if (!ipv4.test(ip) && !(ip.includes(':') && ipv6.test(ip))) {
+            showToast('Invalid IP address', 'error'); return;
         }
-        showConfirm('Ban IP', `Permanently ban ${ip} in jail "${jail}" and add a UFW deny rule?`, async function() {
-            const btn = document.getElementById('banBtn');
-            btn.disabled = true;
-            try {
-                const res = await fetch('/firewall/ban', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ip, jail}),
+        showConfirm('Ban IP', `Ban ${ip} in jail "${jail}" and add a permanent UFW deny rule?`, async function() {
+            await withBusy(document.getElementById('banBtn'), async function() {
+                await firewallPost('/firewall/ban', {ip, jail}, 'Ban your own IP?', function(res, data) {
+                    if (res.ok) {
+                        showToast(data.message, 'success');
+                        document.getElementById('banIpInput').value = '';
+                        loadBannedIps();
+                        refreshUfwTable();
+                    } else {
+                        showToast(data.message || 'Ban failed', 'error');
+                    }
                 });
-                const data = await res.json();
-                if (res.ok) {
-                    showToast(data.message, 'success');
-                    document.getElementById('banIpInput').value = '';
-                    loadBannedIps();
-                } else {
-                    showToast(data.message || 'Ban failed', 'error');
-                }
-            } catch (e) {
-                showToast('Connection error', 'error');
-            }
-            btn.disabled = false;
+            });
         });
     }
 
@@ -522,17 +584,10 @@
         html += '</tbody></table></div>';
         container.innerHTML = html;
 
-        // Pagination
-        if (totalPages <= 1) {
-            pagDiv.innerHTML = `<span style="color:var(--text-muted);font-size:12px">${filtered.length} IPs</span>`;
-        } else {
-            let phtml = '';
-            if (bannedPage > 1) phtml += `<button class="btn btn-sm" onclick="bannedPage--;renderBannedIps()">Prev</button>`;
-            phtml += `<span style="color:var(--text-secondary);font-size:12px;padding:4px 8px">Page ${bannedPage}/${totalPages} (${filtered.length} IPs)</span>`;
-            if (bannedPage < totalPages) phtml += `<button class="btn btn-sm" onclick="bannedPage++;renderBannedIps()">Next</button>`;
-            pagDiv.innerHTML = phtml;
-        }
+        pagDiv.innerHTML = pagerHtml('banned', bannedPage, totalPages, filtered.length, 'IPs');
     }
+
+    function bannedGoto(n) { bannedPage = n; renderBannedIps(); }
 
     async function unbanIp(ip, jail, btn) {
         showConfirm('Unban IP', `Unban ${ip} from jail "${jail}"?`, async function() {
@@ -561,6 +616,18 @@
     // Save stays disabled until the current list was read successfully:
     // saving an empty/unknown list would wipe the real ignoreip entries.
     let whitelistLoaded = false;
+    // Add/remove only change the local list until Save; make that visible and
+    // warn before leaving the page with unsaved edits.
+    let whitelistDirty = false;
+
+    function setWhitelistDirty(dirty) {
+        whitelistDirty = dirty;
+        document.getElementById('whitelistDirtyHint').hidden = !dirty;
+    }
+
+    window.addEventListener('beforeunload', function(e) {
+        if (whitelistDirty) { e.preventDefault(); e.returnValue = ''; }
+    });
 
     function setWhitelistLoaded(ok) {
         whitelistLoaded = ok;
@@ -579,6 +646,7 @@
             if (res.ok && data && data.status !== 'error' && Array.isArray(data.ips)) {
                 whitelistIps = data.ips;
                 setWhitelistLoaded(true);
+                setWhitelistDirty(false);
                 renderWhitelist();
                 return;
             }
@@ -626,11 +694,13 @@
         }
         whitelistIps.push(val);
         input.value = '';
+        setWhitelistDirty(true);
         renderWhitelist();
     }
 
     function removeWhitelistIp(idx) {
         whitelistIps.splice(idx, 1);
+        setWhitelistDirty(true);
         renderWhitelist();
     }
 
@@ -661,6 +731,7 @@
             const data = await res.json();
             if (res.ok) {
                 showToast(data.message, 'success');
+                setWhitelistDirty(false);
             } else {
                 showToast(data.message || 'Save failed', 'error');
             }
@@ -681,6 +752,11 @@
 
     // Load data on page load
     document.addEventListener('DOMContentLoaded', function() {
+        const ufwData = document.getElementById('ufwRulesData');
+        if (ufwData) {
+            try { allUfwRules = JSON.parse(ufwData.textContent); } catch (e) { allUfwRules = []; }
+            renderUfwRules();
+        }
         loadBannedIps();
         loadWhitelist();
     });

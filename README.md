@@ -55,7 +55,7 @@ Web dashboard for managing Ubuntu VPS servers. Runs on the VPS itself and provid
 - **Web Terminal** - Browser-based command execution with allowlist-based command filtering
 
 ### Security
-- **Firewall & Security** - UFW rules, Fail2ban config, IP banning/unbanning, ban duration tracking, whitelist management
+- **Firewall & Security** - UFW rules with search, fail2ban/manual filter and paging; Fail2ban config, IPv4/IPv6 banning/unbanning, ban duration tracking, whitelist management; warns before changes that would lock you out of SSH
 - **DDoS Detection** - Connection monitoring, SYN flood detection, per-IP thresholds
 - **2FA Authentication** - TOTP authenticator app or email-based 2FA with configurable SMTP
 - **Backup Monitoring** - Status tracking, history timeline, backup file downloads, webhook endpoint
@@ -388,6 +388,13 @@ vps.example.com {
 Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
+
+### v2.1.0 - Firewall Improvements
+- **Fix: permanent bans did not block web traffic** - "Ban IP" and deny rules from the "Add rule" form were appended to the end of the UFW rule list. UFW uses the first matching rule, so a ban added after `allow 80/443` let the IP keep reaching the websites once fail2ban's temporary ban expired. Deny rules are now placed at the top (`ufw prepend`); allow rules still go at the end. Existing ban rules are left alone - see the release notes to check yours
+- **UFW rule search and paging** - Search by port, IP, action or comment, filter on manual or fail2ban rules, 25/50/100 per page and a rule count; servers with hundreds of fail2ban rules no longer get one endless table
+- **Lock-out protection** - Deleting the last rule that lets clients reach the SSH port, denying the SSH port from anywhere, or banning the IP you are connected from now asks for explicit confirmation first
+- **IPv6 bans from the UI** - The ban form accepted IPv4 only, although the server already supported IPv6
+- **Whitelist shows unsaved changes** - Adding or removing an entry is only applied on Save; the page now says so and warns before you leave with unsaved edits
 
 ### v2.0.2 - NAS Pull Script Fix
 - **Fix: `LOCAL_DIR` in the NAS `.backup_env` was only half applied** - `nas-pull-backup.sh` derived `DATA_DIR`, `SNAPSHOT_DIR`, `LOG` and the lock file from the default `/volume1/Backup/vps` before reading `.backup_env`. A custom `LOCAL_DIR` there therefore still pulled into, snapshotted and locked the default location. `.backup_env` is now read first (the same fix `vps-backup.sh` got in v2.0.1)
