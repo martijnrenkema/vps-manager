@@ -9,6 +9,15 @@
 set -Eeuo pipefail
 umask 027
 
+# Load overrides first: DATA_DIR, SNAPSHOT_DIR, LOG and LOCK_FILE are derived
+# from LOCAL_DIR, so a LOCAL_DIR set in $BACKUP_ENV must be known before those
+# are computed. The env file itself defaults to the default LOCAL_DIR.
+BACKUP_ENV="${BACKUP_ENV:-${LOCAL_DIR:-/volume1/Backup/vps}/.backup_env}"
+if [ -f "$BACKUP_ENV" ]; then
+    # shellcheck disable=SC1090
+    source "$BACKUP_ENV"
+fi
+
 # Connection/location settings: configure these in $BACKUP_ENV (see README)
 # so the script itself stays generic.
 VPS="${VPS:-backup@your-vps-hostname}"
@@ -18,7 +27,6 @@ DATA_DIR="$LOCAL_DIR/data"
 SNAPSHOT_DIR="$LOCAL_DIR/snapshots"
 LOG="${LOG:-$LOCAL_DIR/backup.log}"
 WEBHOOK_URL="${WEBHOOK_URL:-https://your-dashboard-domain/api/backup/webhook}"
-BACKUP_ENV="${BACKUP_ENV:-$LOCAL_DIR/.backup_env}"
 RETENTION_DAYS="${RETENTION_DAYS:-14}"
 # Always keep at least this many of the newest snapshots, regardless of age
 KEEP_MIN_SNAPSHOTS="${KEEP_MIN_SNAPSHOTS:-3}"
@@ -28,11 +36,6 @@ KEEP_MIN_SNAPSHOTS="${KEEP_MIN_SNAPSHOTS:-3}"
 MAX_BACKUP_AGE_DAYS="${MAX_BACKUP_AGE_DAYS:-8}"
 LOCK_FILE="$LOCAL_DIR/.pull-backup.lock"
 
-WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
-if [ -f "$BACKUP_ENV" ]; then
-    # shellcheck disable=SC1090
-    source "$BACKUP_ENV"
-fi
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
 
 mkdir -p "$DATA_DIR" "$SNAPSHOT_DIR" "$(dirname "$LOG")"
