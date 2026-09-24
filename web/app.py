@@ -1541,7 +1541,8 @@ def get_sidebar_hints():
     values are simply omitted. Each hint: {'text', 'tone' ('err'|'warn'|''), 'title'}.
     """
     hints = {}
-    try:
+
+    def _hint_pm2():
         pm2 = _peek_cache('get_pm2_processes')
         if isinstance(pm2, list) and pm2:
             errored = [p for p in pm2 if p.get('status') in ('errored', 'error')]
@@ -1553,6 +1554,7 @@ def get_sidebar_hints():
                 hints['pm2'] = {'text': f"{len(down)} off", 'tone': 'warn',
                                 'title': f"{len(down)} process(es) not online"}
 
+    def _hint_services():
         services = _peek_cache('get_services_status')
         if isinstance(services, list) and services:
             down = [s for s in services if s.get('status') != 'active']
@@ -1560,6 +1562,7 @@ def get_sidebar_hints():
                 hints['services'] = {'text': f"{len(down)} off", 'tone': 'err',
                                      'title': f"{len(down)} service(s) not running"}
 
+    def _hint_ssl():
         cert_getter = 'get_caddy_certificates' if CONFIG.get('web_server') == 'caddy' else 'get_ssl_certificates'
         certs = _peek_cache(cert_getter)
         if isinstance(certs, list):
@@ -1570,9 +1573,10 @@ def get_sidebar_hints():
                 if soonest <= 30:
                     tone = ('err' if soonest <= thr.get('ssl_critical_days', 3)
                             else 'warn' if soonest <= thr.get('ssl_warning_days', 14) else '')
-                    hints['ssl'] = {'text': f"{max(soonest, 0)}d", 'tone': tone,
+                    hints['ssl'] = {'text': f"{soonest}d" if soonest >= 0 else 'exp', 'tone': tone,
                                     'title': 'Days until the first certificate expires'}
 
+    def _hint_updates():
         updates = _peek_cache('get_system_updates')
         if isinstance(updates, list):
             installable = [u for u in updates if u.get('category') in ('security', 'regular')]
@@ -1581,8 +1585,15 @@ def get_sidebar_hints():
                 hints['updates'] = {'text': str(len(installable)), 'tone': 'warn' if sec else '',
                                     'title': f"{len(installable)} updates available"
                                              + (f", {sec} security" if sec else '')}
-    except Exception:
-        logger.debug('Sidebar hints failed', exc_info=True)
+
+
+    # Elk onderdeel apart: één onverwachte cache-entry mag niet alle hints
+    # laten verdwijnen.
+    for fn in (_hint_pm2, _hint_services, _hint_ssl, _hint_updates):
+        try:
+            fn()
+        except Exception:
+            logger.debug('Sidebar hint %s failed', fn.__name__, exc_info=True)
     return hints
 
 

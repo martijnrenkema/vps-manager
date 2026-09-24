@@ -48,8 +48,8 @@
     --btn-primary: #ebeae5;
     --btn-primary-hover: #ffffff;
     --btn-primary-fg: #111110;
-    --btn-danger: #d8503d;
-    --btn-danger-hover: #e35f4c;
+    --btn-danger: #b8412f;      /* wit erop: 5.5:1 */
+    --btn-danger-hover: #c64a37;
     --btn-danger-fg: #ffffff;
 
     --scrim: rgba(0, 0, 0, 0.6);
@@ -107,7 +107,7 @@
     --accent-bg: rgba(47, 95, 208, 0.08);
     --accent-line: rgba(47, 95, 208, 0.45);
 
-    --ok: #1e7f4f;
+    --ok: #1a7346;
     --warn: #9a5d00;
     --err: #c53b2c;
     --info: #2f64c0;
@@ -940,7 +940,11 @@ svg.i {
 .menu-item:hover,
 .menu-item:focus-visible {
     background: var(--surface-2);
-    outline: none;
+}
+
+.menu-item:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
 }
 
 .menu-item.danger {
@@ -2858,8 +2862,8 @@ a.quick-item:hover {
     position: absolute;
     top: 2px;
     right: 1px;
-    background: var(--err);
-    color: #fff;
+    background: var(--btn-danger);
+    color: var(--btn-danger-fg);
     font: 600 9.5px/1 var(--font-sans);
     min-width: 15px;
     height: 15px;
@@ -4058,7 +4062,6 @@ a.quick-item:hover {
     .attn-act { grid-column: 2; flex-wrap: wrap; }
     .attn-act .alert-dismiss { margin-left: auto; }
     .health .h-label { display: none; }
-    table.compact-actions tr:not(.problem) .row-act { display: none; }
 
     .notif-dropdown {
         position: fixed;
