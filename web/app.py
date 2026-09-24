@@ -5254,6 +5254,89 @@ def _is_valid_ip_or_cidr(value):
         return False
 
 
+@_ttl_cache(300)
+def _ssh_ports():
+    """Poorten waarop sshd luistert (effectieve config via sshd -T); 22 als
+    fallback. sshd -T geeft één 'port N'-regel per poort."""
+    result = run_cmd_safe(['sudo', 'sshd', '-T'], timeout=10)
+    ports = set()
+    if result.returncode == 0:
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) == 2 and parts[0].lower() == 'port' and parts[1].isdigit():
+                ports.add(int(parts[1]))
+    return frozenset(ports or {22})
+
+
+_UFW_PORT_TOKEN_RE = re.compile(r'^\d[\d,:]*(?:/(?:tcp|udp))?$')
+
+
+def _ufw_rule_covers_port(to, port):
+    """Dekt het 'To'-veld van een ufw-regel deze poort?
+
+    Vormen: '2222/tcp', '80,443/tcp', '6000:6007/tcp', 'OpenSSH', een adres
+    met poort ('10.0.0.5 22/tcp'), of zonder poort ('Anywhere', een adres):
+    dat laatste geldt voor alle poorten."""
+    tokens = to.replace('(v6)', ' ').split()
+    if any(t.lower() == 'openssh' for t in tokens):
+        return port == 22
+    spec = next((t for t in tokens if _UFW_PORT_TOKEN_RE.match(t)), None)
+    if spec is None:
+        # Een app-profiel (bijv. 'Nginx Full') kennen we niet: niet raden
+        return not any(t[:1].isalpha() and t.lower() not in ('anywhere', 'on') for t in tokens)
+    for part in spec.split('/')[0].split(','):
+        lo, _, hi = part.partition(':')
+        try:
+            if int(lo) <= port <= int(hi or lo):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _ufw_allows_from_anywhere(rule, port):
+    return (rule['action'] in ('ALLOW', 'LIMIT')
+            and rule.get('direction', 'IN') in ('IN', '')
+            and rule['from_addr'] == 'Anywhere'
+            and _ufw_rule_covers_port(rule['to'], port))
+
+
+def _ufw_default_incoming():
+    """'deny', 'reject', 'allow' of '' als onbekend."""
+    result = run_cmd_safe(['sudo', 'ufw', 'status', 'verbose'], timeout=15)
+    m = re.search(r'Default:\s*(\w+)\s*\(incoming\)', result.stdout or '')
+    return m.group(1).lower() if m else ''
+
+
+def _ssh_lockout_on_delete(rules, rule):
+    """SSH-poorten die na het verwijderen van `rule` niet meer van overal
+    bereikbaar zijn (per IP-familie). Leeg = geen risico."""
+    at_risk = []
+    for port in sorted(_ssh_ports()):
+        if not _ufw_allows_from_anywhere(rule, port):
+            continue
+        others = [r for r in rules if r['number'] != rule['number'] and r['v6'] == rule['v6']]
+        if not any(_ufw_allows_from_anywhere(r, port) for r in others):
+            at_risk.append(port)
+    if at_risk and _ufw_default_incoming() == 'allow':
+        return []
+    return at_risk
+
+
+def _same_ip(a, b):
+    """Vergelijk adressen genormaliseerd (2001:DB8::1 == 2001:db8:0::1)."""
+    try:
+        return ipaddress.ip_address(a) == ipaddress.ip_address(b or '')
+    except ValueError:
+        return False
+
+
+def _needs_confirm(message, code):
+    """409 die de UI als bevestigingsvraag toont; opnieuw sturen met
+    `confirm: true` voert de actie alsnog uit."""
+    return jsonify({'status': 'confirm', 'code': code, 'message': message}), 409
+
+
 @app.route('/firewall/ban', methods=['POST'])
 @login_required
 def firewall_ban():
@@ -5266,6 +5349,9 @@ def firewall_ban():
         return jsonify({'status': 'error', 'message': 'Invalid IP address'}), 400
     if not is_safe_name(jail):
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
+    if _same_ip(ip, request.remote_addr) and data.get('confirm') is not True:
+        return _needs_confirm(f'{ip} is the address you are connected from. Banning it locks you out of '
+                              'this dashboard and SSH. Ban it anyway?', 'own_ip')
 
     # Ban in fail2ban
     result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'banip', ip], timeout=15)
@@ -5273,9 +5359,12 @@ def firewall_ban():
     f2b_ok = result.returncode == 0
     f2b_msg = result.stdout.strip() or result.stderr.strip()
 
-    # Add permanent UFW deny rule with timestamp
+    # Permanente UFW-deny. `prepend` zet hem bovenaan: ufw neemt de eerste
+    # passende regel, dus een onderaan toegevoegde deny kwam ná 'allow 80/443'
+    # en hield het IP niet meer tegen zodra de fail2ban-ban afliep.
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
-    ufw_result = run_cmd_safe(['sudo', 'ufw', 'deny', 'from', ip, 'comment', f'Banned via {jail} {timestamp}'], timeout=15)
+    ufw_result = run_cmd_safe(['sudo', 'ufw', 'prepend', 'deny', 'from', ip,
+                               'comment', f'Banned via {jail} {timestamp}'], timeout=15)
     ufw_ok = ufw_result.returncode == 0
     ufw_msg = ufw_result.stdout.strip() or ufw_result.stderr.strip()
 
@@ -5493,24 +5582,31 @@ def firewall_ufw_add():
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
     user_comment = _json_str(data, 'comment', '')
     rule_comment = f'{user_comment} ({timestamp})' if user_comment else f'Added {timestamp}'
-    if from_ip and from_ip.lower() != 'anywhere':
-        if not _is_valid_ip_or_cidr(from_ip):
-            return jsonify({'status': 'error', 'message': 'Invalid source IP/CIDR'}), 400
-        cmd = ['sudo', 'ufw', action, 'from', from_ip, 'to', 'any', 'port', port]
+    from_anywhere = not from_ip or from_ip.lower() == 'anywhere'
+    if not from_anywhere and not _is_valid_ip_or_cidr(from_ip):
+        return jsonify({'status': 'error', 'message': 'Invalid source IP/CIDR'}), 400
+    if (action == 'deny' and from_anywhere and port_num in _ssh_ports()
+            and data.get('confirm') is not True):
+        return _needs_confirm(f'Port {port} is the SSH port. Denying it from anywhere blocks every new '
+                              'SSH connection, including yours. Add the rule anyway?', 'ssh_lockout')
+
+    # Een deny moet vóór de allow-regels staan om effect te hebben (ufw neemt
+    # de eerste passende regel); allow-regels gaan zoals gewoonlijk achteraan.
+    cmd = ['sudo', 'ufw'] + (['prepend'] if action == 'deny' else []) + [action]
+    if not from_anywhere:
+        cmd += ['from', from_ip, 'to', 'any', 'port', port]
         if proto != 'any':
-            cmd.extend(['proto', proto])
+            cmd += ['proto', proto]
     else:
-        if proto != 'any':
-            cmd = ['sudo', 'ufw', action, f'{port}/{proto}']
-        else:
-            cmd = ['sudo', 'ufw', action, port]
-    cmd.extend(['comment', rule_comment])
+        cmd.append(f'{port}/{proto}' if proto != 'any' else port)
+    cmd += ['comment', rule_comment]
 
     result = run_cmd_safe(cmd, timeout=15)
     if result.returncode == 0:
         _invalidate_cache('get_firewall_security')
         log_audit('ufw_add_rule', {'port': port, 'proto': proto, 'action': action, 'from': from_ip or 'anywhere'})
-        return jsonify({'status': 'ok', 'message': f'UFW rule added: {action} {port}/{proto}'})
+        where = ' at the top, so it takes precedence over allow rules' if action == 'deny' else ''
+        return jsonify({'status': 'ok', 'message': f'UFW rule added{where}: {action} {port}/{proto}'})
     return jsonify({'status': 'error', 'message': result.stderr.strip() or result.stdout.strip() or 'Failed to add rule'}), 500
 
 
@@ -5532,14 +5628,26 @@ def firewall_ufw_delete():
     # toevoegt/verwijdert; controleer dat regel N nog de regel is die de
     # gebruiker zag, anders kan bijv. de SSH-allow-regel verdwijnen.
     expected = data.get('expected')
+    current = run_cmd_safe(['sudo', 'ufw', 'status', 'numbered'], timeout=15)
+    rules = parse_ufw_rules(current.stdout)
+    rule = next((r for r in rules if r['number'] == str(num)), None)
     if isinstance(expected, dict):
-        current = run_cmd_safe(['sudo', 'ufw', 'status', 'numbered'], timeout=15)
-        rule = next((r for r in parse_ufw_rules(current.stdout) if r['number'] == str(num)), None)
         fields = ('to', 'action', 'from_addr', 'v6')
         if rule is None or any(str(rule.get(f)) != str(expected.get(f)) for f in fields if f in expected):
             return jsonify({'status': 'error',
                             'message': 'The firewall rules changed since the list was loaded. '
                                        'The list has been refreshed, please try again.'}), 409
+
+    # De laatste regel die de SSH-poort van overal toelaat weghalen sluit
+    # iedereen buiten (bij default deny); alleen na expliciete bevestiging.
+    if rule is not None and data.get('confirm') is not True:
+        ports = _ssh_lockout_on_delete(rules, rule)
+        if ports:
+            family = 'IPv6' if rule['v6'] else 'IPv4'
+            port_list = ', '.join(str(p) for p in ports)
+            return _needs_confirm(f'This is the last rule that lets {family} clients reach SSH '
+                                  f'(port {port_list}). Deleting it can lock you out of the server. '
+                                  'Delete it anyway?', 'ssh_lockout')
 
     result = run_cmd_safe(['sudo', 'ufw', '--force', 'delete', str(num)], timeout=15)
     if result.returncode == 0:
