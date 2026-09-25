@@ -1,7 +1,7 @@
 // Bump the version whenever the caching strategy changes; old caches are
 // deleted on activate. Versioned /static/ URLs (?v=<app version>) change with
 // every release, so stale-while-revalidate never serves an outdated release.
-const CACHE_NAME = 'vps-manager-v5';
+const CACHE_NAME = 'vps-manager-v6';
 const STATIC_ASSETS = [
     '/static/logo.png',
     '/static/icon-192.png',
@@ -113,7 +113,9 @@ self.addEventListener('push', (event) => {
     const options = {
         body: data.body,
         icon: '/static/icon-192.png',
-        badge: '/static/icon-192.png',
+        // Android draws the badge as a monochrome silhouette; a full-colour
+        // icon showed up as a plain white square
+        badge: '/static/badge-96.png',
         tag: data.tag || 'general',
         data: { url: data.url || '/' },
         vibrate: [200, 100, 200],

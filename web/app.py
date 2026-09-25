@@ -4788,7 +4788,21 @@ def service_worker():
 
 @app.route('/manifest.json')
 def pwa_manifest():
-    response = send_from_directory(app.static_folder, 'manifest.json', mimetype='application/manifest+json')
+    # Icoon-URL's krijgen een hash van het icoonbestand zelf: een geïnstalleerde
+    # PWA ziet alleen een gewijzigd manifest (en haalt het icoon opnieuw op)
+    # als het icoon echt veranderd is, niet bij elke release.
+    try:
+        static_root = Path(app.static_folder)
+        manifest = json.loads((static_root / 'manifest.json').read_text())
+        for icon in manifest.get('icons', []):
+            src = icon.get('src', '') if isinstance(icon, dict) else ''
+            if src.startswith('/static/'):
+                path = src.split('?', 1)[0]
+                digest = hashlib.sha1((static_root / path[len('/static/'):]).read_bytes()).hexdigest()[:10]
+                icon['src'] = f"{path}?v={digest}"
+        response = app.response_class(json.dumps(manifest, indent=2), mimetype='application/manifest+json')
+    except (OSError, ValueError):
+        response = send_from_directory(app.static_folder, 'manifest.json', mimetype='application/manifest+json')
     response.headers['Cache-Control'] = 'no-cache'
     return response
 
