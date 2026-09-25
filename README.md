@@ -389,6 +389,11 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v2.1.1 - New App Icon
+- **New app icon** - Standard icon (transparent corners), separate Android maskable icons with the glyph inside the safe zone, a full-bleed Apple touch icon and PNG favicons (32/16 px) replace the previous icon set and SVG favicon
+- **Fix: Android notification badge was a white square** - The badge is drawn as a monochrome silhouette; a dedicated silhouette image is now used instead of the full-colour icon
+- **Stable icon URLs** - `/manifest.json` versions icon URLs by file hash, so installed apps pick up a changed icon once without repeated "update icon" prompts. On iOS, re-add the app to the home screen to see the new icon
+
 ### v2.1.0 - Firewall Improvements
 - **Fix: permanent bans did not block web traffic** - "Ban IP" and deny rules from the "Add rule" form were appended to the end of the UFW rule list. UFW uses the first matching rule, so a ban added after `allow 80/443` let the IP keep reaching the websites once fail2ban's temporary ban expired. Deny rules are now placed at the top (`ufw prepend`); allow rules still go at the end. Existing ban rules are left alone - see the release notes to check yours
 - **UFW rule search and paging** - Search by port, IP, action or comment, filter on manual or fail2ban rules, 25/50/100 per page and a rule count; servers with hundreds of fail2ban rules no longer get one endless table
