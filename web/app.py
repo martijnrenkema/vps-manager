@@ -4956,7 +4956,7 @@ def pm2_logs(name):
 @login_required
 def ssl():
     certs = get_ssl_info()
-    return render_template('ssl.html', certs=certs)
+    return render_template('ssl.html', certs=certs, thresholds=CONFIG.get('thresholds', {}))
 
 
 @app.route('/api/ssl')
@@ -7077,7 +7077,7 @@ def files_users():
 @login_required
 def notifications():
     smtp_configured = bool(CONFIG.get('smtp', {}).get('host', ''))
-    return render_template('notifications.html', smtp_configured=smtp_configured)
+    return render_template('notifications.html', smtp_configured=smtp_configured, thresholds=CONFIG.get('thresholds', {}))
 
 
 @app.route('/api/push/vapid-key')

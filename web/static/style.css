@@ -1106,8 +1106,11 @@ svg.i {
     display: none;
 }
 
-.card-collapsible > summary.card-header::after {
+.card-collapsible > summary.card-header::after,
+.collapsible-group > summary::after,
+summary.disclosure::after {
     content: '';
+    flex-shrink: 0;
     margin-left: auto;
     width: 14px;
     height: 14px;
@@ -1122,8 +1125,136 @@ svg.i {
     border-bottom: 1px solid var(--line) !important;
 }
 
-.card-collapsible[open] > summary.card-header::after {
+.card-collapsible[open] > summary.card-header::after,
+.collapsible-group[open] > summary::after,
+details[open] > summary.disclosure::after {
     transform: rotate(180deg);
+}
+
+/* Plain disclosure summary for an existing sub-heading inside a card
+   (e.g. .subform-title, .card-subhead). */
+summary.disclosure {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+}
+
+summary.disclosure::-webkit-details-marker {
+    display: none;
+}
+
+summary.disclosure:hover {
+    color: var(--text-2);
+}
+
+details:not([open]) > summary.subform-title {
+    margin-bottom: 0;
+}
+
+details:not([open]) > summary.card-subhead {
+    padding-bottom: 12px;
+}
+
+/* Header stays on one line; the title and hint shrink instead of wrapping
+   the chevron onto its own row on narrow screens. */
+.card-collapsible > summary.card-header {
+    flex-wrap: nowrap;
+}
+
+/* Short muted status on the right of a collapsible header ("3 runs",
+   "No attack detected", a badge). */
+.summary-hint {
+    /* Takes only the space left after the title (basis 0), so it truncates
+       before the title has to wrap; right-aligned next to the chevron. */
+    flex: 1 1 0;
+    margin-left: auto;
+    min-width: 0;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-3);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.summary-hint .badge {
+    vertical-align: middle;
+}
+
+.card-collapsible > summary.card-header:has(.summary-hint)::after,
+.collapsible-group > summary:has(.summary-hint)::after,
+summary.disclosure:has(.summary-hint)::after {
+    margin-left: 0;
+}
+
+/* Collapsible group inside a card or form (settings sections, "Add rule"). */
+.collapsible-group {
+    display: block;
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+    background: var(--surface);
+    margin-bottom: 12px;
+    min-width: 0;
+}
+
+.collapsible-group > summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 38px;
+    padding: 8px 12px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: var(--r-sm);
+}
+
+.collapsible-group > summary::-webkit-details-marker {
+    display: none;
+}
+
+.collapsible-group > summary:hover,
+.card-collapsible > summary.card-header:hover {
+    background: var(--hover) !important;
+}
+
+.card-collapsible:not([open]) > summary.card-header {
+    border-radius: var(--r) !important;
+}
+
+.collapsible-group[open] > summary {
+    border-bottom: 1px solid var(--line);
+    border-radius: var(--r-sm) var(--r-sm) 0 0;
+}
+
+.collapsible-group > .collapsible-body {
+    padding: 12px;
+}
+
+/* Last block in a group: no trailing gap (beats the inline margin-bottom
+   on the settings grids). */
+.collapsible-group > .collapsible-body > :last-child {
+    margin-bottom: 0 !important;
+}
+
+/* Buttons for a collapsed section live in its body, not in the <summary>
+   (interactive content inside the toggle is awkward for screen readers). */
+.collapsible-actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 14px;
+    border-top: 1px solid var(--line-subtle);
+}
+
+.card-body:not(.flush) > .collapsible-actions {
+    padding: 10px 0 0;
+    margin-top: 10px;
 }
 
 .card-body {
@@ -2184,6 +2315,13 @@ a.quick-item:hover {
 
 .card-header .tooltip-icon {
     margin-left: 2px;
+}
+
+/* Smaller "?" next to form labels */
+.tooltip-icon.tooltip-icon-sm {
+    width: 14px !important;
+    height: 14px !important;
+    line-height: 14px !important;
 }
 
 .tooltip {

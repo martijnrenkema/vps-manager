@@ -304,13 +304,14 @@
         }
 
         async function installPwa() {
-            if (deferredPrompt) {
-                deferredPrompt.prompt();
-                const result = await deferredPrompt.userChoice;
-                if (result.outcome === 'accepted') {
-                    document.getElementById('pwaBanner').style.display = 'none';
-                }
-                deferredPrompt = null;
+            // The deferred prompt can only be used once: hide the banner
+            // whatever the outcome, so no dead Install button is left behind.
+            const prompt = deferredPrompt;
+            deferredPrompt = null;
+            document.getElementById('pwaBanner').style.display = 'none';
+            if (prompt) {
+                prompt.prompt();
+                try { await prompt.userChoice; } catch (e) {}
             }
         }
 

@@ -88,6 +88,10 @@ async function serviceAction(action, name, btn, confirmed) {
                 statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
             }
         }
+        const running = action !== 'stop';
+        row.classList.toggle('problem', !running);
+        row.classList.toggle('is-warn', !running);
+        setRowRunState(row, running, 'serviceAction');
     }
 }
 

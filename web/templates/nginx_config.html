@@ -18,7 +18,8 @@
                     </div>
                     {% endfor %}
                 </div>
-                {% if configs.available %}
+                {# Always rendered (hidden when empty) so disabling a site has somewhere to go. #}
+                <div id="availableGroup"{% if not configs.available %} hidden{% endif %}>
                 <div class="config-group-label">Available (disabled)</div>
                 <div id="availableConfigs">
                     {% for name in configs.available %}
@@ -27,7 +28,7 @@
                     </div>
                     {% endfor %}
                 </div>
-                {% endif %}
+                </div>
             </div>
         </div>
     </div>
@@ -328,9 +329,9 @@ function moveConfigItem(name, fromType, toType) {
         document.getElementById('enabledConfigs').appendChild(item);
     } else {
         if (dot) { dot.className = 'badge-dot'; dot.style.background = 'var(--text-muted)'; }
-        var avail = document.getElementById('availableConfigs');
-        if (avail) avail.appendChild(item);
+        document.getElementById('availableConfigs').appendChild(item);
     }
+    document.getElementById('availableGroup').hidden = !document.querySelector('#availableConfigs .nginx-config-item');
 }
 
 // Close validate modal
