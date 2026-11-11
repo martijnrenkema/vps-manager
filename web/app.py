@@ -3224,9 +3224,13 @@ def get_backup_status():
     data = {'log': '', 'size': '', 'db_backups': '', 'status': None, 'history': [],
             'backup_files': [], 'db_files': [], 'site_backups': []}
 
-    result = run_cmd_safe(["tail", "-5", log_path])
-    if result.returncode == 0:
-        data['log'] = result.stdout.strip()
+    # Ook een al opgeslagen log_path controleren: update_config valideert
+    # alleen gewijzigde waarden, dus een oud pad naar bijv. data/config.json
+    # zou hier anders nog steeds getoond worden.
+    if isinstance(log_path, str) and _is_valid_backup_log_path(log_path):
+        result = run_cmd_safe(["tail", "-5", log_path])
+        if result.returncode == 0:
+            data['log'] = result.stdout.strip()
 
     result = run_cmd_safe(["du", "-sh", backup_dir])
     if result.returncode == 0:
@@ -5286,24 +5290,6 @@ def backup():
     return render_template('backup.html', data=data)
 
 
-def _has_protected_descendant(path):
-    """True als een van de eigen mappen van de manager (_PROTECTED_DIRS) op
-    of onder `path` ligt. is_path_allowed() kijkt alleen of path zelf erin
-    ligt; een tar, recursieve chown/chmod of delete van een bovenliggende
-    map (bijv. /var/www met de manager in /var/www/vps-manager) raakt ze ook."""
-    try:
-        norm = os.path.realpath(path)
-    except (OSError, ValueError):
-        return True
-    prefix = norm.rstrip('/') + '/'
-    return any(p == norm or p.startswith(prefix) for p in _PROTECTED_DIRS)
-
-
-def _is_protected_path(real_path):
-    """Ligt dit (al geresolvede) pad in een van de eigen mappen van de manager?"""
-    return any(real_path == p or real_path.startswith(p + '/') for p in _PROTECTED_DIRS)
-
-
 def _tar_skip_protected(base_dir, extra_roots=()):
     """tarfile-filter dat de eigen mappen van de manager (en extra_roots)
     overslaat.
@@ -6971,7 +6957,7 @@ def terminal_exec():
         if base_cmd not in TERMINAL_ALLOWED_COMMANDS:
             log_audit('terminal_blocked', {'command': cmd[:200], 'reason': f'not in allowlist: {base_cmd}'})
             return jsonify({'stdout': '', 'stderr': f'Blocked: command not allowed: {base_cmd}', 'cwd': real_cwd})
-        if uses_sudo and not _terminal_sudo_allowed(tokens):
+        if uses_sudo and not _terminal_sudo_allowed(tokens, check):
             log_audit('terminal_blocked', {'command': cmd[:200], 'reason': f'sudo not allowed for: {base_cmd}'})
             return jsonify({'stdout': '', 'stderr': f'Blocked: sudo is only allowed for read-only commands '
                                                      f'(e.g. sudo cat, sudo systemctl status). Use the {base_cmd} page instead.',
@@ -7314,7 +7300,7 @@ def files_delete():
 
     if norm_path in ('/', '/var', '/var/www', '/etc', '/home', '/root'):
         return jsonify({'status': 'error', 'message': 'Cannot delete system directory'}), 403
-    if _has_protected_descendant(norm_path):
+    if _contains_protected_dir(norm_path):
         return jsonify({'status': 'error',
                         'message': 'This folder contains the VPS Manager installation and cannot be deleted'}), 403
 
@@ -7348,7 +7334,7 @@ def files_chown():
     norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
-    if recursive and _has_protected_descendant(norm_path):
+    if recursive and _contains_protected_dir(norm_path):
         return jsonify({'status': 'error',
                         'message': 'This folder contains the VPS Manager installation; '
                                    'a recursive ownership change is not allowed here'}), 403
@@ -7387,7 +7373,7 @@ def files_chmod():
     norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
-    if recursive and _has_protected_descendant(norm_path):
+    if recursive and _contains_protected_dir(norm_path):
         return jsonify({'status': 'error',
                         'message': 'This folder contains the VPS Manager installation; '
                                    'a recursive permission change is not allowed here'}), 403
