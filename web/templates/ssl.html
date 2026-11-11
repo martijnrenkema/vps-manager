@@ -4,13 +4,16 @@
 {% block page_title %}SSL Certificates{% endblock %}
 
 {% block content %}
+{% set th = thresholds or {} %}
+{% set warn_days = th.get('ssl_warning_days', 14) %}
+{% set crit_days = th.get('ssl_critical_days', 3) %}
 <div class="card">
     <div class="card-header">
         <span>{{ icon('lock') }} {% if web_server == 'caddy' %}SSL Certificates (Caddy Auto-HTTPS){% else %}Let's Encrypt Certificates{% endif %} <span class="tooltip-icon" data-bs-toggle="tooltip" title="{% if web_server == 'caddy' %}Caddy automatically manages SSL certificates via ACME. Certificates are auto-renewed before expiry.{% else %}Free SSL/TLS certificates from Let's Encrypt. Certificates expire after 90 days and should be renewed before 30 days remaining.{% endif %}">?</span></span>
         {% if web_server == 'caddy' %}
         <button type="button" class="btn btn-sm" onclick="showConfirm('Reload Caddy', 'Reload Caddy to trigger certificate check?', renewAll)">{{ icon('refresh') }} Reload Caddy</button>
         {% else %}
-        <button type="button" class="btn btn-sm" onclick="showConfirm('SSL Renewal', 'Force renew all certificates?', renewAll)">{{ icon('refresh') }} Renew All</button>
+        <button type="button" class="btn btn-sm" onclick="showConfirm('SSL Renewal', 'Run certbot renew? Only certificates that are due for renewal (30 days or less left) are renewed.', renewAll)">{{ icon('refresh') }} Renew Due</button>
         {% endif %}
     </div>
     <div class="card-body">
@@ -27,14 +30,14 @@
                 </thead>
                 <tbody>
                     {% for cert in (certs or []) %}
-                    <tr{% if cert.days_left <= 7 %} class="problem"{% elif cert.days_left <= 30 %} class="problem is-warn"{% endif %}>
+                    <tr{% if cert.days_left <= crit_days %} class="problem"{% elif cert.days_left <= warn_days %} class="problem is-warn"{% endif %}>
                         <td data-label="Domain" class="name">{{ cert.domain }}</td>
                         <td data-label="Expires" class="num" style="text-align:left">{{ cert.expiry }}</td>
-                        <td data-label="Days Left" class="num{% if cert.days_left <= 7 %} text-err{% elif cert.days_left <= 30 %} text-warn{% endif %}">{{ cert.days_left }}</td>
+                        <td data-label="Days Left" class="num{% if cert.days_left <= crit_days %} text-err{% elif cert.days_left <= warn_days %} text-warn{% endif %}">{{ cert.days_left }}</td>
                         <td data-label="Status">
-                            {% if cert.days_left > 30 %}
+                            {% if cert.days_left > warn_days %}
                                 <span class="badge badge-green"><span class="badge-dot green"></span>valid</span>
-                            {% elif cert.days_left > 7 %}
+                            {% elif cert.days_left > crit_days %}
                                 <span class="badge badge-yellow"><span class="badge-dot yellow"></span>expiring soon</span>
                             {% else %}
                                 <span class="badge badge-red"><span class="badge-dot red"></span>critical</span>
@@ -66,6 +69,9 @@
 
 {% block scripts %}
 <script>
+const SSL_WARN_DAYS = {{ (thresholds or {}).get('ssl_warning_days', 14)|tojson }};
+const SSL_CRIT_DAYS = {{ (thresholds or {}).get('ssl_critical_days', 3)|tojson }};
+
 async function postRenew(payload, startText) {
     document.getElementById('renewOutput').style.display = 'block';
     const log = document.getElementById('renewLog');
@@ -81,7 +87,7 @@ async function postRenew(payload, startText) {
         try { data = await res.json(); } catch (e) { data = {}; }
         ok = res.ok && data.status !== 'error';
         log.textContent = data.output || data.message || (ok ? 'Done.' : 'Request failed (HTTP ' + res.status + ')');
-        showToast(ok ? 'Renewal successful' : (data.message || 'Renewal failed'), ok ? 'success' : 'error');
+        showToast(ok ? (payload.domain ? 'Renewal successful' : 'Renewal check finished (only due certificates were renewed)') : (data.message || 'Renewal failed'), ok ? 'success' : 'error');
     } catch (e) {
         log.textContent = 'Connection error';
         showToast('Connection error', 'error');
@@ -95,7 +101,7 @@ function renewCert(domain, btn) {
 }
 
 function renewAll() {
-    return postRenew({}, 'Renewing all certificates...');
+    return postRenew({}, 'Renewing certificates that are due...');
 }
 
 async function refreshSslTable() {
@@ -117,8 +123,8 @@ async function refreshSslTable() {
         empty.style.display = 'none';
         tbody.innerHTML = certs.map(function(cert) {
             const days = Number(cert.days_left);
-            const badge = days > 30 ? '<span class="badge badge-green"><span class="badge-dot green"></span>valid</span>'
-                : days > 7 ? '<span class="badge badge-yellow"><span class="badge-dot yellow"></span>expiring soon</span>'
+            const badge = days > SSL_WARN_DAYS ? '<span class="badge badge-green"><span class="badge-dot green"></span>valid</span>'
+                : days > SSL_CRIT_DAYS ? '<span class="badge badge-yellow"><span class="badge-dot yellow"></span>expiring soon</span>'
                 : '<span class="badge badge-red"><span class="badge-dot red"></span>critical</span>';
             const domain = cert.domain || '';
             const firstDomain = cert.name || domain.split(' ')[0];
@@ -127,8 +133,8 @@ async function refreshSslTable() {
             {% else %}
             const actionCol = '<button type="button" class="btn btn-sm btn-ghost" data-domain="' + escHtml(firstDomain) + '" onclick="renewCert(this.dataset.domain, this)">Renew</button>';
             {% endif %}
-            const tone = days <= 7 ? ' text-err' : days <= 30 ? ' text-warn' : '';
-            const rowCls = days <= 7 ? ' class="problem"' : days <= 30 ? ' class="problem is-warn"' : '';
+            const tone = days <= SSL_CRIT_DAYS ? ' text-err' : days <= SSL_WARN_DAYS ? ' text-warn' : '';
+            const rowCls = days <= SSL_CRIT_DAYS ? ' class="problem"' : days <= SSL_WARN_DAYS ? ' class="problem is-warn"' : '';
             return '<tr' + rowCls + '><td data-label="Domain" class="name">' + escHtml(domain) + '</td><td data-label="Expires" class="num" style="text-align:left">' + escHtml(cert.expiry || '') +
                 '</td><td data-label="Days Left" class="num' + tone + '">' + escHtml(isNaN(days) ? '' : days) + '</td><td data-label="Status">' + badge +
                 '</td><td data-label="Action" class="r">' + actionCol + '</td></tr>';

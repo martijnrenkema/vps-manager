@@ -50,24 +50,21 @@
 
 {% for v in versions %}
 {% if v.extensions %}
-<div class="card">
-    <div class="card-header d-flex align-items-center justify-content-between">
-        <span>{{ icon('package') }} PHP {{ v.version }} Extensions <span class="card-meta num">{{ v.extensions|length }}</span></span>
-        <button type="button" class="btn btn-sm btn-outline" onclick="toggleExtensions(this)" aria-expanded="false">Show</button>
-    </div>
-    <div class="card-body" style="display:none">
+<details class="card card-collapsible" data-persist="php-extensions-{{ v.version }}">
+    <summary class="card-header">{{ icon('package') }} PHP {{ v.version }} Extensions <span class="summary-hint num">{{ v.extensions|length }}</span></summary>
+    <div class="card-body">
         <div class="tag-list">
             {% for ext in v.extensions %}
             <span class="tag">{{ ext }}</span>
             {% endfor %}
         </div>
     </div>
-</div>
+</details>
 {% endif %}
 {% endfor %}
 
-<div class="card">
-    <div class="card-header">{{ icon('link') }} Site PHP Mapping <span class="tooltip-icon" data-bs-toggle="tooltip" title="Which PHP version each website uses, configured via the Nginx socket path.">?</span></div>
+<details class="card card-collapsible" data-persist="php-site-mapping">
+    <summary class="card-header">{{ icon('link') }} Site PHP Mapping <span class="tooltip-icon" data-bs-toggle="tooltip" title="Which PHP version each website uses, configured via the Nginx socket path.">?</span> <span class="summary-hint">{{ site_mapping|length }} site{{ 's' if site_mapping|length != 1 }}</span></summary>
     <div class="card-body">
         {% if site_mapping %}
         <div class="table-wrap">
@@ -94,23 +91,11 @@
         <div class="empty-state">No PHP-FPM sites found.</div>
         {% endif %}
     </div>
-</div>
+</details>
 {% endblock %}
 
 {% block scripts %}
 <script>
-function toggleExtensions(btn) {
-    var body = btn.closest('.card').querySelector('.card-body');
-    if (body.style.display === 'none') {
-        body.style.display = '';
-        btn.textContent = 'Hide';
-        btn.setAttribute('aria-expanded', 'true');
-    } else {
-        body.style.display = 'none';
-        btn.textContent = 'Show';
-        btn.setAttribute('aria-expanded', 'false');
-    }
-}
 async function restartPhp(version, btn) {
     showConfirm('Restart PHP-FPM', 'Restart PHP ' + version + '-FPM? This may briefly interrupt PHP sites.', async function() {
         var data = await withBusy(btn, function() {
@@ -119,7 +104,7 @@ async function restartPhp(version, btn) {
         if (!data) return;
         var row = btn ? btn.closest('tr') : null;
         if (row) {
-            var statusCell = row.querySelector('td[data-label="Status"]');
+            var statusCell = row.querySelector('td[data-label="FPM Status"]');
             if (statusCell) statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
         }
     });

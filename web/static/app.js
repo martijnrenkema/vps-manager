@@ -501,6 +501,18 @@ function stopConfirmText(kind, names) {
     return msg;
 }
 
+/* After a stop/start/restart, turn the row's Stop button into Start (or back)
+ * so the actions match the new state. fnName is the handler the buttons call
+ * ('serviceAction', 'pm2Action'); the button keeps its data-name. */
+function setRowRunState(row, running, fnName, startClass) {
+    if (!row) return;
+    const btn = row.querySelector('button[onclick^="' + fnName + '(\'stop\'"], button[onclick^="' + fnName + '(\'start\'"]');
+    if (!btn) return;
+    btn.setAttribute('onclick', fnName + "('" + (running ? 'stop' : 'start') + "', this.dataset.name, this)");
+    btn.textContent = running ? 'Stop' : 'Start';
+    btn.className = running ? 'btn btn-sm btn-ghost btn-red' : 'btn btn-sm ' + (startClass || 'btn-primary');
+}
+
 async function pm2Action(action, name, btn, confirmed) {
     if (action === 'stop' && !confirmed) {
         showConfirm('Stop process', stopConfirmText('process', name), function () {
@@ -522,6 +534,10 @@ async function pm2Action(action, name, btn, confirmed) {
                 statusCell.innerHTML = '<span class="badge badge-green"><span class="badge-dot green"></span>online</span>';
             }
         }
+        const running = action !== 'stop';
+        row.classList.toggle('problem', !running);
+        row.classList.toggle('is-warn', !running);
+        setRowRunState(row, running, 'pm2Action');
     } else {
         setTimeout(function () { location.reload(); }, 1500);
     }
@@ -1067,12 +1083,17 @@ const cmdPages = (function buildCmdPages() {
     // Actions
     list.push(
         {
-            label: VPS.webServer === 'caddy' ? 'Reload Caddy' : 'Renew All SSL', type: 'action',
-            keywords: 'certificate https lets encrypt renew caddy',
+            label: VPS.webServer === 'caddy' ? 'Reload Caddy' : 'Renew Due SSL Certificates', type: 'action',
+            keywords: 'certificate https lets encrypt renew caddy all',
             action: function () {
                 showConfirm(VPS.webServer === 'caddy' ? 'Reload Caddy' : 'SSL Renewal',
-                    VPS.webServer === 'caddy' ? 'Reload Caddy to trigger certificate check?' : 'Force renew all certificates?',
-                    function () { apiCall('/ssl/renew', 'POST', {}); });
+                    VPS.webServer === 'caddy' ? 'Reload Caddy to trigger certificate check?'
+                        : 'Run certbot renew? Only certificates that are due for renewal (30 days or less left) are renewed.',
+                    function () {
+                        apiCall('/ssl/renew', 'POST', {}, VPS.webServer === 'caddy' ? {} : { quietSuccess: true }).then(function (data) {
+                            if (data && VPS.webServer !== 'caddy') showToast('Renewal check finished (only due certificates were renewed)', 'success');
+                        });
+                    });
             },
         },
         { label: 'Validate ' + WS_NAME + ' Config', type: 'action', keywords: 'test nginx caddy configuration check validate', action: cmdValidateConfig },
@@ -1403,4 +1424,63 @@ function isInternalNavigation(a, e) {
             updateNotifBadge();
         }
     });
+})();
+
+/* ------------------------------------------------------------------------ *
+ * Collapsible sections (<details class="card card-collapsible"> and
+ * <details class="collapsible-group">).
+ *  - details[data-persist="key"] remembers its open/closed state per browser
+ *  - a section opens by itself when it holds an invalid form field (native
+ *    validation on submit) or when the URL hash points inside it
+ * Collapsed sections stay in the DOM, so forms and scripts keep working.
+ * openSection(el) opens every <details> around el; page scripts use it to
+ * reveal a field that failed server-side validation.
+ * ------------------------------------------------------------------------ */
+const COLLAPSE_PREFIX = 'vpsm-section:';
+
+function openSection(el) {
+    let d = el && el.closest ? el.closest('details') : null;
+    while (d) {
+        if (!d.open) {
+            d._autoOpened = true;
+            d.open = true;
+        }
+        d = d.parentElement ? d.parentElement.closest('details') : null;
+    }
+}
+
+(function initCollapsibleSections() {
+    document.querySelectorAll('details[data-persist]').forEach(function (d) {
+        const key = COLLAPSE_PREFIX + d.dataset.persist;
+        let saved = null;
+        try { saved = localStorage.getItem(key); } catch (e) { /* storage blocked */ }
+        if (saved === '1') d.open = true;
+        else if (saved === '0') d.open = false;
+        d.addEventListener('toggle', function () {
+            // Opened for a validation error or a link: do not remember that.
+            if (d._autoOpened) { d._autoOpened = false; return; }
+            try { localStorage.setItem(key, d.open ? '1' : '0'); } catch (e) { /* storage blocked */ }
+        });
+    });
+
+    // "invalid" does not bubble; capture it so the field is visible before
+    // the browser tries to focus it and show its message.
+    document.addEventListener('invalid', function (e) { openSection(e.target); }, true);
+
+    function openHashTarget() {
+        let target = null;
+        try {
+            target = location.hash.length > 1 ? document.getElementById(decodeURIComponent(location.hash.slice(1))) : null;
+        } catch (e) { target = null; }
+        if (!target) return;
+        const hidden = !!target.closest('details:not([open])');
+        if (target.tagName === 'DETAILS' && !target.open) {
+            target._autoOpened = true;
+            target.open = true;
+        }
+        openSection(target);
+        if (hidden) target.scrollIntoView({ block: 'start' });
+    }
+    openHashTarget();
+    window.addEventListener('hashchange', openHashTarget);
 })();

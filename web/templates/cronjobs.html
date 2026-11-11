@@ -37,12 +37,12 @@
 </div>
 
 <!-- Systemd timers (read-only) -->
-<div class="card">
-    <div class="card-header">{{ icon('clock') }} Systemd timers <span class="tooltip-icon" data-bs-toggle="tooltip" title="Systemd timers are the modern alternative to cron jobs. They are managed by systemd and offer better logging, dependency handling and more precise scheduling. Displayed here as read-only.">?</span></div>
+<details class="card card-collapsible" data-persist="cron-timers">
+    <summary class="card-header">{{ icon('clock') }} Systemd timers <span class="tooltip-icon" data-bs-toggle="tooltip" title="Systemd timers are the modern alternative to cron jobs. They are managed by systemd and offer better logging, dependency handling and more precise scheduling. Displayed here as read-only.">?</span> <span class="summary-hint" id="timerCount"></span></summary>
     <div class="card-body" id="timerSection">
         <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
     </div>
-</div>
+</details>
 
 <!-- Add/Edit dialog -->
 <div class="confirm-overlay" id="cronOverlay">
@@ -59,6 +59,10 @@
             <button type="button" class="btn btn-sm" onclick="setPreset('0 0 1 * *')">Monthly</button>
         </div>
 
+        <!-- Schedule type + raw fields: opened automatically for schedules that match no preset -->
+        <details class="collapsible-group" id="cronAdvanced">
+        <summary>Advanced schedule</summary>
+        <div class="collapsible-body">
         <!-- Special @-schedules replace the five fields -->
         <div class="form-group" style="margin-bottom:12px">
             <label for="cronSpecial" style="font-size:11px">Schedule type</label>
@@ -98,6 +102,8 @@
                 <input type="text" class="form-control" id="cronDow" value="*" placeholder="*" oninput="updateSchedulePreview()" style="text-align:center;font-family:var(--font-mono)">
             </div>
         </div>
+        </div>
+        </details>
 
         <!-- Preview -->
         <div style="background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:10px 12px;margin-bottom:16px;font-size:13px">
@@ -248,6 +254,7 @@ function renderJobList(containerId, jobs, type) {
 
 function renderTimers(timers) {
     const section = document.getElementById('timerSection');
+    document.getElementById('timerCount').textContent = timers.length + ' timer' + (timers.length === 1 ? '' : 's');
     if (!timers.length) {
         section.innerHTML = '<span style="color:var(--text-muted)">No systemd timers</span>';
         return;
@@ -292,6 +299,9 @@ async function postCron(url, body) {
         let data = {};
         try { data = await res.json(); } catch (e) { data = {}; }
         if (res.status === 409) {
+            // The edit was based on a stale list; retrying from the open
+            // dialog would conflict again.
+            closeCronDialog();
             showToast(data.message || 'The crontab changed since the page was loaded. The list has been refreshed, please try again.', 'warning');
             loadCronjobs();
             return null;
@@ -335,6 +345,9 @@ function updateSchedulePreview() {
     document.getElementById('cronHumanPreview').textContent = simpleHumanCron(schedule);
 }
 
+// Schedules offered as preset buttons; anything else needs the advanced fields.
+const CRON_PRESETS = ['* * * * *', '*/5 * * * *', '0 * * * *', '0 0 * * *', '0 0 * * 1', '0 0 1 * *'];
+
 function setPreset(schedule) {
     setSpecial('');
     const parts = schedule.split(' ');
@@ -352,6 +365,7 @@ function showAddDialog(type) {
     document.getElementById('cronEditType').value = type;
     document.getElementById('cronEditIndex').value = '-1';
     setPreset('0 0 * * *');
+    document.getElementById('cronAdvanced').open = false;
     document.getElementById('cronCommand').value = '';
     document.getElementById('cronOverlay').classList.add('active');
     setTimeout(() => document.getElementById('cronCommand').focus(), 100);
@@ -383,6 +397,7 @@ function editCronJob(type, index) {
     }
     document.getElementById('cronCommand').value = job.command;
     updateSchedulePreview();
+    document.getElementById('cronAdvanced').open = !CRON_PRESETS.includes(currentSchedule());
 
     document.getElementById('cronOverlay').classList.add('active');
     setTimeout(() => document.getElementById('cronCommand').focus(), 50);
@@ -409,13 +424,14 @@ async function saveCronJob() {
         ? {type, index, schedule, command, expected: cronEditExpected}
         : {type, schedule, command};
 
-    closeCronDialog();
-
+    // The dialog stays open until the save succeeds, so a validation error
+    // does not throw away what was typed.
     const doSave = async () => {
         await withBusy(document.getElementById('cronSaveBtn'), async () => {
             const r = await postCron(url, body);
             if (!r) return;
             if (r.res.ok && r.data.status !== 'error') {
+                closeCronDialog();
                 showToast(r.data.message || 'Saved', 'success');
                 loadCronjobs();
             } else {

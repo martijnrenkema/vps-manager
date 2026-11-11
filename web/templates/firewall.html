@@ -36,9 +36,9 @@
                 <div class="empty-state">Unable to retrieve UFW status</div>
             {% endif %}
 
-            <!-- Add Rule Form -->
-            <div class="subform">
-                <div class="subform-title">Add rule</div>
+            <!-- Add Rule Form (disclosure) -->
+            <details class="subform" data-persist="fw-add-rule">
+                <summary class="subform-title disclosure">Add rule</summary>
                 <div class="form-row">
                     <div class="form-group w-sm">
                         <label for="ufwPort">Port</label>
@@ -69,7 +69,7 @@
                     </div>
                     <button type="button" class="btn btn-primary" onclick="addUfwRule(this)">Add rule</button>
                 </div>
-            </div>
+            </details>
         </div>
     </div>
     <div class="card">
@@ -104,7 +104,8 @@
                 <div class="empty-state">Unable to retrieve fail2ban status</div>
             {% endif %}
         </div>
-        <div class="card-subhead">Jail configuration <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span></div>
+        <details data-persist="fw-jail-config">
+        <summary class="card-subhead disclosure">Jail configuration <span class="tooltip-icon" data-bs-toggle="tooltip" title="Configuration for the SSHD jail. Ban time is how long an IP stays blocked, find time is the detection window, and max retry is how many attempts are allowed.">?</span>{% if data.f2b_config %} <span class="summary-hint">ban time {{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} (permanent){% endif %}</span>{% endif %}</summary>
         {% if data.f2b_config %}
         <dl class="facts">
             <div><dt>Ban time</dt><dd>{{ data.f2b_config.bantime or '?' }}{% if data.f2b_config.permanent_bans %} <span class="badge badge-red">permanent</span>{% endif %}</dd></div>
@@ -114,15 +115,19 @@
         {% else %}
         <div class="empty-state">Unable to retrieve fail2ban config</div>
         {% endif %}
+        </details>
     </div>
 </div>
 
 <!-- DDoS Detection -->
-<div class="card">
-    <div class="card-header">
+{% set dd = data.ddos %}
+{% set ddos_alarm = dd and (dd.total_connections > dd.conn_threshold or dd.syn_recv > dd.syn_threshold or (dd.top_ips and dd.top_ips[0].count > dd.ip_threshold)) %}
+<details class="card card-collapsible" data-persist="fw-ddos">
+    <summary class="card-header">
         {{ icon('activity') }} DDoS Detection
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Real-time connection monitoring. High connection counts from a single IP or many SYN_RECV connections can indicate a DDoS attack.">?</span>
-    </div>
+        <span class="summary-hint">{% if not dd %}Disabled{% elif ddos_alarm %}<span class="badge badge-red"><span class="badge-dot red"></span>threshold exceeded</span>{% else %}No attack detected · {{ dd.total_connections }} connections{% endif %}</span>
+    </summary>
     <div class="card-body">
         {% if data.ddos %}
         {% set d = data.ddos %}
@@ -167,10 +172,11 @@
             <div class="empty-state">DDoS detection disabled</div>
         {% endif %}
     </div>
-</div>
+</details>
 
-<div class="card">
-    <div class="card-header">{{ icon('users') }} Active SSH sessions</div>
+{% set session_lines = (data.sessions or '').strip().splitlines() %}
+<details class="card card-collapsible" data-persist="fw-ssh-sessions">
+    <summary class="card-header">{{ icon('users') }} Active SSH sessions <span class="summary-hint">{{ session_lines|length }} session{{ 's' if session_lines|length != 1 }}</span></summary>
     <div class="card-body">
         {% if data.sessions %}
             <pre>{{ data.sessions }}</pre>
@@ -178,10 +184,10 @@
             <div class="empty-state">No active sessions</div>
         {% endif %}
     </div>
-</div>
+</details>
 
-<div class="card">
-    <div class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</div>
+<details class="card card-collapsible" data-persist="fw-ssh-attempts">
+    <summary class="card-header">{{ icon('clipboard') }} Recent SSH login attempts</summary>
     <div class="card-body">
         {% if data.auth_log %}
             <pre>{{ data.auth_log }}</pre>
@@ -189,14 +195,14 @@
             <div class="empty-state">Unable to read auth.log</div>
         {% endif %}
     </div>
-</div>
+</details>
 
 <!-- Ban IP -->
-<div class="card">
-    <div class="card-header">
+<details class="card card-collapsible" data-persist="fw-ban-ip">
+    <summary class="card-header">
         {{ icon('ban') }} Ban IP Address
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Permanently ban an IP address via fail2ban and add a UFW deny rule. The IP will be blocked immediately.">?</span>
-    </div>
+    </summary>
     <div class="card-body">
         <div class="form-row">
             <div class="form-group grow">
@@ -218,7 +224,7 @@
             <button type="button" class="btn btn-red" onclick="banIp()" id="banBtn">Ban IP…</button>
         </div>
     </div>
-</div>
+</details>
 
 <!-- Currently Banned IPs (structured) -->
 <div class="card">
@@ -243,11 +249,12 @@
 </div>
 
 <!-- Whitelist Management -->
-<div class="card">
-    <div class="card-header">
+<details class="card card-collapsible" data-persist="fw-whitelist" id="whitelistCard">
+    <summary class="card-header">
         {{ icon('list') }} Fail2ban Whitelist (ignoreip)
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="IPs in this whitelist will never be banned by fail2ban. Always keep 127.0.0.1 and your own IP here to avoid locking yourself out.">?</span>
-    </div>
+        <span class="summary-hint" id="whitelistSummary"></span>
+    </summary>
     <div class="card-body">
         <div id="whitelistContainer">
             <div class="skeleton-stack" aria-busy="true" aria-label="Loading"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
@@ -262,7 +269,7 @@
             <span id="whitelistDirtyHint" class="text-warn" style="align-self:center;font-size:12px" hidden>Unsaved changes</span>
         </div>
     </div>
-</div>
+</details>
 
 {% endblock %}
 
@@ -623,6 +630,15 @@
     function setWhitelistDirty(dirty) {
         whitelistDirty = dirty;
         document.getElementById('whitelistDirtyHint').hidden = !dirty;
+        updateWhitelistSummary();
+    }
+
+    // One-line status in the (collapsible) card header.
+    function updateWhitelistSummary() {
+        const el = document.getElementById('whitelistSummary');
+        if (!el) return;
+        if (!whitelistLoaded) { el.textContent = ''; return; }
+        el.textContent = whitelistIps.length + ' entr' + (whitelistIps.length === 1 ? 'y' : 'ies') + (whitelistDirty ? ' · unsaved changes' : '');
     }
 
     window.addEventListener('beforeunload', function(e) {
@@ -655,6 +671,7 @@
         } catch (e) {
             msg = 'Failed to load whitelist: connection error';
         }
+        document.getElementById('whitelistSummary').textContent = 'could not load';
         container.innerHTML = '<div class="empty-state" role="alert" style="color:var(--red)">' + escHtml(msg) +
             '<div style="margin-top:10px;color:var(--text-muted)">Saving is disabled so the existing list is not overwritten. ' +
             '<button type="button" class="btn btn-sm" onclick="loadWhitelist()">Retry</button></div></div>';
@@ -662,6 +679,7 @@
 
     function renderWhitelist() {
         const container = document.getElementById('whitelistContainer');
+        updateWhitelistSummary();
         if (whitelistIps.length === 0) {
             container.innerHTML = '<div class="muted" style="padding:2px 0 4px">No whitelisted IPs</div>';
             return;
