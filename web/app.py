@@ -499,6 +499,13 @@ class _UncachedResult(Exception):
         self.value = value
 
 
+# Na een mislukte meting (_UncachedResult) niet bij elke aanroep opnieuw
+# proberen: een `du` die steeds op zijn timeout loopt zou anders elke
+# paginalaad minutenlang laten wachten. key -> (fallback, opnieuw-vanaf).
+_cache_failures = {}
+_CACHE_FAIL_RETRY = 60
+
+
 def _cache_key_lock(key):
     with _cache_lock:
         lock = _cache_key_locks.get(key)
@@ -525,12 +532,20 @@ def _cache_compute(key, func, args, kwargs, ttl, max_age):
         # alle wachtende threads alsnog na elkaar opnieuw.
         if entry and (entry is not seen or time.time() - entry[1] < ttl):
             return entry[0]
+        with _cache_lock:
+            failed = _cache_failures.get(key)
+        if failed and time.time() < failed[1]:
+            return entry[0] if entry else failed[0]
         started = time.time()
         try:
             result = func(*args, **kwargs)
         except _UncachedResult as e:
+            with _cache_lock:
+                if _cache_generation.get(key[0], 0) == generation:
+                    _cache_failures[key] = (e.value, time.time() + _CACHE_FAIL_RETRY)
             return entry[0] if entry else e.value
         with _cache_lock:
+            _cache_failures.pop(key, None)
             if _cache_generation.get(key[0], 0) == generation:
                 # (resultaat, tijdstip, max bewaarduur voor _sweep_caches)
                 _cache_store[key] = (result, started, max_age)
@@ -610,6 +625,10 @@ def _invalidate_cache(*func_names):
             _cache_generation[name] = _cache_generation.get(name, 0) + 1
         for key in [k for k in _cache_store if isinstance(k, tuple) and k[0] in names]:
             _cache_store.pop(key, None)
+        # Een expliciete invalidatie (bijv. "Check for updates") moet ook na
+        # een mislukte meting meteen opnieuw mogen proberen.
+        for key in [k for k in _cache_failures if k[0] in names]:
+            _cache_failures.pop(key, None)
 
 
 def _sweep_caches():
