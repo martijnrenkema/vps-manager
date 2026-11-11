@@ -107,9 +107,14 @@ trap 'rm -f "$RSYNC_OUTPUT_FILE" "$VERIFY_OUTPUT_FILE"' EXIT
 
 trap - ERR
 set +e
+# Only skip vps-backup.sh's own in-progress files (database dumps and the
+# checksum manifest are written as *.tmp and renamed). A bare '*.tmp' also
+# dropped site files named *.tmp that the manifest lists, so sha256sum -c
+# failed every day and no snapshot was made.
 rsync -avz --delete --delay-updates --stats \
     --exclude='.vps-backup.lock' \
-    --exclude='*.tmp' \
+    --exclude='/databases/*.tmp' \
+    --exclude='/checksums_*.sha256.tmp' \
     -e "ssh -p $SSH_PORT -o BatchMode=yes -o ConnectTimeout=30" \
     "$VPS:/var/backups/vps/" "$DATA_DIR/" > "$RSYNC_OUTPUT_FILE" 2>&1
 RSYNC_EXIT=$?
