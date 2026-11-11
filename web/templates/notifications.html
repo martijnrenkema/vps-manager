@@ -63,7 +63,8 @@
                 <div class="notif-category">
                     <div class="notif-category-info">
                         <div class="notif-category-title">Critical Errors</div>
-                        <div class="notif-category-desc">Site down, services down, PM2 offline, disk >95%, SSL expired</div>
+                        {% set th = thresholds or {} %}
+                        <div class="notif-category-desc">Site down, services down, PM2 offline, disk &gt;{{ th.get('disk_critical', 95) }}%, SSL expired or &lt;{{ th.get('ssl_critical_days', 3) }} days</div>
                     </div>
                     <div class="notif-channel-cols">
                         <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-critical" aria-label="Critical Errors: push notifications" checked><span class="toggle-slider"></span></label></div>
@@ -74,7 +75,7 @@
                 <div class="notif-category">
                     <div class="notif-category-info">
                         <div class="notif-category-title">Warnings</div>
-                        <div class="notif-category-desc">Disk >80%, RAM >85%, swap >50%, high load, SSL &lt;14 days</div>
+                        <div class="notif-category-desc">Disk &gt;{{ th.get('disk_warning', 80) }}%, RAM &gt;{{ th.get('memory_warning', 85) }}%, swap &gt;{{ th.get('swap_warning', 50) }}%, high load, SSL &lt;{{ th.get('ssl_warning_days', 14) }} days</div>
                     </div>
                     <div class="notif-channel-cols">
                         <div class="notif-channel-col"><label class="toggle-switch"><input type="checkbox" id="pref-push-warnings" aria-label="Warnings: push notifications" checked><span class="toggle-slider"></span></label></div>
@@ -147,18 +148,19 @@
     </div>
 
     <!-- All Active Subscriptions -->
-    <div class="card">
-        <div class="card-header">
+    <details class="card card-collapsible" data-persist="notif-subscriptions">
+        <summary class="card-header">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 3h-8l-2 4h12z"/></svg>
             Active Subscriptions
-        </div>
+            <span class="summary-hint" id="subs-count"></span>
+        </summary>
         <div class="card-body">
             <p style="color:var(--text-secondary);font-size:13px;margin-bottom:16px;">Manage all registered notification endpoints. You can edit labels and preferences for any device, including ones you can't access directly.</p>
             <div id="subs-list">
                 <div class="skeleton-stack" aria-busy="true" aria-label="Loading subscriptions"><div class="skeleton skeleton-row"></div><div class="skeleton skeleton-row"></div></div>
             </div>
         </div>
-    </div>
+    </details>
 </div>
 
 <!-- Modal for editing subscription preferences -->
@@ -425,6 +427,7 @@
 
     function renderSubscriptions() {
         const container = document.getElementById('subs-list');
+        document.getElementById('subs-count').textContent = allSubscriptions.length + ' device' + (allSubscriptions.length === 1 ? '' : 's');
         if (!allSubscriptions.length) {
             container.innerHTML = '<p style="color:var(--text-muted);font-size:13px;">No active subscriptions.</p>';
             return;

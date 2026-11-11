@@ -22,8 +22,8 @@
     </div>
 </div>
 
-<div class="card">
-    <div class="card-header">{{ icon('globe') }} Network Interfaces <span class="tooltip-icon" data-bs-toggle="tooltip" title="Physical and virtual network adapters on the server with their IP addresses and traffic statistics.">?</span></div>
+<details class="card card-collapsible" data-persist="network-interfaces">
+    <summary class="card-header">{{ icon('globe') }} Network Interfaces <span class="tooltip-icon" data-bs-toggle="tooltip" title="Physical and virtual network adapters on the server with their IP addresses and traffic statistics.">?</span> <span class="summary-hint">{{ interfaces|selectattr('state', 'equalto', 'up')|list|length }} of {{ interfaces|length }} up</span></summary>
     <div class="card-body">
         {% if interfaces %}
         <div class="table-wrap">
@@ -58,7 +58,7 @@
         <div class="empty-state">Unable to retrieve network interfaces.</div>
         {% endif %}
     </div>
-</div>
+</details>
 
 <div class="card">
     <div class="card-header">{{ icon('server') }} Listening Ports <span class="tooltip-icon" data-bs-toggle="tooltip" title="Services currently accepting network connections. Shows which process owns each port.">?</span></div>

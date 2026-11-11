@@ -692,6 +692,17 @@ async function dashServiceAction(action, name, btn, confirmed) {
             : '<span class="badge badge-green"><span class="badge-dot green"></span>active</span>';
     }
     row.classList.toggle('problem', action === 'stop');
+    // Running rows offer Restart + Stop, stopped rows only Start (as rendered).
+    const actions = row.querySelector('.row-act');
+    if (actions) {
+        const n = escHtml(name);
+        actions.innerHTML = action === 'stop'
+            ? '<button type="button" class="btn btn-sm" data-name="' + n + '" onclick="dashServiceAction(\'start\', this.dataset.name, this)">Start</button>'
+            : '<button type="button" class="btn btn-sm btn-ghost" data-name="' + n + '" onclick="dashServiceAction(\'restart\', this.dataset.name, this)">Restart</button>' +
+              '<button type="button" class="btn btn-sm btn-ghost btn-red" data-name="' + n + '" onclick="dashServiceAction(\'stop\', this.dataset.name, this)">Stop</button>';
+        const first = actions.querySelector('button');
+        if (first && document.activeElement === document.body) first.focus();
+    }
 }
 
 // Kept for older callers

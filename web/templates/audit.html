@@ -9,12 +9,13 @@
         <button type="button" class="filter-btn active" data-filter="" onclick="filterAction(this, '')">All</button>
         <button type="button" class="filter-btn" data-filter="login" onclick="filterAction(this, 'login')">Login</button>
         <button type="button" class="filter-btn" data-filter="logout" onclick="filterAction(this, 'logout')">Logout</button>
-        <button type="button" class="filter-btn" data-filter="config_update" onclick="filterAction(this, 'config_update')">Config</button>
-        <button type="button" class="filter-btn" data-filter="service_restart" onclick="filterAction(this, 'service_restart')">Services</button>
-        <button type="button" class="filter-btn" data-filter="firewall_ban" onclick="filterAction(this, 'firewall_ban')">Firewall</button>
+        {# Each chip matches a family of action-name prefixes (comma-separated). #}
+        <button type="button" class="filter-btn" data-filter="config_update,smtp_settings_saved,email_notification_prefs_saved" onclick="filterAction(this, this.dataset.filter)">Config</button>
+        <button type="button" class="filter-btn" data-filter="service_,auto_heal_" onclick="filterAction(this, this.dataset.filter)">Services</button>
+        <button type="button" class="filter-btn" data-filter="firewall_,ufw_" onclick="filterAction(this, this.dataset.filter)">Firewall</button>
         <button type="button" class="filter-btn" data-filter="file_" onclick="filterAction(this, 'file_')">Files</button>
         <button type="button" class="filter-btn" data-filter="cronjob_" onclick="filterAction(this, 'cronjob_')">Cronjobs</button>
-        <button type="button" class="filter-btn" data-filter="nginx_" onclick="filterAction(this, 'nginx_')">Nginx</button>
+        <button type="button" class="filter-btn" data-filter="nginx_,caddy_" onclick="filterAction(this, this.dataset.filter)">{{ 'Caddy' if web_server == 'caddy' else 'Nginx' }}</button>
     </div>
     <div class="btn-group">
         <input type="text" class="form-control form-control-sm" id="auditSearch" placeholder="Search…" aria-label="Search audit log" style="width:200px" oninput="renderAuditLog()">
@@ -80,6 +81,11 @@ const actionColors = {
     'nginx_config_save': 'var(--accent)',
     'nginx_config_enable': 'var(--green)',
     'nginx_config_disable': 'var(--red)',
+    'caddy_config_save': 'var(--accent)',
+    'caddy_config_enable': 'var(--green)',
+    'caddy_config_disable': 'var(--red)',
+    'ufw_add_rule': 'var(--accent)',
+    'ufw_delete_rule': 'var(--red)',
     'audit_clear': 'var(--text-muted)',
 };
 
@@ -109,7 +115,8 @@ function renderAuditLog() {
     let filtered = auditData;
 
     if (currentFilter) {
-        filtered = filtered.filter(e => e.action && e.action.startsWith(currentFilter));
+        const prefixes = currentFilter.split(',');
+        filtered = filtered.filter(e => e.action && prefixes.some(p => e.action.startsWith(p)));
     }
 
     if (search) {

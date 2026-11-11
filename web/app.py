@@ -346,9 +346,12 @@ TERMINAL_SUDO_READONLY = {
 TERMINAL_SUDO_BLOCKED_OPTIONS = {
     'journalctl': ('--vacuum', '--rotate', '--flush', '--sync', '--relinquish',
                    '--smart-relinquish', '--setup-keys', '--update-catalog'),
-    'ss': ('--kill',),
+    'ss': ('-K', '--kill'),
     'systemctl': ('-H', '--host', '-M', '--machine'),
 }
+# Tekens waarmee bash een argument na de check nog verandert (expansie,
+# quoting); in een sudo-segment niet toegestaan.
+TERMINAL_SUDO_SHELL_CHARS = frozenset('$`\'"\\{}')
 # Commando's die met sudo alleen met deze (alleen-lezen) subcommando's mogen
 TERMINAL_SUDO_SUBCOMMANDS = {
     'systemctl': {'status', 'is-active', 'is-enabled', 'is-failed', 'list-units',
@@ -361,14 +364,35 @@ TERMINAL_SUDO_SUBCOMMANDS = {
 }
 
 
-def _terminal_sudo_allowed(tokens):
-    """tokens = het commando ná 'sudo'."""
+def _terminal_sudo_allowed(tokens, raw=None):
+    """tokens = het commando ná 'sudo' (shlex); raw = hetzelfde stuk als
+    ruwe tekst, zoals bash het straks interpreteert (optioneel)."""
+    # De tokens zijn de shlex-lezing, maar bash expandeert de ruwe tekst:
+    # "--vac$Z""uum-time=1s" wordt pas na de check --vacuum-time=1s. Bij
+    # een mislukte shlex-split (fallback op .split()) blijven de quotes in
+    # de tokens staan, dus ook daar controleren.
+    if raw is not None and TERMINAL_SUDO_SHELL_CHARS.intersection(raw):
+        return False
+    if any(TERMINAL_SUDO_SHELL_CHARS.intersection(t) for t in tokens):
+        return False
     name, args = tokens[0], tokens[1:]
+    blocked = TERMINAL_SUDO_BLOCKED_OPTIONS.get(name, ())
+    blocked_long = tuple(o for o in blocked if o.startswith('--'))
+    blocked_short = {o[1] for o in blocked if len(o) == 2 and o[0] == '-' and o[1] != '-'}
     for arg in args:
-        if arg.startswith(TERMINAL_SUDO_BLOCKED_OPTIONS.get(name, ())):
+        # Een glob die met '-' of een glob-teken begint kan na expansie een
+        # optie worden (bestand "--host=x" in de cwd); /var/log/*.log niet.
+        if arg[:1] in ('-', '*', '?', '[') and any(c in arg for c in '*?['):
             return False
-        # ss -K / -tK (gecombineerde korte opties): sockets killen
-        if name == 'ss' and arg.startswith('-') and not arg.startswith('--') and 'K' in arg:
+        if arg.startswith(blocked):
+            return False
+        if arg.startswith('--'):
+            # getopt accepteert elke eenduidige afkorting: --rot = --rotate
+            opt = arg.split('=', 1)[0]
+            if len(opt) > 2 and any(o.startswith(opt) for o in blocked_long):
+                return False
+        elif arg.startswith('-') and blocked_short.intersection(arg[1:]):
+            # Gecombineerde korte opties: ss -tK, systemctl -lH host
             return False
     if name in TERMINAL_SUDO_READONLY:
         return True
@@ -464,6 +488,24 @@ _cache_refreshing = set()
 _cache_generation = {}
 
 
+class _UncachedResult(Exception):
+    """Door een _ttl_cache-functie te raisen bij een mislukte meting (timeout,
+    commando faalt): de cache slaat niets op en geeft de vorige entry terug
+    als die er nog is, anders `value`. Zo wordt een mislukking niet een
+    half uur als echte data ("geen updates") bewaard."""
+
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+
+# Na een mislukte meting (_UncachedResult) niet bij elke aanroep opnieuw
+# proberen: een `du` die steeds op zijn timeout loopt zou anders elke
+# paginalaad minutenlang laten wachten. key -> (fallback, opnieuw-vanaf).
+_cache_failures = {}
+_CACHE_FAIL_RETRY = 60
+
+
 def _cache_key_lock(key):
     with _cache_lock:
         lock = _cache_key_locks.get(key)
@@ -478,15 +520,32 @@ def _cache_compute(key, func, args, kwargs, ttl, max_age):
     Wachtende threads die de lock daarna krijgen zien de verse entry en
     rekenen niet opnieuw.
     """
+    with _cache_lock:
+        seen = _cache_store.get(key)
     with _cache_key_lock(key):
         with _cache_lock:
             entry = _cache_store.get(key)
             generation = _cache_generation.get(key[0], 0)
-        if entry and time.time() - entry[1] < ttl:
+        # Een entry die opgeslagen is terwijl we op de lock wachtten is net
+        # berekend: die ook accepteren als de berekening langer duurde dan de
+        # ttl (het opgeslagen tijdstip is dat van de start), anders rekenen
+        # alle wachtende threads alsnog na elkaar opnieuw.
+        if entry and (entry is not seen or time.time() - entry[1] < ttl):
             return entry[0]
-        started = time.time()
-        result = func(*args, **kwargs)
         with _cache_lock:
+            failed = _cache_failures.get(key)
+        if failed and time.time() < failed[1]:
+            return entry[0] if entry else failed[0]
+        started = time.time()
+        try:
+            result = func(*args, **kwargs)
+        except _UncachedResult as e:
+            with _cache_lock:
+                if _cache_generation.get(key[0], 0) == generation:
+                    _cache_failures[key] = (e.value, time.time() + _CACHE_FAIL_RETRY)
+            return entry[0] if entry else e.value
+        with _cache_lock:
+            _cache_failures.pop(key, None)
             if _cache_generation.get(key[0], 0) == generation:
                 # (resultaat, tijdstip, max bewaarduur voor _sweep_caches)
                 _cache_store[key] = (result, started, max_age)
@@ -535,7 +594,10 @@ def _ttl_cache(seconds, stale=None):
                 hash(key)
             except TypeError:
                 # Niet-hashbare args: cache deze aanroep niet
-                return func(*args, **kwargs)
+                try:
+                    return func(*args, **kwargs)
+                except _UncachedResult as e:
+                    return e.value
             with _cache_lock:
                 entry = _cache_store.get(key)
             if entry:
@@ -563,6 +625,10 @@ def _invalidate_cache(*func_names):
             _cache_generation[name] = _cache_generation.get(name, 0) + 1
         for key in [k for k in _cache_store if isinstance(k, tuple) and k[0] in names]:
             _cache_store.pop(key, None)
+        # Een expliciete invalidatie (bijv. "Check for updates") moet ook na
+        # een mislukte meting meteen opnieuw mogen proberen.
+        for key in [k for k in _cache_failures if k[0] in names]:
+            _cache_failures.pop(key, None)
 
 
 def _sweep_caches():
@@ -1053,6 +1119,12 @@ def _monitor_loop():
     logger.info("Push notification monitor started")
 
     first_cycle = True
+    # Stil seeden mag alleen bij een echte eerste start (nog geen
+    # notification_log.json op schijf), niet zodra de log toevallig leeg is:
+    # anders wordt een service die na een reboot niet opkomt nooit gemeld.
+    # Wordt False na een cyclus zonder ontvangers, zodat de alerts voor een
+    # nieuwe eerste abonnee wél verstuurd worden.
+    seed_on_first_cycle = True
     while True:
         cycle_start = time.time()
         try:
@@ -1078,6 +1150,7 @@ def _monitor_loop():
             email_prefs_any = any(CONFIG.get('email_notifications', {}).values())
             auto_heal_enabled = CONFIG.get('auto_heal', {}).get('enabled', False)
             if not subs and not email_prefs_any and not auto_heal_enabled:
+                seed_on_first_cycle = False
                 time.sleep(_monitor_sleep_seconds())
                 continue
 
@@ -1095,6 +1168,7 @@ def _monitor_loop():
                 logger.warning(f"Auto-heal error: {e}")
 
             if not subs and not email_prefs_any:
+                seed_on_first_cycle = False
                 time.sleep(_monitor_sleep_seconds())
                 continue
 
@@ -1195,7 +1269,8 @@ def _monitor_loop():
                                 notif_log[f"_daily_email:{alert_key}"] = today_str
                                 log_changed = True
 
-                    if first_cycle and not notif_log:
+                    if (first_cycle and seed_on_first_cycle
+                            and not NOTIFICATION_LOG_PATH.exists()):
                         email_prefs = CONFIG.get('email_notifications', {})
                         for alert in alerts:
                             category = _classify_alert(alert)
@@ -1403,7 +1478,10 @@ def _monitor_loop():
                     ts = v.get('ts', 0) if isinstance(v, dict) else v
                     if now - ts < 604800:
                         cleaned[k] = v
-                if len(cleaned) != len(notif_log) or log_changed:
+                # Ook een lege log wegschrijven als het bestand nog niet bestaat,
+                # zodat de volgende start niet opnieuw als eerste start geldt.
+                if (len(cleaned) != len(notif_log) or log_changed
+                        or not NOTIFICATION_LOG_PATH.exists()):
                     _save_notification_log(cleaned)
 
             # Pas na een geslaagde cyclus: faalde de eerste cyclus vóór het
@@ -1425,11 +1503,15 @@ def get_server_ip():
     """Get the public IP of this server (cached)"""
     global _server_ip
     if _server_ip is None:
-        result = subprocess.run(
-            "hostname -I | awk '{print $1}'",
-            shell=True, capture_output=True, text=True, timeout=5
-        )
-        _server_ip = result.stdout.strip() if result.returncode == 0 and result.stdout.strip() else '?'
+        # Via run_cmd: een timeout geeft een mislukt resultaat i.p.v. een
+        # exception (deze functie draait in een context processor, dus op
+        # elke pagina). Een mislukking niet cachen: vlak na boot kan het
+        # netwerk nog niet up zijn.
+        result = run_cmd("hostname -I | awk '{print $1}'", timeout=5)
+        ip = result.stdout.strip() if result.returncode == 0 else ''
+        if not ip:
+            return '?'
+        _server_ip = ip
     return _server_ip
 
 
@@ -1676,11 +1758,17 @@ def _run(args, shell, timeout, input=None, max_output=_DEFAULT_MAX_OUTPUT):
       UnicodeDecodeError → 500.
     - Output is begrensd (max_output per stream): `cat /dev/zero` in de
       terminal kon anders gigabytes in het geheugen van de app laten lopen.
+    - Vaste locale: veel parsers zoeken op Engelse output (ufw "Status:
+      active", `free` "Mem:", "No such file"). C.UTF-8 i.p.v. C zodat
+      UTF-8 bestandsnamen en systemctl-tekens gewoon doorkomen.
     """
+    env = dict(os.environ, LC_ALL='C.UTF-8', LANG='C.UTF-8')
+    # LANGUAGE kan bij gettext voorgaan op LC_ALL en alsnog vertalen
+    env.pop('LANGUAGE', None)
     try:
         proc = subprocess.Popen(
             args, shell=shell, stdin=subprocess.PIPE if input is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, env=env,
         )
     except OSError as e:
         return _CmdFailed(str(e), returncode=127)
@@ -2025,7 +2113,7 @@ def send_email(subject, body_text, body_html=None, to=None):
     from_name = smtp_cfg.get('from_name', '')
 
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = subject
+    msg['Subject'] = ' '.join(str(subject).split())
     msg['From'] = formataddr((from_name, from_addr)) if from_name else from_addr
     msg['To'] = to_addr
     msg.attach(MIMEText(body_text, 'plain'))
@@ -2104,7 +2192,9 @@ def send_notification_email(category, alert):
     message = alert.get('message', '')
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    subject = f'VPS Manager - {cat_label}: {message[:80]}'
+    # Witruimte samenvoegen: een newline in de Subject-header laat
+    # as_string() falen, en dan wordt elke cyclus opnieuw geprobeerd.
+    subject = f"VPS Manager - {cat_label}: {' '.join(message.split())[:80]}"
     body_text = f'{cat_label}\n\n{message}\n\nTime: {timestamp}'
 
     safe_msg = html_mod.escape(message)
@@ -2287,6 +2377,12 @@ def login():
                         code = _generate_email_code()
                         ok, err = _send_2fa_code_email(code)
                         if not ok:
+                            # Niet-verstuurde code weggooien: anders toont de
+                            # volgende poging het codeformulier (en een
+                            # cooldown) voor een mail die nooit verstuurd is.
+                            with _email_2fa_lock:
+                                if _email_2fa_code.get('code') == code:
+                                    _email_2fa_code.clear()
                             app.logger.error('Email 2FA send failed: %s', err)
                             flash('Could not send verification email. Check SMTP settings on the server.', 'danger')
                             return render_template('login.html', show_2fa=False)
@@ -2330,6 +2426,7 @@ def resend_2fa_code():
             return jsonify({'status': 'error', 'message': f'Wait {remaining}s before resending'}), 429
         # Generate code inside lock to prevent TOCTOU race
         code = str(secrets.SystemRandom().randint(100000, 999999))
+        previous = dict(_email_2fa_code)
         _email_2fa_code.clear()
         _email_2fa_code.update({
             'code': code,
@@ -2340,6 +2437,13 @@ def resend_2fa_code():
 
     ok, err = _send_2fa_code_email(code)
     if not ok:
+        # Vorige (wel verstuurde) code terugzetten en geen cooldown laten
+        # staan voor een mail die nooit aankwam.
+        with _email_2fa_lock:
+            if _email_2fa_code.get('code') == code:
+                _email_2fa_code.clear()
+                _email_2fa_code.update(previous)
+        app.logger.error('Email 2FA resend failed: %s', err)
         return jsonify({'status': 'error', 'message': 'Could not send email'}), 500
     return jsonify({'status': 'ok', 'message': 'Code sent'})
 
@@ -3007,22 +3111,39 @@ def get_services_status():
 
     # Get all known unit files to determine which services are actually installed
     unit_result = run_cmd(
-        "systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1}'"
+        "systemctl list-unit-files --type=service --no-legend 2>/dev/null | awk '{print $1, $2}'"
     )
     installed_units = set()
+    enabled_units = set()
     if unit_result.returncode == 0:
-        for u in unit_result.stdout.strip().split('\n'):
-            installed_units.add(u.strip().replace('.service', ''))
+        for line in unit_result.stdout.strip().split('\n'):
+            parts = line.split()
+            if not parts:
+                continue
+            unit = parts[0].replace('.service', '')
+            installed_units.add(unit)
+            if len(parts) > 1 and parts[1].startswith('enabled'):
+                enabled_units.add(unit)
+
+    def _installed(svc):
+        # Een template-instance (postgresql@16-main) staat in list-unit-files
+        # alleen als template (postgresql@.service).
+        return svc in installed_units or ('@' in svc and svc.split('@', 1)[0] + '@' in installed_units)
 
     default_services = CONFIG.get('services', ['nginx', 'php8.3-fpm', 'mariadb', 'fail2ban'])
     # Filter default services to only those actually installed
-    services = [s for s in default_services if s in installed_units]
+    services = [s for s in default_services if _installed(s)]
     seen = set(services)
 
-    for svc in active_services:
-        svc = svc.strip().replace('.service', '')
-        if not svc:
-            continue
+    # Auto-discovery uit de geïnstalleerde units (actief óf enabled), niet
+    # alleen uit de actieve: een gestopte service verdween anders uit de
+    # lijst i.p.v. als "down" te verschijnen (geen alert, geen auto-heal).
+    # Uitgeschakelde en niet-actieve units horen niet te draaien (bijv.
+    # ssh.service bij socket-activatie, een oude PHP-versie). Actieve eerst,
+    # zodat de PHP-dedup hieronder bij voorkeur een draaiende versie houdt.
+    active_set = {s.strip().replace('.service', '') for s in active_services if s.strip()}
+    candidates = sorted(active_set) + sorted((enabled_units & installed_units) - active_set)
+    for svc in candidates:
         if 'php' in svc and 'fpm' in svc and svc not in seen:
             services.append(svc)
             seen.add(svc)
@@ -3033,7 +3154,7 @@ def get_services_status():
     # Deduplicate auto-discovered PHP-FPM versions
     final_services = []
     php_auto_found = False
-    configured_set = set(s for s in default_services if s in installed_units)
+    configured_set = set(s for s in default_services if _installed(s))
     for svc in services:
         if 'php' in svc and 'fpm' in svc and svc not in configured_set:
             if php_auto_found:
@@ -3122,9 +3243,13 @@ def get_backup_status():
     data = {'log': '', 'size': '', 'db_backups': '', 'status': None, 'history': [],
             'backup_files': [], 'db_files': [], 'site_backups': []}
 
-    result = run_cmd_safe(["tail", "-5", log_path])
-    if result.returncode == 0:
-        data['log'] = result.stdout.strip()
+    # Ook een al opgeslagen log_path controleren: update_config valideert
+    # alleen gewijzigde waarden, dus een oud pad naar bijv. data/config.json
+    # zou hier anders nog steeds getoond worden.
+    if isinstance(log_path, str) and _is_valid_backup_log_path(log_path):
+        result = run_cmd_safe(["tail", "-5", log_path])
+        if result.returncode == 0:
+            data['log'] = result.stdout.strip()
 
     result = run_cmd_safe(["du", "-sh", backup_dir])
     if result.returncode == 0:
@@ -3298,6 +3423,9 @@ def _seconds_to_human(seconds):
         return str(seconds)
 
 
+_UFW_ATTRIB_RE = re.compile(r'\s*\(((?:log-all|log|out)(?:,\s*(?:log-all|log|out))*)\)$')
+
+
 def parse_ufw_rules(ufw_output):
     """Parse 'sudo ufw status numbered' output into a list of dicts"""
     rules = []
@@ -3321,6 +3449,15 @@ def parse_ufw_rules(ufw_output):
                 comment = comment.strip()
             else:
                 from_addr = from_and_comment
+            # ufw zet attributen achter de From-kolom: " (log)", " (log-all)"
+            # en in de genummerde lijst ook " (out)" / " (log, out)". Apart
+            # houden, anders klopt `from_addr == 'Anywhere'` niet meer.
+            log = ''
+            attrib = _UFW_ATTRIB_RE.search(from_addr)
+            if attrib:
+                from_addr = from_addr[:attrib.start()].strip() or 'Anywhere'
+                log = next((a.strip() for a in attrib.group(1).split(',')
+                            if a.strip().startswith('log')), '')
             v6 = '(v6)' in to or '(v6)' in from_addr
             rules.append({
                 'number': number,
@@ -3329,6 +3466,7 @@ def parse_ufw_rules(ufw_output):
                 'direction': direction,
                 'from_addr': from_addr.replace('(v6)', '').strip(),
                 'v6': v6,
+                'log': log,
                 'comment': comment,
             })
     return rules
@@ -3355,11 +3493,22 @@ def _tail_file_lines(path, max_bytes):
     return [line for line in lines if line.strip()]
 
 
+_LOG_IP_PORT_RE = re.compile(r'\bfrom\s+([0-9a-fA-F:.]+[0-9a-fA-F])\s+port\s+\d+')
+_LOG_IP_RE = re.compile(r'\bfrom\s+([0-9a-fA-F:.]+[0-9a-fA-F])')
+
+
 def _extract_log_ip(line):
-    """IPv4- of IPv6-adres na 'from' in een auth.log-regel, of ''."""
-    m = re.search(r'from\s+([0-9a-fA-F:.]+[0-9a-fA-F])', line)
-    if m and _is_valid_ip(m.group(1)):
-        return m.group(1)
+    """IPv4- of IPv6-adres na 'from' in een auth.log-regel, of ''.
+
+    De láátste 'from <ip> port <n>' telt: sshd logt de (door de aanvaller
+    gekozen) gebruikersnaam ervóór, dus "Invalid user x from 8.8.8.8 from
+    45.1.2.3 port 5555" komt van 45.1.2.3. Zonder port-deel de laatste
+    'from <ip>'.
+    """
+    for regex in (_LOG_IP_PORT_RE, _LOG_IP_RE):
+        for m in reversed(list(regex.finditer(line))):
+            if _is_valid_ip(m.group(1)):
+                return m.group(1)
     return ''
 
 
@@ -3601,7 +3750,8 @@ def get_system_updates():
     # LC_ALL=C: de parsers hieronder zoeken op Engelse apt-teksten
     result = run_cmd("LC_ALL=C apt list --upgradable 2>/dev/null", timeout=60)
     if result.returncode != 0:
-        return []
+        # Niet als "geen updates" cachen (zie _UncachedResult)
+        raise _UncachedResult([])
 
     # Detect phased packages via simulated upgrade. Koptekst verschilt per
     # apt-versie: "...have been kept back / deferred due to phasing:" (oud)
@@ -3937,7 +4087,8 @@ def get_disk_per_site():
     # boom een tweede keer met `du -sh /var/www/` af te lopen.
     result = run_cmd("du -sk /var/www/*/ 2>/dev/null", timeout=120)
     if not result.stdout.strip():
-        return [], ''
+        # Timeout of geen output: niet uren als lege lijst cachen
+        raise _UncachedResult(([], ''))
 
     sites = []
     total_kb = 0
@@ -4266,6 +4417,19 @@ def _audit_check(key, label, status, details='', recommendation=''):
 _EXPECTED_PUBLIC_PORTS = {'22', '80', '443'}
 
 
+def _is_loopback_bind(addr):
+    """True als een ss-adres (127.0.0.1, [::1], 127.0.0.53%lo,
+    [::ffff:127.0.0.1]) alleen lokaal bereikbaar is."""
+    addr = addr.strip('[]').split('%', 1)[0]
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return False  # '*' en onbekende vormen: publiek
+    if getattr(ip, 'ipv4_mapped', None):
+        ip = ip.ipv4_mapped
+    return ip.is_loopback
+
+
 @_ttl_cache(600, stale=3600)
 def get_security_audit():
     """Run a set of hardening checks and return them with a score.
@@ -4276,12 +4440,17 @@ def get_security_audit():
 
     # --- SSH daemon hardening (effective config via sshd -T) ---
     sshd_cfg = {}
+    # sshd -T geeft één 'port N'-regel per poort; in de dict zou alleen de
+    # laatste overblijven en de andere SSH-poort "onverwacht" heten.
+    ssh_ports = set()
     result = run_cmd("sudo sshd -T 2>/dev/null", timeout=10)
     if result.returncode == 0 and result.stdout.strip():
         for line in result.stdout.split('\n'):
             parts = line.split(None, 1)
             if len(parts) == 2:
                 sshd_cfg[parts[0].lower()] = parts[1].strip().lower()
+                if parts[0].lower() == 'port' and parts[1].strip().isdigit():
+                    ssh_ports.add(parts[1].strip())
 
     if sshd_cfg:
         v = sshd_cfg.get('permitrootlogin', 'unknown')
@@ -4302,7 +4471,7 @@ def get_security_audit():
                                        f'PasswordAuthentication is {v}',
                                        'Use SSH keys and set "PasswordAuthentication no" to stop brute-force attempts'))
 
-        port = sshd_cfg.get('port', '22')
+        port = ', '.join(sorted(ssh_ports, key=int)) or sshd_cfg.get('port', '22')
         checks.append(_audit_check('ssh_port', 'SSH port', 'info', f'sshd listens on port {port}'))
     else:
         checks.append(_audit_check('ssh_config', 'SSH configuration', 'info',
@@ -4340,13 +4509,20 @@ def get_security_audit():
 
     # --- Pending security updates ---
     try:
-        sec_updates = [u for u in get_system_updates() if u['category'] == 'security']
+        updates = get_system_updates()
+        # Een mislukte `apt list` wordt niet gecachet: leeg resultaat zonder
+        # cache-entry betekent "niet kunnen controleren", niet "niets te doen".
+        updates_known = bool(updates) or _peek_cache('get_system_updates') is not None
     except Exception:
-        sec_updates = []
+        updates, updates_known = [], False
+    sec_updates = [u for u in updates if u['category'] == 'security']
     if sec_updates:
         checks.append(_audit_check('security_updates', 'Pending security updates', 'warn',
                                    f'{len(sec_updates)} security update(s) waiting',
                                    'Install them from the Updates page'))
+    elif not updates_known:
+        checks.append(_audit_check('security_updates', 'Pending security updates', 'warn',
+                                   'Could not check for updates (apt list failed)'))
     else:
         checks.append(_audit_check('security_updates', 'Pending security updates', 'ok',
                                    'No security updates pending'))
@@ -4410,10 +4586,13 @@ def get_security_audit():
         for p in net.get('ports', []):
             local = p.get('local', '')
             addr = local.rsplit(':', 1)[0] if ':' in local else local
-            if addr in ('0.0.0.0', '[::]', '*', '::'):
+            # Alles behalve loopback telt als publiek: ook een bind op het
+            # publieke adres van de server (bijv. MariaDB op 212.x.x.x:3306),
+            # niet alleen 0.0.0.0 / [::] / *.
+            if not _is_loopback_bind(addr):
                 public_ports.setdefault(p.get('port', '?'), p.get('process') or '?')
         # Een verplaatste SSH-poort (sshd -T) is verwacht, niet "onverwacht"
-        expected = set(_EXPECTED_PUBLIC_PORTS) | {p for p in sshd_cfg.get('port', '').split() if p.isdigit()}
+        expected = set(_EXPECTED_PUBLIC_PORTS) | ssh_ports
         unexpected = {port: proc for port, proc in public_ports.items()
                       if port not in expected}
         if unexpected:
@@ -4565,11 +4744,13 @@ def _check_site_uptime(domain):
             except urllib.error.HTTPError as e:
                 if e.code == 405 and method == 'HEAD':
                     continue  # Try GET
-                # Got an HTTP response (even if error), site is reachable
+                # Got an HTTP response (even if error), site is reachable.
+                # Ook hier de responstijd meten: 0 trok het gemiddelde en de
+                # grafiek omlaag bij sites achter een login (401/403).
                 return {
                     'domain': domain,
                     'status_code': e.code,
-                    'response_ms': 0,
+                    'response_ms': round((time.time() - start) * 1000),
                     'is_up': e.code < 500,
                 }
             except Exception:
@@ -4732,6 +4913,32 @@ _PROTECTED_DIRS = tuple(sorted({
     os.path.realpath(os.path.dirname(os.path.abspath(__file__))),
     os.path.realpath(DATA_DIR),
 }))
+
+
+def _is_protected_path(path):
+    """True als path (na realpath) een beschermde map is of erin ligt."""
+    try:
+        norm = os.path.realpath(path)
+    except (OSError, ValueError):
+        return True
+    return any(norm == p or norm.startswith(p + '/') for p in _PROTECTED_DIRS)
+
+
+def _contains_protected_dir(path):
+    """True als een beschermde map op of onder path ligt (na realpath).
+
+    is_path_allowed() weigert alleen doelen ín een beschermde map; voor
+    recursieve acties (verwijderen, verplaatsen, chmod -R, inpakken) op
+    bijv. /var/www moet ook gekeken worden of de manager eronder staat.
+    Een fout bij het resolven telt als beschermd.
+    """
+    try:
+        norm = os.path.realpath(path)
+    except (OSError, ValueError):
+        return True
+    if norm == '/':
+        return True
+    return any(p == norm or p.startswith(norm + '/') for p in _PROTECTED_DIRS)
 
 
 def is_path_allowed(path):
@@ -4956,7 +5163,7 @@ def pm2_logs(name):
 @login_required
 def ssl():
     certs = get_ssl_info()
-    return render_template('ssl.html', certs=certs)
+    return render_template('ssl.html', certs=certs, thresholds=CONFIG.get('thresholds', {}))
 
 
 @app.route('/api/ssl')
@@ -5038,12 +5245,22 @@ def service_action(action, name):
         return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
     if not is_safe_name(name):
         return jsonify({'status': 'error', 'message': 'Invalid service name'}), 400
+    # Marker vóór de stop: een trage stop (MariaDB) loopt na de 30s-timeout
+    # door in systemd, en zonder marker herstartte auto-heal de dienst dan
+    # midden in het onderhoud.
+    if action == 'stop':
+        _set_manually_stopped(name, True)
     result = run_cmd_safe(["sudo", "systemctl", action, name], timeout=30)
     if result.returncode == 0:
         log_audit(f'service_{action}', {'service': name})
         _set_manually_stopped(name, action == 'stop')
         _invalidate_cache('get_services_status')
         return jsonify({'status': 'ok', 'message': f"'{name}' {action} successful"})
+    if action == 'stop':
+        # Alleen terugdraaien als de stop echt niet doorging
+        if run_cmd_safe(['systemctl', 'is-active', '--quiet', name], timeout=10).returncode == 0:
+            _set_manually_stopped(name, False)
+        _invalidate_cache('get_services_status')
     return jsonify({'status': 'error', 'message': f"Could not {action} '{name}': {result.stderr}"}), 500
 
 
@@ -5092,6 +5309,28 @@ def backup():
     return render_template('backup.html', data=data)
 
 
+def _tar_skip_protected(base_dir, extra_roots=()):
+    """tarfile-filter dat de eigen mappen van de manager (en extra_roots)
+    overslaat.
+
+    `base_dir` is de map waar de arcnames relatief aan zijn (dirname van
+    het gearchiveerde pad, met arcname = basename). tarfile volgt geen
+    symlinks, dus arcname → base_dir/arcname is het echte pad."""
+    roots = tuple(_PROTECTED_DIRS) + tuple(extra_roots)
+
+    def _filter(tarinfo):
+        full = os.path.join(base_dir, tarinfo.name)
+        if any(full == r or full.startswith(r + '/') for r in roots):
+            return None
+        return tarinfo
+    return _filter
+
+
+def _path_has_nul(*paths):
+    """os.path.realpath() geeft een ValueError (500) op een NUL-byte."""
+    return any('\x00' in p for p in paths if isinstance(p, str))
+
+
 @app.route('/api/backup/download')
 @login_required
 def backup_download():
@@ -5099,8 +5338,15 @@ def backup_download():
     path = request.args.get('path', '')
     if not path:
         return jsonify({'status': 'error', 'message': 'No path specified'}), 400
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
 
     real_path = os.path.realpath(path)
+    # De downloads vallen terug op sudo cp/tar: nooit de eigen bestanden van
+    # de manager (config.json, .secret_key, .env) of root-only systeemmappen
+    # leveren, ook niet als een (oudere) backup_dir daar boven ligt.
+    if _is_protected_path(real_path) or _is_forbidden_dir(real_path):
+        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
     backup_cfg = CONFIG.get('backup', {})
     backup_dir = os.path.realpath(backup_cfg.get('backup_dir') or '/var/backups/vps/')
     db_backup_dir = os.path.realpath(backup_cfg.get('db_backup_dir') or '/var/backups/vps/databases/')
@@ -5157,11 +5403,18 @@ def backup_download():
             return send_file(tmp.name, as_attachment=True, download_name=name)
 
     import tarfile
+    parent = os.path.dirname(real_path)
     try:
         with tarfile.open(tmp.name, mode='w:gz') as tar:
-            tar.add(real_path, arcname=name)
+            tar.add(real_path, arcname=name,
+                    filter=_tar_skip_protected(parent, _FORBIDDEN_DIR_PREFIXES))
     except PermissionError:
-        result = run_cmd_safe(['sudo', 'tar', '-czf', tmp.name, '-C', os.path.dirname(real_path), '--', name],
+        # --exclude-patronen relatief aan -C, zoals tar de namen zelf ziet
+        excludes = ['--exclude=' + os.path.relpath(p, parent)
+                    for p in _PROTECTED_DIRS + _FORBIDDEN_DIR_PREFIXES
+                    if p.startswith(real_path.rstrip('/') + '/')]
+        result = run_cmd_safe(['sudo', 'tar', '-czf', tmp.name, '--anchored', '--no-wildcards']
+                              + excludes + ['-C', parent, '--', name],
                               timeout=1800)
         if result.returncode != 0:
             return jsonify({'status': 'error', 'message': 'Could not archive backup directory'}), 500
@@ -5245,11 +5498,23 @@ def _is_valid_ip(ip):
     fail2ban bant ook IPv6-adressen (bijv. via de sshd-jail), dus ban/unban
     vanuit de UI moet die ook accepteren — anders zijn IPv6-bans onbeheerbaar.
     """
+    if not _plain_ip_text(ip):
+        return False
     try:
         ipaddress.ip_address(ip)
         return True
     except ValueError:
         return False
+
+
+def _plain_ip_text(value):
+    """Geen scope-id ('%') en geen whitespace/control-tekens.
+
+    ipaddress accepteert na '%' alles als IPv6-scope-id, ook newlines:
+    'fe80::1%x\n[sshd]\nenabled = false' is volgens ip_address() geldig en
+    kwam zo letterlijk in jail.local (root, door fail2ban uitgevoerd)."""
+    return (isinstance(value, str) and '%' not in value
+            and not any(c.isspace() or not c.isprintable() for c in value))
 
 
 def _is_valid_ip_or_cidr(value):
@@ -5258,6 +5523,8 @@ def _is_valid_ip_or_cidr(value):
     fail2ban's ignoreip en ufw ondersteunen beide IPv6, dus de whitelist
     en UFW-regels moeten dat ook accepteren.
     """
+    if not _plain_ip_text(value):
+        return False
     try:
         if '/' in value:
             ipaddress.ip_network(value, strict=False)
@@ -5285,19 +5552,23 @@ def _ssh_ports():
 _UFW_PORT_TOKEN_RE = re.compile(r'^\d[\d,:]*(?:/(?:tcp|udp))?$')
 
 
-def _ufw_rule_covers_port(to, port):
-    """Dekt het 'To'-veld van een ufw-regel deze poort?
+def _ufw_rule_covers_port(to, port, proto='tcp'):
+    """Dekt het 'To'-veld van een ufw-regel deze poort (en dit protocol)?
 
     Vormen: '2222/tcp', '80,443/tcp', '6000:6007/tcp', 'OpenSSH', een adres
     met poort ('10.0.0.5 22/tcp'), of zonder poort ('Anywhere', een adres):
-    dat laatste geldt voor alle poorten."""
+    dat laatste geldt voor alle poorten. SSH is tcp: een '22/udp'-regel
+    telt niet als SSH-regel."""
     tokens = to.replace('(v6)', ' ').split()
     if any(t.lower() == 'openssh' for t in tokens):
-        return port == 22
+        return port == 22 and proto == 'tcp'
     spec = next((t for t in tokens if _UFW_PORT_TOKEN_RE.match(t)), None)
     if spec is None:
         # Een app-profiel (bijv. 'Nginx Full') kennen we niet: niet raden
         return not any(t[:1].isalpha() and t.lower() not in ('anywhere', 'on') for t in tokens)
+    spec_proto = spec.partition('/')[2]
+    if spec_proto and spec_proto != proto:
+        return False
     for part in spec.split('/')[0].split(','):
         lo, _, hi = part.partition(':')
         try:
@@ -5315,6 +5586,36 @@ def _ufw_allows_from_anywhere(rule, port):
             and _ufw_rule_covers_port(rule['to'], port))
 
 
+def _client_ip():
+    """request.remote_addr als ip_address (IPv4-mapped IPv6 als IPv4), of None."""
+    try:
+        addr = ipaddress.ip_address(request.remote_addr or '')
+    except ValueError:
+        return None
+    return getattr(addr, 'ipv4_mapped', None) or addr
+
+
+def _source_covers(source, client):
+    """Valt `client` onder dit bronadres/-netwerk (ufw 'From', of invoer)?"""
+    if client is None or not source:
+        return False
+    try:
+        return client in ipaddress.ip_network(source.split()[0], strict=False)
+    except (ValueError, TypeError):
+        return False
+
+
+def _ufw_allows_client(rule, port, client):
+    """Laat deze regel `client` op de poort toe: van overal, of via een
+    bronbeperking ('22/tcp ALLOW IN 203.0.113.7') die het eigen adres dekt?"""
+    if _ufw_allows_from_anywhere(rule, port):
+        return True
+    return (rule['action'] in ('ALLOW', 'LIMIT')
+            and rule.get('direction', 'IN') in ('IN', '')
+            and _source_covers(rule['from_addr'], client)
+            and _ufw_rule_covers_port(rule['to'], port))
+
+
 def _ufw_default_incoming():
     """'deny', 'reject', 'allow' of '' als onbekend."""
     result = run_cmd_safe(['sudo', 'ufw', 'status', 'verbose'], timeout=15)
@@ -5326,11 +5627,15 @@ def _ssh_lockout_on_delete(rules, rule):
     """SSH-poorten die na het verwijderen van `rule` niet meer van overal
     bereikbaar zijn (per IP-familie). Leeg = geen risico."""
     at_risk = []
+    client = _client_ip()
     for port in sorted(_ssh_ports()):
-        if not _ufw_allows_from_anywhere(rule, port):
-            continue
         others = [r for r in rules if r['number'] != rule['number'] and r['v6'] == rule['v6']]
-        if not any(_ufw_allows_from_anywhere(r, port) for r in others):
+        # Laatste regel van overal, of laatste regel die het eigen adres nog
+        # toelaat (een SSH-allow die alleen voor het eigen IP geldt).
+        if ((_ufw_allows_from_anywhere(rule, port)
+             and not any(_ufw_allows_from_anywhere(r, port) for r in others))
+                or (_ufw_allows_client(rule, port, client)
+                    and not any(_ufw_allows_client(r, port, client) for r in others))):
             at_risk.append(port)
     if at_risk and _ufw_default_incoming() == 'allow':
         return []
@@ -5369,7 +5674,6 @@ def firewall_ban():
 
     # Ban in fail2ban
     result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'banip', ip], timeout=15)
-    _invalidate_cache('get_banned_ips', 'get_firewall_security')
     f2b_ok = result.returncode == 0
     f2b_msg = result.stdout.strip() or result.stderr.strip()
 
@@ -5381,6 +5685,9 @@ def firewall_ban():
                                'comment', f'Banned via {jail} {timestamp}'], timeout=15)
     ufw_ok = ufw_result.returncode == 0
     ufw_msg = ufw_result.stdout.strip() or ufw_result.stderr.strip()
+    # Pas na beide mutaties: anders kan een parallelle request de cache
+    # tussendoor vullen met de toestand zonder UFW-regel.
+    _invalidate_cache('get_banned_ips', 'get_firewall_security')
 
     if f2b_ok or ufw_ok:
         log_audit('firewall_ban', {'ip': ip, 'jail': jail})
@@ -5407,21 +5714,26 @@ def firewall_unban():
         return jsonify({'status': 'error', 'message': 'Invalid jail name'}), 400
 
     result = run_cmd_safe(['sudo', 'fail2ban-client', 'set', jail, 'unbanip', ip], timeout=15)
-    _invalidate_cache('get_banned_ips', 'get_firewall_security')
     f2b_ok = result.returncode == 0
     f2b_msg = result.stdout.strip() or result.stderr.strip()
 
     # Also remove UFW deny rule (matches the ban flow which adds both)
     ufw_result = run_cmd_safe(['sudo', 'ufw', 'delete', 'deny', 'from', ip], timeout=15)
     ufw_ok = ufw_result.returncode == 0
+    ufw_msg = ufw_result.stdout.strip() or ufw_result.stderr.strip()
+    _invalidate_cache('get_banned_ips', 'get_firewall_security')
 
-    if f2b_ok:
+    # Ook als alleen de UFW-regel weg is (bijv. de fail2ban-ban was al
+    # verlopen) is er iets veranderd: dat hoort in de audit log en is geen 500.
+    if f2b_ok or ufw_ok:
         log_audit('firewall_unban', {'ip': ip, 'jail': jail})
     if f2b_ok and ufw_ok:
         return jsonify({'status': 'ok', 'message': f'{ip} unbanned from {jail} + UFW rule removed'})
     elif f2b_ok:
         return jsonify({'status': 'ok', 'message': f'{ip} unbanned from {jail} (no UFW rule found or already removed)'})
-    return jsonify({'status': 'error', 'message': f2b_msg or 'Unban failed'}), 500
+    elif ufw_ok:
+        return jsonify({'status': 'ok', 'message': f'UFW rule for {ip} removed, but fail2ban unban failed: {f2b_msg}'})
+    return jsonify({'status': 'error', 'message': f'fail2ban: {f2b_msg or "unban failed"}, UFW: {ufw_msg}'}), 500
 
 
 JAIL_LOCAL_PATH = '/etc/fail2ban/jail.local'
@@ -5508,8 +5820,14 @@ def firewall_whitelist_set():
         entry = entry.strip()
         if not entry:
             continue
-        # fail2ban accepteert ook hostnamen in ignoreip
-        if entry == '::1' or _is_valid_ip_or_cidr(entry) or _HOSTNAME_RE.match(entry):
+        # fail2ban accepteert ook hostnamen in ignoreip. IP's/CIDR's in
+        # genormaliseerde vorm wegschrijven, nooit de ruwe invoer.
+        if _is_valid_ip_or_cidr(entry):
+            if '/' in entry:
+                validated.append(str(ipaddress.ip_network(entry, strict=False)))
+            else:
+                validated.append(str(ipaddress.ip_address(entry)))
+        elif _HOSTNAME_RE.fullmatch(entry):
             validated.append(entry)
         else:
             return jsonify({'status': 'error', 'message': f'Invalid IP/CIDR: {entry}'}), 400
@@ -5599,10 +5917,17 @@ def firewall_ufw_add():
     from_anywhere = not from_ip or from_ip.lower() == 'anywhere'
     if not from_anywhere and not _is_valid_ip_or_cidr(from_ip):
         return jsonify({'status': 'error', 'message': 'Invalid source IP/CIDR'}), 400
-    if (action == 'deny' and from_anywhere and port_num in _ssh_ports()
+    # Ook 0.0.0.0/0, ::/0 en elk netwerk met het eigen adres erin sluiten
+    # (een deel van) SSH af; een udp-only deny raakt SSH niet.
+    if (action == 'deny' and proto != 'udp' and port_num in _ssh_ports()
             and data.get('confirm') is not True):
-        return _needs_confirm(f'Port {port} is the SSH port. Denying it from anywhere blocks every new '
-                              'SSH connection, including yours. Add the rule anyway?', 'ssh_lockout')
+        if from_anywhere or ipaddress.ip_network(from_ip, strict=False).prefixlen == 0:
+            return _needs_confirm(f'Port {port} is the SSH port. Denying it from anywhere blocks every new '
+                                  'SSH connection, including yours. Add the rule anyway?', 'ssh_lockout')
+        if _source_covers(from_ip, _client_ip()):
+            return _needs_confirm(f'Port {port} is the SSH port and {from_ip} includes the address you are '
+                                  'connected from. This rule blocks your own SSH access. Add it anyway?',
+                                  'ssh_lockout')
 
     # Een deny moet vóór de allow-regels staan om effect te hebben (ufw neemt
     # de eerste passende regel); allow-regels gaan zoals gewoonlijk achteraan.
@@ -5659,7 +5984,7 @@ def firewall_ufw_delete():
         if ports:
             family = 'IPv6' if rule['v6'] else 'IPv4'
             port_list = ', '.join(str(p) for p in ports)
-            return _needs_confirm(f'This is the last rule that lets {family} clients reach SSH '
+            return _needs_confirm(f'This is the last rule that lets {family} clients (or your own address) reach SSH '
                                   f'(port {port_list}). Deleting it can lock you out of the server. '
                                   'Delete it anyway?', 'ssh_lockout')
 
@@ -5676,25 +6001,32 @@ def firewall_ufw_delete():
 _ip_country_cache = {}
 _ip_country_cache_lock = threading.Lock()
 _IP_COUNTRY_TTL = 86400  # 24h
+_IP_COUNTRY_FAIL_TTL = 300  # mislukte lookup: na 5 min opnieuw proberen
 
 
 def _lookup_single_ip_country(ip):
-    """Look up one IP via ipwho.is. Returns (ip, info_or_None)."""
+    """Look up one IP via ipwho.is. Returns (ip, info_or_None, ok).
+
+    ok=False bij een mislukte lookup (timeout, rate limit, success=false):
+    die mag niet 24h als 'geen land' in de cache blijven staan."""
     try:
         req = urllib.request.Request(
-            f'https://ipwho.is/{ip}?fields=ip,country,country_code',
+            f'https://ipwho.is/{ip}?fields=ip,success,country,country_code',
             headers={'User-Agent': 'VPS-Manager'},
         )
         with urllib.request.urlopen(req, timeout=3) as resp:
             data = json.loads(resp.read().decode())
+        if not isinstance(data, dict) or data.get('success') is False:
+            return ip, None, False
         if data.get('country_code'):
             return ip, {
                 'country': data.get('country', ''),
                 'countryCode': data.get('country_code', ''),
-            }
+            }, True
+        return ip, None, True
     except Exception:
         logger.debug('IP geo lookup failed for %s', ip, exc_info=True)
-    return ip, None
+    return ip, None, False
 
 
 def lookup_ip_countries(ip_list):
@@ -5727,11 +6059,15 @@ def lookup_ip_countries(ip_list):
         futures = [ex.submit(_lookup_single_ip_country, ip) for ip in to_fetch]
         for fut in concurrent.futures.as_completed(futures, timeout=10):
             try:
-                ip, info = fut.result()
+                ip, info, ok = fut.result()
             except Exception:
                 continue
+            # Een mislukte lookup terugdateren zodat hij na
+            # _IP_COUNTRY_FAIL_TTL verloopt (zowel hier als in _sweep_caches,
+            # die met _IP_COUNTRY_TTL rekent).
+            stamp = time.time() if ok else time.time() - _IP_COUNTRY_TTL + _IP_COUNTRY_FAIL_TTL
             with _ip_country_cache_lock:
-                _ip_country_cache[ip] = (info, time.time())
+                _ip_country_cache[ip] = (info, stamp)
             if info:
                 results[ip] = info
     except concurrent.futures.TimeoutError:
@@ -5942,7 +6278,10 @@ def updates_history():
 
     unattended = _parse_unattended_upgrades_log()
     combined = manual + unattended
-    combined.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    # Handmatig: '2026-03-10T12:34:56.123', unattended: '2026-03-10 06:25:04'.
+    # Zonder normalisatie sorteerde ' ' < 'T' alle unattended-entries van een
+    # dag onder alle handmatige.
+    combined.sort(key=lambda x: str(x.get('timestamp') or '').replace(' ', 'T', 1), reverse=True)
     return jsonify(combined[:50])
 
 
@@ -6637,7 +6976,7 @@ def terminal_exec():
         if base_cmd not in TERMINAL_ALLOWED_COMMANDS:
             log_audit('terminal_blocked', {'command': cmd[:200], 'reason': f'not in allowlist: {base_cmd}'})
             return jsonify({'stdout': '', 'stderr': f'Blocked: command not allowed: {base_cmd}', 'cwd': real_cwd})
-        if uses_sudo and not _terminal_sudo_allowed(tokens):
+        if uses_sudo and not _terminal_sudo_allowed(tokens, check):
             log_audit('terminal_blocked', {'command': cmd[:200], 'reason': f'sudo not allowed for: {base_cmd}'})
             return jsonify({'stdout': '', 'stderr': f'Blocked: sudo is only allowed for read-only commands '
                                                      f'(e.g. sudo cat, sudo systemctl status). Use the {base_cmd} page instead.',
@@ -6721,6 +7060,8 @@ def files():
 def files_list():
     default_path = CONFIG.get('file_browser', {}).get('default_path', '/var/www')
     path = request.args.get('path', default_path)
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     # realpath (niet abspath): check en daadwerkelijke toegang moeten op
     # hetzelfde geresolvede pad gebeuren, anders kan een symlink-wissel
     # tussen check en gebruik buiten de toegestane mappen komen.
@@ -6842,8 +7183,10 @@ def files_mkdir():
     path = _json_str(data, 'path', '')
     name = _json_str(data, 'name', '')
 
-    if not name or '/' in name or name.startswith('.'):
+    if not name or '/' in name or name.startswith('.') or _path_has_nul(name):
         return jsonify({'status': 'error', 'message': 'Invalid folder name'}), 400
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
 
     norm_path = os.path.realpath(os.path.join(path, name))
     if not is_path_allowed(norm_path):
@@ -6863,6 +7206,8 @@ def files_mkdir():
 @login_required
 def files_download():
     path = request.args.get('path', '')
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
@@ -6880,8 +7225,11 @@ def files_download():
         tmp = tempfile.NamedTemporaryFile(suffix='.tar.gz', delete=False)
         try:
             try:
+                # Staat de manager zelf onder deze map, dan zijn eigen
+                # bestanden (config.json, .secret_key, .env) overslaan.
                 with tarfile.open(fileobj=tmp, mode='w:gz') as tar:
-                    tar.add(norm_path, arcname=dirname)
+                    tar.add(norm_path, arcname=dirname,
+                            filter=_tar_skip_protected(os.path.dirname(norm_path)))
             except OSError as e:
                 tmp.close()
                 return jsonify({'status': 'error',
@@ -6906,6 +7254,8 @@ def files_download():
 @login_required
 def files_upload():
     path = request.form.get('path', '/var/www')
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
@@ -6946,6 +7296,8 @@ def files_upload():
 def files_delete():
     data = _json_body()
     path = _json_str(data, 'path', '')
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     norm_path = os.path.abspath(path)
 
     # Symlinks: verwijder de link zelf (nooit het doel), mits de link
@@ -6967,6 +7319,9 @@ def files_delete():
 
     if norm_path in ('/', '/var', '/var/www', '/etc', '/home', '/root'):
         return jsonify({'status': 'error', 'message': 'Cannot delete system directory'}), 403
+    if _contains_protected_dir(norm_path):
+        return jsonify({'status': 'error',
+                        'message': 'This folder contains the VPS Manager installation and cannot be deleted'}), 403
 
     try:
         if os.path.isdir(norm_path):
@@ -6993,9 +7348,15 @@ def files_chown():
     group = _json_str(data, 'group', '')
     recursive = data.get('recursive', False)
 
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+    if recursive and _contains_protected_dir(norm_path):
+        return jsonify({'status': 'error',
+                        'message': 'This folder contains the VPS Manager installation; '
+                                   'a recursive ownership change is not allowed here'}), 403
 
     # Validate owner/group names
     if not re.match(r'^[a-zA-Z0-9._-]+$', owner):
@@ -7026,9 +7387,15 @@ def files_chmod():
     mode = _json_str(data, 'mode', '')
     recursive = data.get('recursive', False)
 
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     norm_path = os.path.realpath(path)
     if not is_path_allowed(norm_path):
         return jsonify({'status': 'error', 'message': 'Access denied'}), 403
+    if recursive and _contains_protected_dir(norm_path):
+        return jsonify({'status': 'error',
+                        'message': 'This folder contains the VPS Manager installation; '
+                                   'a recursive permission change is not allowed here'}), 403
 
     if not re.match(r'^[0-7]{3,4}$', mode):
         return jsonify({'status': 'error', 'message': 'Invalid mode (use octal like 755)'}), 400
@@ -7077,7 +7444,7 @@ def files_users():
 @login_required
 def notifications():
     smtp_configured = bool(CONFIG.get('smtp', {}).get('host', ''))
-    return render_template('notifications.html', smtp_configured=smtp_configured)
+    return render_template('notifications.html', smtp_configured=smtp_configured, thresholds=CONFIG.get('thresholds', {}))
 
 
 @app.route('/api/push/vapid-key')
@@ -7091,7 +7458,12 @@ def vapid_key():
 @login_required
 def push_subscribe():
     data = _json_body()
-    if 'endpoint' not in data or 'keys' not in data:
+    # Een niet-string endpoint werd opgeslagen en liet daarna de
+    # abonnementenlijst (ep[-8:], 'in ep') voorgoed een 500 geven.
+    keys = data.get('keys')
+    if (not isinstance(data.get('endpoint'), str) or not data['endpoint']
+            or not isinstance(keys, dict)
+            or not all(isinstance(keys.get(k), str) and keys.get(k) for k in ('p256dh', 'auth'))):
         return jsonify({'status': 'error', 'message': 'Invalid subscription data'}), 400
 
     with _notif_lock:
@@ -7105,8 +7477,8 @@ def push_subscribe():
         subs = [s for s in subs if s.get('endpoint') != data['endpoint']]
         subs.append({
             'endpoint': data['endpoint'],
-            'keys': data['keys'],
-            'label': data.get('label') or old_label or '',
+            'keys': {'p256dh': keys['p256dh'], 'auth': keys['auth']},
+            'label': _json_str(data, 'label', '')[:50] or old_label or '',
             'user_agent': request.headers.get('User-Agent', ''),
             'preferences': old_prefs or {
                 'critical': True,
@@ -7222,7 +7594,9 @@ def push_subscriptions_list():
     subs = _load_subscriptions()
     result = []
     for s in subs:
-        ep = s.get('endpoint', '')
+        ep = s.get('endpoint', '') if isinstance(s, dict) else None
+        if not isinstance(ep, str):
+            continue  # kapotte entry van vóór de typecontrole in push_subscribe
         # Mask endpoint for display: show provider + last 8 chars
         if 'mozilla.com' in ep or 'push.services.mozilla' in ep:
             provider = 'Firefox'
@@ -7252,7 +7626,7 @@ def push_subscription_label():
     """Update the label for a subscription."""
     data = _json_body()
     endpoint = data.get('endpoint')
-    label = data.get('label', '')
+    label = _json_str(data, 'label', '')
     if not endpoint:
         return jsonify({'status': 'error', 'message': 'Missing endpoint'}), 400
 
@@ -7514,6 +7888,33 @@ def _is_forbidden_dir(p, prefixes=_FORBIDDEN_DIR_PREFIXES):
     return False
 
 
+def _is_sensitive_ancestor(p):
+    """Ligt een verboden systeemmap of een eigen map van de manager onder p?
+    (/var → /var/lib, /var/www → /var/www/vps-manager)"""
+    try:
+        resolved = os.path.realpath(p)
+    except (OSError, ValueError):
+        return True
+    prefix = resolved.rstrip('/') + '/'
+    return any(root.startswith(prefix) for root in _FORBIDDEN_DIR_PREFIXES + _PROTECTED_DIRS)
+
+
+def _is_valid_backup_log_path(p):
+    """Absoluut pad naar een bestand (geen map), niet in de eigen mappen van
+    de manager en niet een van zijn eigen bestanden (.env, config.json)."""
+    if p.endswith('/'):
+        return False
+    try:
+        resolved = os.path.realpath(p)
+    except (OSError, ValueError):
+        return False
+    if os.path.isdir(resolved) or _is_protected_path(resolved):
+        return False
+    own_files = {DATA_DIR / 'config.json', _secret_key_file, _env_file,
+                 Path(__file__).parent / '.env', Path(__file__).parent.parent / '.env'}
+    return all(resolved != os.path.realpath(f) for f in own_files)
+
+
 def _is_number(v):
     """int/float, geen bool, geen NaN/inf (Flask's JSON-parser accepteert NaN)."""
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
@@ -7668,10 +8069,18 @@ def validate_config(data):
             for key in ('log_path', 'backup_dir', 'db_backup_dir'):
                 if key in data['backup']:
                     v = data['backup'][key]
-                    if not isinstance(v, str) or not v.startswith('/'):
+                    if not isinstance(v, str) or not v.startswith('/') or '\x00' in v:
                         errors.append(f'backup.{key} must be an absolute path')
-                    elif key != 'log_path' and _is_forbidden_dir(v):
+                    elif key == 'log_path':
+                        # De Backup-pagina toont de staart van dit bestand:
+                        # nooit config.json (wachtwoord-hash, secrets) e.d.
+                        if not _is_valid_backup_log_path(v):
+                            errors.append(f'backup.log_path must be a log file outside the VPS Manager '
+                                          f'installation: {v}')
+                    elif _is_forbidden_dir(v) or _is_sensitive_ancestor(v):
                         # /api/backup/download serveert alles onder backup_dir
+                        # (met sudo-fallback), dus ook geen map waar /var/lib,
+                        # /etc of de manager zelf onder ligt.
                         errors.append(f'backup.{key} is too broad: {v}')
             if 'webhook_secret' in data['backup'] and not isinstance(data['backup']['webhook_secret'], str):
                 errors.append('backup.webhook_secret must be a string')
@@ -7779,10 +8188,16 @@ def update_config():
     MONITOR_INTERVAL = CONFIG.get('monitor_interval', 300)
     app.permanent_session_lifetime = timedelta(hours=CONFIG['auth'].get('session_lifetime_hours', 24))
 
-    # Invalidate web server caches if web_server setting changed
-    if 'web_server' in data:
+    # Caches die van de gewijzigde secties afhangen, anders tonen de pagina's
+    # tot het verlopen van de TTL (soms uren, via stale) de oude paden.
+    if 'backup' in data:
+        _invalidate_cache('get_backup_status')
+    if 'services' in data:
+        _invalidate_cache('get_services_status')
+    if any(k in data for k in ('web_server', 'nginx', 'caddy')):
         _invalidate_cache('get_nginx_sites', 'get_caddy_sites', 'get_nginx_logs',
-                          'get_caddy_logs', 'get_ssl_certificates', 'get_caddy_certificates')
+                          'get_caddy_logs', 'get_ssl_certificates', 'get_caddy_certificates',
+                          'get_all_domains', 'get_uptime_status', 'get_php_info')
 
     log_audit('config_update', {'keys': list(data.keys())})
     return jsonify({'status': 'ok', 'message': 'Settings saved'})
@@ -7796,6 +8211,10 @@ def change_password():
     current = data.get('current_password', '')
     new_pass = data.get('new_password', '')
     confirm = data.get('confirm_password', '')
+    # null/getal gaf een 500 in check_password_hash of len(); niet strippen
+    # (_json_str), spaties horen bij het wachtwoord.
+    if not all(isinstance(v, str) for v in (current, new_pass, confirm)):
+        return jsonify({'status': 'error', 'message': 'Invalid password value'}), 400
 
     if not check_password_hash(PASSWORD_HASH, current):
         return jsonify({'status': 'error', 'message': 'Current password is incorrect'}), 400
@@ -7886,7 +8305,7 @@ def disable_2fa():
     data = _json_body()
     password = data.get('password', '')
 
-    if not check_password_hash(PASSWORD_HASH, password):
+    if not isinstance(password, str) or not check_password_hash(PASSWORD_HASH, password):
         return jsonify({'status': 'error', 'message': 'Incorrect password'}), 400
 
     with _config_runtime_lock:
@@ -8237,6 +8656,8 @@ EDITABLE_EXTENSIONS = {
 def files_read():
     """Read file content for in-browser editing"""
     path = request.args.get('path', '')
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
     norm_path = os.path.realpath(path)
 
     if not is_path_allowed(norm_path):
@@ -8297,6 +8718,8 @@ def files_save():
     # zou het bestand dus leeg achterlaten.
     if not isinstance(content, str):
         return jsonify({'status': 'error', 'message': 'Invalid content'}), 400
+    if _path_has_nul(path):
+        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
 
     norm_path = os.path.realpath(path)
 
@@ -8335,18 +8758,24 @@ def _parse_crontab_lines(text):
         first_word = stripped.split()[0] if stripped.split() else ''
         if '=' in first_word:
             continue
-        parts = stripped.split()
-        if parts[0].startswith('@') and len(parts) >= 2:
-            schedule_parts, command_parts = parts[:1], parts[1:]
-        elif len(parts) >= 6:
-            schedule_parts, command_parts = parts[:5], parts[5:]
+        # Het commando letterlijk houden: ' '.join(split()) klapte witruimte
+        # binnen het commando in (printf "%s  |  %s"), waarna een edit van
+        # alleen het schema of "Run now" een ander commando gebruikte.
+        if stripped.startswith('@'):
+            parts = stripped.split(None, 1)
+            if len(parts) < 2:
+                continue
+            schedule_parts, command = parts[:1], parts[1]
         else:
-            continue
+            parts = stripped.split(None, 5)
+            if len(parts) < 6:
+                continue
+            schedule_parts, command = parts[:5], parts[5]
         jobs.append({
             'index': job_idx,
             'line_num': i,
             'schedule': ' '.join(schedule_parts),
-            'command': ' '.join(command_parts),
+            'command': command,
             'human_schedule': _cron_to_human(schedule_parts),
         })
         job_idx += 1
@@ -8360,7 +8789,8 @@ _DOW_NAMES = {'sun': 0, 'mon': 1, 'tue': 2, 'wed': 3, 'thu': 4, 'fri': 5, 'sat':
 
 def _cron_value_to_int(val, names_map):
     """Convert a cron value (digit or name) to int. Returns None if invalid."""
-    if val.isdigit():
+    # isascii: isdigit() accepteert ook '²', waarna int() een 500 gaf
+    if val.isascii() and val.isdigit():
         return int(val)
     return names_map.get(val.lower())
 
@@ -8373,7 +8803,7 @@ def _validate_cron_field(value, min_val, max_val, names_map=None):
         part = part.strip()
         if '/' in part:
             base, step = part.split('/', 1)
-            if not step.isdigit() or int(step) < 1:
+            if not (step.isascii() and step.isdigit()) or int(step) < 1:
                 return False
             if base == '*':
                 continue
@@ -8461,7 +8891,7 @@ def _cron_request():
     (crontab extern gewijzigd), dan 409 in plaats van de verkeerde regel te
     bewerken, verwijderen of als root uit te voeren.
     """
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     cron_type = data.get('type', 'user')
     if cron_type not in ('user', 'root'):
         return None, None, None, (jsonify({'status': 'error', 'message': 'Invalid crontab type'}), 400)
@@ -8480,8 +8910,10 @@ def _cron_request():
 
     expected = data.get('expected')
     if isinstance(expected, dict):
+        # Commando exact vergelijken: het wordt nu letterlijk bewaard, dus
+        # een wijziging in alleen witruimte is ook een andere job.
         if (str(expected.get('schedule', '')).split() != job['schedule'].split()
-                or str(expected.get('command', '')).split() != job['command'].split()):
+                or str(expected.get('command', '')) != job['command']):
             return None, None, None, (jsonify({
                 'status': 'error',
                 'message': 'The crontab changed since the page was loaded. The list has been refreshed, please try again.',
@@ -8496,6 +8928,8 @@ def _cron_input(data):
     command = command.strip() if isinstance(command, str) else ''
     if '\n' in command or '\r' in command:
         return schedule, command, 'Command must be a single line'
+    if '\x00' in command or '\x00' in schedule:
+        return schedule, command, 'Command contains an invalid character'
     if not schedule or not command:
         return schedule, command, 'Schedule and command are required'
     ok, err = _validate_cron_schedule(schedule)
@@ -8506,7 +8940,7 @@ def _cron_input(data):
 @login_required
 def cronjobs_add():
     """Add a new cron entry"""
-    data = request.get_json(silent=True) or {}
+    data = _json_body()
     cron_type = data.get('type', 'user')
     if cron_type not in ('user', 'root'):
         return jsonify({'status': 'error', 'message': 'Invalid crontab type'}), 400
@@ -8533,14 +8967,16 @@ def cronjobs_add():
 @login_required
 def cronjobs_edit():
     """Edit an existing cron entry by index"""
-    schedule, command, err = _cron_input(request.get_json(silent=True) or {})
+    schedule, command, err = _cron_input(_json_body())
     if err:
         return jsonify({'status': 'error', 'message': err}), 400
     cron_type, lines, job, error = _cron_request()
     if error:
         return error
 
-    lines[job['line_num']] = f'{schedule} {command}'
+    # Ongewijzigde job: de regel byte-voor-byte laten staan
+    if schedule.split() != job['schedule'].split() or command != job['command']:
+        lines[job['line_num']] = f'{schedule} {command}'
     write_result = _write_crontab(cron_type, '\n'.join(lines))
     if write_result.returncode == 0:
         log_audit('cronjob_edit', {'type': cron_type, 'index': job['index'], 'schedule': schedule, 'command': command})
@@ -8565,6 +9001,37 @@ def cronjobs_delete():
     return jsonify({'status': 'error', 'message': write_result.stderr.strip() or 'Failed to delete cronjob'}), 500
 
 
+def _cron_split_percent(command):
+    """Pas cron's %-regels toe zoals cron(8) dat doet. Returns (command, stdin).
+
+    In het commando wordt '\\%' een '%' en eindigt de eerste niet-geëscapete
+    '%' het commando; de rest gaat als stdin mee, waarin elke verdere
+    niet-geëscapete '%' een newline wordt (en '\\%' weer '%'). Andere
+    backslashes blijven staan. stdin is None als er geen '%' was."""
+    def _unescape(text, percent_as):
+        out = []
+        i = 0
+        while i < len(text):
+            c = text[i]
+            if c == '\\' and i + 1 < len(text):
+                nxt = text[i + 1]
+                out.append('%' if nxt == '%' else c + nxt)
+                i += 2
+                continue
+            if c == '%':
+                if percent_as is None:
+                    return ''.join(out), text[i + 1:]
+                c = percent_as
+            out.append(c)
+            i += 1
+        return ''.join(out), None
+
+    cmd, rest = _unescape(command, None)
+    if rest is None:
+        return cmd, None
+    return cmd, _unescape(rest, '\n')[0]
+
+
 @app.route('/api/cronjobs/run', methods=['POST'])
 @login_required
 def cronjobs_run():
@@ -8573,11 +9040,12 @@ def cronjobs_run():
     if error:
         return error
     command = job['command']
+    # Zoals cron het uitvoert: anders kreeg bash bijv. `date +\%F` letterlijk
+    # (met backslash) en liep alles na een '%' als deel van het commando mee.
+    shell_cmd, stdin_data = _cron_split_percent(command)
 
-    if cron_type == 'root':
-        run_result = run_cmd(f"sudo bash -c {shlex.quote(command)}", timeout=120)
-    else:
-        run_result = run_cmd(f"bash -c {shlex.quote(command)}", timeout=120)
+    prefix = ['sudo', 'bash', '-c'] if cron_type == 'root' else ['bash', '-c']
+    run_result = run_cmd_safe(prefix + [shell_cmd], timeout=120, input=stdin_data)
 
     log_audit('cronjob_run', {'type': cron_type, 'command': command, 'exit_code': run_result.returncode})
 
@@ -8645,6 +9113,27 @@ def _caddy_brace_delta(line):
     return code.count('{') - code.count('}')
 
 
+# De accolade die een block opent is een los token; '{$DOMAIN}' of
+# '{http.request.host}' is een placeholder en opent geen block.
+_CADDY_OPEN_BRACE_RE = re.compile(r'(?:^|\s)\{(?=\s|$)')
+
+
+def _caddy_header_address(code):
+    """Adresdeel van een regel die een block opent ('a.com {', '{$DOMAIN} {',
+    'a.com, b.com {'), '' voor alleen '{', of None als de regel geen block
+    opent. `code` zonder commentaar.
+
+    Voorheen werd split('{')[0] gebruikt: bij '{$DOMAIN} {' gaf dat een leeg
+    adres, waarna de body als top-level gescand werd."""
+    code = code.strip()
+    m = _CADDY_OPEN_BRACE_RE.search(code)
+    if m:
+        return code[:m.start()].strip()
+    if code.endswith('{'):
+        return code[:-1].strip()
+    return None
+
+
 def _caddy_skip_block(lines, i):
     """Skip the block starting at lines[i] (brace on that line or the next).
 
@@ -8655,7 +9144,8 @@ def _caddy_skip_block(lines, i):
     code = _caddy_strip_comment(lines[i])
     depth = code.count('{') - code.count('}')
     i += 1
-    if '{' not in code and i < len(lines) and lines[i].strip().startswith('{'):
+    if (_caddy_header_address(code) is None and i < len(lines)
+            and lines[i].strip().startswith('{')):
         depth += _caddy_brace_delta(lines[i])
         i += 1
     while i < len(lines) and depth > 0:
@@ -8734,7 +9224,10 @@ def _parse_caddyfile(content, sites_dir=None, config_file=None):
 
     # Expand file imports ('import sites/*', 'import sites/*.caddy', 'import /etc/caddy/x'):
     # alleen de bestanden die het glob-patroon matcht, zoals Caddy zelf ook doet.
-    expanded = content
+    # Per regel het bronbestand bijhouden: de Websites-pagina linkt naar het
+    # bestand waarin de site echt staat.
+    lines = content.split('\n')
+    sources = [config_file] * len(lines)
     # Resolve relative imports against the Caddyfile's directory (not sites_dir)
     if config_file:
         caddyfile_dir = os.path.dirname(config_file)
@@ -8744,11 +9237,12 @@ def _parse_caddyfile(content, sites_dir=None, config_file=None):
     for fpath in _caddy_import_files(content, caddyfile_dir):
         file_result = run_cmd_safe(["sudo", "cat", fpath], timeout=5)
         if file_result.returncode == 0:
-            expanded += '\n' + file_result.stdout
+            file_lines = file_result.stdout.split('\n')
+            lines.extend(file_lines)
+            sources.extend([fpath] * len(file_lines))
 
     # Parse site blocks: address { ... }
     # Simple brace-counting parser
-    lines = expanded.split('\n')
     i = 0
     while i < len(lines):
         line = lines[i].strip()
@@ -8756,6 +9250,7 @@ def _parse_caddyfile(content, sites_dir=None, config_file=None):
         if not line or line.startswith('#'):
             i += 1
             continue
+        header_source = sources[i]
         # Skip snippet blocks: (name) { ... }, inclusief geneste blocks
         if line.startswith('('):
             i = _caddy_skip_block(lines, i)
@@ -8768,8 +9263,14 @@ def _parse_caddyfile(content, sites_dir=None, config_file=None):
 
         # Check for site address (domain/host followed by { on same or next line)
         address = None
-        if '{' in line:
-            address = line.split('{')[0].strip()
+        header = _caddy_header_address(_caddy_strip_comment(line))
+        if header is not None:
+            address = header
+            if not address:
+                # Onbekend block: als geheel overslaan, nooit de directives
+                # erin (reverse_proxy 127.0.0.1:3000 {) als sites lezen
+                i = _caddy_skip_block(lines, i)
+                continue
         elif i + 1 < len(lines) and lines[i + 1].strip() == '{':
             address = line
         elif (line and not line.startswith('}') and not line.startswith('/')
@@ -8797,7 +9298,7 @@ def _parse_caddyfile(content, sites_dir=None, config_file=None):
         block_lines = []
         depth = 0
         # Find opening brace
-        if '{' in lines[i]:
+        if header is not None:
             depth = _caddy_brace_delta(lines[i])
             i += 1
         else:
@@ -8886,6 +9387,7 @@ def _parse_caddyfile(content, sites_dir=None, config_file=None):
             sites.append({
                 'address': address,
                 'domains': domains,
+                'source': header_source,
                 'root': doc_root,
                 'proxy': proxy,
                 'file_server': file_server,
@@ -8937,10 +9439,12 @@ def _caddy_add_site_logs(content, log_snippets=()):
             continue
 
         # Detect site address
-        address = None
-        if '{' in line:
-            address = line.split('{')[0].strip()
-        elif i + 1 < len(lines) and lines[i + 1].strip() == '{':
+        address = _caddy_header_address(line)
+        if address == '':
+            # Onbekend block: overslaan i.p.v. de body als top-level te lezen
+            i = _caddy_skip_block(lines, i)
+            continue
+        if address is None and i + 1 < len(lines) and lines[i + 1].strip() == '{':
             address = line
 
         if not address or address.startswith('}'):
@@ -8972,7 +9476,8 @@ def _caddy_add_site_logs(content, log_snippets=()):
             if clean_addr.startswith(prefix):
                 clean_addr = clean_addr[len(prefix):]
         domain = clean_addr.split()[0].split(':')[0].strip(',') if clean_addr.split() else None
-        if not domain or domain in ('localhost', '*', ':'):
+        # Placeholder-adres ({$DOMAIN}): geen bruikbare lognaam
+        if not domain or domain in ('localhost', '*', ':') or '{' in domain:
             continue
         safe_domain = re.sub(r'[^a-zA-Z0-9._-]', '', domain)
         if not safe_domain:
@@ -9064,7 +9569,8 @@ def get_caddy_sites():
         log_output = site.get('log_output')
 
         sites.append({
-            'config': os.path.basename(config_file),
+            # Basename zoals de config-editor hem kent (?select=)
+            'config': os.path.basename(site.get('source') or config_file),
             'domains': domains,
             'domain': ', '.join(domains),
             'root': doc_root,

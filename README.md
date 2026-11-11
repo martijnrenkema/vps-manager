@@ -389,6 +389,23 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v2.2.0 - Calmer Pages & Bug Fix Round
+- **Collapsible sections** - Advanced and rarely used parts are folded away by default on Settings, Firewall, Backup, SSH logs, Updates, PHP, Cronjobs, Notifications, Network and Security audit. Headers show a short status (e.g. "No attack detected", "2FA active") and the open/closed state is remembered per browser. Settings opens the right section when a field is invalid
+- **Fix: missed alerts after a restart** - With an empty notification log, the first monitor run after every start marked all active alerts as already sent. A service that failed to come up after a reboot was then never reported
+- **Fix: stopped services vanished** - Auto-discovered services (PHP-FPM versions not in the config, ssh, cron, ufw) disappeared from the list when they went down instead of showing as down. Template instances such as `postgresql@16-main` can now be monitored
+- **Fix: Backup page stayed green after a failed run**, and the webhook example was missing the required `X-Webhook-Secret` header
+- **Fix: "Check" on the Updates page** only reloaded the cached list; it now really checks. The page also refreshes after an install
+- **Fix: NAS pull failed for sites containing `.tmp` files** (checksum mismatch every day, no snapshot). A file vanishing during the VPS backup (rsync exit 24) no longer aborts the whole run
+- **Security: fail2ban whitelist** accepted an IPv6 scope id with line breaks, which were written into `jail.local`
+- **Security: own files stay protected** - Downloading, recursively chown/chmod-ing or deleting a folder that contains the VPS Manager installation no longer exposes or touches its config and secrets. Backup paths are validated more strictly
+- **Security: terminal** - `sudo` commands no longer accept quotes, `$`, backslashes or braces, and abbreviated or combined forms of blocked options are caught
+- **Fix: "Top attacking IPs" could be spoofed** through the username of an SSH login attempt
+- **Firewall** - Lock-out confirmation also covers an SSH rule limited to your own address and deny rules for a network that includes it; `22/udp` no longer counts as an SSH rule; rules with logging are parsed correctly; unban reports a partial result instead of an error
+- **Cronjobs** - Commands keep their exact whitespace, "Run now" follows cron's `%` rules, and the dialog keeps your input when saving fails
+- **Caddy** - Sites with a placeholder address (`{$DOMAIN}`) no longer produce phantom sites or misplaced log blocks; the Config link opens the file the site is defined in
+- **Locale-independent** - Commands run with a fixed locale, so UFW status, memory and other checks also work on non-English systems
+- **Smaller fixes** - SSL page uses the configured warning thresholds, Stop/Start buttons follow the new state, a second upload no longer cancels the first, the permissions dialog works for files owned by system users, audit log filters cover their whole category, geo lookups are retried after a failure, the security audit detects services bound to a public address, several 500 errors on malformed input
+
 ### v2.1.1 - New App Icon
 - **New app icon** - Standard icon (transparent corners), separate Android maskable icons with the glyph inside the safe zone, a full-bleed Apple touch icon and PNG favicons (32/16 px) replace the previous icon set and SVG favicon
 - **Fix: Android notification badge was a white square** - The badge is drawn as a monochrome silhouette; a dedicated silhouette image is now used instead of the full-colour icon

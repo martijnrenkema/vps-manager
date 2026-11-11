@@ -576,8 +576,20 @@ async function loadPermsUsers() {
     }
 }
 
+// /files/users lists only root, www-data, nobody and regular users, so a
+// system owner such as caddy or mysql may be missing: add it, or the select
+// would end up empty and block a mode-only change.
+function ensurePermsOption(sel, value) {
+    if (!value) return;
+    if (!Array.from(sel.options).some(function(o) { return o.value === value; })) {
+        sel.appendChild(new Option(value, value));
+    }
+}
+
 async function showPermsDialog() {
     await loadPermsUsers();
+    ensurePermsOption(document.getElementById('permsOwner'), currentDirInfo.owner);
+    ensurePermsOption(document.getElementById('permsGroup'), currentDirInfo.group);
     document.getElementById('permsPath').textContent = currentPath;
     document.getElementById('permsCurrentOwner').textContent = (currentDirInfo.owner || '?') + ':' + (currentDirInfo.group || '?');
     const modeStr = (currentDirInfo.mode || '0755').replace('0o', '');
@@ -612,7 +624,7 @@ async function applyPerms() {
     // (fixes mixed ownership). A recursive mode change alone leaves owners be.
     const doChown = ownerChanged || (recursive && !doChmod);
 
-    if (!owner) { showToast('Select an owner', 'error'); return; }
+    if (doChown && !owner) { showToast('Select an owner', 'error'); return; }
     if (doChmod && (!mode || !/^[0-7]{3,4}$/.test(mode))) { showToast('Invalid permissions', 'error'); return; }
     if (!doChown && !doChmod) { showToast('Nothing changed', 'info'); return; }
 
@@ -666,8 +678,19 @@ function formatFileSize(bytes) {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
 }
 
+// One upload queue for the whole page: a second selection/drop while files
+// are still uploading is appended behind the running batch instead of
+// replacing the list (which used to strand the first batch).
+const uploadQueue = [];
+let uploadRunning = false;
+const uploadStats = { total: 0, processed: 0, succeeded: 0, targets: new Set() };
+
+function uploadTargetLabel() {
+    return uploadStats.targets.size === 1 ? Array.from(uploadStats.targets)[0] : uploadStats.targets.size + ' folders';
+}
+
 function uploadFiles(fileList) {
-    const files = Array.from(fileList);
+    const files = Array.from(fileList || []);
     if (!files.length) return;
 
     const area = document.getElementById('uploadProgressArea');
@@ -680,18 +703,22 @@ function uploadFiles(fileList) {
     const targetPath = currentPath;
     if (!targetPath) { showToast('No folder open to upload to', 'error'); return; }
 
+    if (!uploadRunning) {
+        list.innerHTML = '';
+        uploadStats.total = 0;
+        uploadStats.processed = 0;
+        uploadStats.succeeded = 0;
+        uploadStats.targets.clear();
+    }
     area.style.display = 'block';
     dismissBtn.style.display = 'none';
-    list.innerHTML = '';
+    uploadStats.total += files.length;
+    uploadStats.targets.add(targetPath);
+    // Allow picking the same file again later.
+    document.getElementById('uploadInput').value = '';
 
-    let processed = 0;
-    let succeeded = 0;
-    const total = files.length;
-
-    title.textContent = `Uploading 0/${total} files to ${targetPath}...`;
-
-    // Create progress entries for each file
-    const entries = files.map((file, idx) => {
+    // Progress entry per file; keep direct element references (no global ids).
+    files.forEach(function(file) {
         const entry = document.createElement('div');
         entry.className = 'upload-file-entry';
         entry.innerHTML = `
@@ -700,98 +727,111 @@ function uploadFiles(fileList) {
                 <span class="upload-file-size">${formatFileSize(file.size)}</span>
             </div>
             <div class="progress-bar-bg upload-file-progress">
-                <div class="progress-bar-fill green" id="uploadBar${idx}" style="width:0%"></div>
+                <div class="progress-bar-fill green" style="width:0%"></div>
             </div>
-            <div class="upload-file-status" id="uploadStatus${idx}">Waiting...</div>
+            <div class="upload-file-status">Waiting...</div>
         `;
         list.appendChild(entry);
-        return entry;
+        uploadQueue.push({
+            file: file,
+            targetPath: targetPath,
+            entryEl: entry,
+            barEl: entry.querySelector('.progress-bar-fill'),
+            statusEl: entry.querySelector('.upload-file-status'),
+        });
     });
 
-    // Upload files sequentially to avoid overloading the server
-    let current = 0;
+    title.textContent = `Uploading ${uploadStats.processed}/${uploadStats.total} files to ${uploadTargetLabel()}...`;
+    if (uploadRunning) {
+        showToast(`${files.length} file${files.length === 1 ? '' : 's'} queued behind the current upload`, 'info');
+        return;
+    }
+    uploadRunning = true;
+    uploadNext();
+}
 
-    function uploadNext() {
-        if (current >= files.length) {
-            const failed = total - succeeded;
-            title.textContent = failed
-                ? `Uploaded ${succeeded} of ${total} files to ${targetPath} - ${failed} failed`
-                : `Upload complete: ${succeeded}/${total} files to ${targetPath}`;
-            dismissBtn.style.display = 'inline-flex';
-            document.getElementById('uploadInput').value = '';
-            if (currentPath === targetPath) loadDir(currentPath);
-            return;
-        }
-
-        const idx = current;
-        const file = files[idx];
-        current++;
-
-        const statusEl = document.getElementById(`uploadStatus${idx}`);
-        const barEl = document.getElementById(`uploadBar${idx}`);
-        statusEl.textContent = 'Uploading...';
-        statusEl.className = 'upload-file-status';
-
-        const form = new FormData();
-        form.append('csrf_token', csrfToken);
-        form.append('path', targetPath);
-        form.append('file', file);
-
-        const xhr = new XMLHttpRequest();
-
-        xhr.upload.addEventListener('progress', function(e) {
-            if (e.lengthComputable) {
-                const pct = Math.round((e.loaded / e.total) * 100);
-                barEl.style.width = pct + '%';
-                statusEl.textContent = pct + '%';
-            }
-        });
-
-        xhr.addEventListener('load', function() {
-            processed++;
-            title.textContent = `Uploading ${processed}/${total} files to ${targetPath}...`;
-
-            let ok = xhr.status >= 200 && xhr.status < 300;
-            let data = null;
-            try { data = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
-            if (data && data.status === 'error') ok = false;
-            if (ok) {
-                succeeded++;
-                barEl.style.width = '100%';
-                barEl.className = 'progress-bar-fill green';
-                statusEl.textContent = 'Done';
-                statusEl.className = 'upload-file-status status-ok';
-                entries[idx].className = 'upload-file-entry upload-done';
-            } else {
-                const msg = (data && data.message) || ('Error (HTTP ' + xhr.status + ')');
-                barEl.className = 'progress-bar-fill red';
-                barEl.style.width = '100%';
-                statusEl.textContent = msg;
-                statusEl.className = 'upload-file-status status-err';
-                entries[idx].className = 'upload-file-entry upload-error';
-            }
-
-            uploadNext();
-        });
-
-        xhr.addEventListener('error', function() {
-            processed++;
-            title.textContent = `Uploading ${processed}/${total} files to ${targetPath}...`;
-            barEl.className = 'progress-bar-fill red';
-            barEl.style.width = '100%';
-            statusEl.textContent = 'Network error';
-            statusEl.className = 'upload-file-status status-err';
-            entries[idx].className = 'upload-file-entry upload-error';
-            uploadNext();
-        });
-
-        xhr.open('POST', '/files/upload');
-        xhr.setRequestHeader('X-CSRFToken', csrfToken);
-        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-        xhr.send(form);
+// Upload files sequentially to avoid overloading the server
+function uploadNext() {
+    const title = document.getElementById('uploadProgressTitle');
+    const job = uploadQueue.shift();
+    if (!job) {
+        uploadRunning = false;
+        const total = uploadStats.total;
+        const succeeded = uploadStats.succeeded;
+        const failed = total - succeeded;
+        title.textContent = failed
+            ? `Uploaded ${succeeded} of ${total} files to ${uploadTargetLabel()} - ${failed} failed`
+            : `Upload complete: ${succeeded}/${total} files to ${uploadTargetLabel()}`;
+        document.getElementById('uploadDismissBtn').style.display = 'inline-flex';
+        if (uploadStats.targets.has(currentPath)) loadDir(currentPath);
+        return;
     }
 
-    uploadNext();
+    const statusEl = job.statusEl;
+    const barEl = job.barEl;
+    statusEl.textContent = 'Uploading...';
+    statusEl.className = 'upload-file-status';
+
+    const form = new FormData();
+    form.append('csrf_token', csrfToken);
+    form.append('path', job.targetPath);
+    form.append('file', job.file);
+
+    const xhr = new XMLHttpRequest();
+
+    function progressTitle() {
+        uploadStats.processed++;
+        title.textContent = `Uploading ${uploadStats.processed}/${uploadStats.total} files to ${uploadTargetLabel()}...`;
+    }
+
+    xhr.upload.addEventListener('progress', function(e) {
+        if (e.lengthComputable) {
+            const pct = Math.round((e.loaded / e.total) * 100);
+            barEl.style.width = pct + '%';
+            statusEl.textContent = pct + '%';
+        }
+    });
+
+    xhr.addEventListener('load', function() {
+        progressTitle();
+
+        let ok = xhr.status >= 200 && xhr.status < 300;
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+        if (data && data.status === 'error') ok = false;
+        if (ok) {
+            uploadStats.succeeded++;
+            barEl.style.width = '100%';
+            barEl.className = 'progress-bar-fill green';
+            statusEl.textContent = 'Done';
+            statusEl.className = 'upload-file-status status-ok';
+            job.entryEl.className = 'upload-file-entry upload-done';
+        } else {
+            const msg = (data && data.message) || ('Error (HTTP ' + xhr.status + ')');
+            barEl.className = 'progress-bar-fill red';
+            barEl.style.width = '100%';
+            statusEl.textContent = msg;
+            statusEl.className = 'upload-file-status status-err';
+            job.entryEl.className = 'upload-file-entry upload-error';
+        }
+
+        uploadNext();
+    });
+
+    xhr.addEventListener('error', function() {
+        progressTitle();
+        barEl.className = 'progress-bar-fill red';
+        barEl.style.width = '100%';
+        statusEl.textContent = 'Network error';
+        statusEl.className = 'upload-file-status status-err';
+        job.entryEl.className = 'upload-file-entry upload-error';
+        uploadNext();
+    });
+
+    xhr.open('POST', '/files/upload');
+    xhr.setRequestHeader('X-CSRFToken', csrfToken);
+    xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+    xhr.send(form);
 }
 
 function dismissUploadProgress() {

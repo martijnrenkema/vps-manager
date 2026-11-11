@@ -94,6 +94,10 @@ is_listed() {
 }
 
 safe_rsync() {
+    # Exit 24 ("some files vanished before they could be transferred") is
+    # normal on a live site (sessions, cache files); under set -e it aborted
+    # the whole backup. Every other non-zero exit still fails the run.
+    local rc=0
     rsync -a --delete --delete-excluded \
         --exclude='.git/' \
         --exclude='.hg/' \
@@ -110,7 +114,13 @@ safe_rsync() {
         --exclude='.cache/' \
         --exclude='cache/' \
         --exclude='*.log' \
-        "$@"
+        "$@" || rc=$?
+    if [ "$rc" -eq 24 ]; then
+        echo "$(date): WARNING: files vanished during rsync of ${*: -2:1} (rsync exit 24), continuing" >> "$LOG"
+        return 0
+    fi
+    [ "$rc" -eq 0 ] || echo "$(date): rsync of ${*: -2:1} failed (exit $rc)" >> "$LOG"
+    return "$rc"
 }
 
 # =============================================================================

@@ -8,11 +8,11 @@
 <div class="card">
     <div class="card-header" style="border-left:3px solid var(--purple)">
         {{ icon('download-cloud') }} VPS Manager Updates
-        <span class="badge" id="appVersionBadge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">...</span>
+        <span class="badge" id="appVersionBadge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">v{{ app_version }}</span>
     </div>
     <div class="card-body">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-            <span style="color:var(--text-secondary);font-size:13px">Current version: <strong id="appCurrentVersion">...</strong></span>
+            <span style="color:var(--text-secondary);font-size:13px">Current version: <strong id="appCurrentVersion">v{{ app_version }}</strong></span>
             <button class="btn btn-sm" id="appCheckBtn" onclick="checkAppUpdate()">{{ icon('refresh') }} Check for updates</button>
         </div>
 
@@ -46,7 +46,7 @@
 
 <div class="section-header" style="margin-bottom:16px">
     <div>
-        <button class="btn btn-sm" onclick="refreshUpdates()">{{ icon('refresh') }} Check</button>
+        <button type="button" class="btn btn-sm" id="refreshUpdatesBtn" onclick="refreshUpdates(this)">{{ icon('refresh') }} Check</button>
         {% if installable > 0 %}
             <button class="btn btn-sm btn-green" id="installBtn" onclick="showConfirm('Install updates', 'Install {{ installable }} update(s)? (ESM updates excluded)', installUpdates)">{{ icon('download') }} Install ({{ installable }})</button>
         {% endif %}
@@ -82,11 +82,11 @@
 </div>
 
 <!-- Regular Updates -->
-<div class="card">
-    <div class="card-header" style="border-left:3px solid var(--green)">
+<details class="card card-collapsible" data-persist="updates-regular">
+    <summary class="card-header" style="border-left:3px solid var(--green)">
         {{ icon('package') }} Regular Updates
-        <span class="badge badge-green" style="margin-left:auto">{{ regular_updates|length }}</span>
-    </div>
+        <span class="summary-hint"><span class="badge badge-green">{{ regular_updates|length }}</span></span>
+    </summary>
     <div class="card-body">
         {% if regular_updates %}
         <div class="table-wrap">
@@ -106,9 +106,10 @@
         <span style="color:var(--text-muted)">No regular updates</span>
         {% endif %}
     </div>
-</div>
+</details>
 
 <!-- ESM Updates -->
+{% if esm_updates %}
 <div class="card">
     <div class="card-header" style="border-left:3px solid var(--yellow)">
         {{ icon('lock') }} Ubuntu Pro / ESM
@@ -116,7 +117,6 @@
         <span class="badge badge-yellow" style="margin-left:auto">{{ esm_updates|length }}</span>
     </div>
     <div class="card-body">
-        {% if esm_updates %}
         <div style="padding:8px 12px;background:var(--yellow-bg);border:1px solid rgba(210,153,34,0.3);border-radius:6px;margin-bottom:12px;font-size:13px;color:var(--yellow)">
             These updates require an Ubuntu Pro subscription. They cannot be installed without enabling ESM via <code>pro attach</code>.
         </div>
@@ -133,20 +133,18 @@
                 </tbody>
             </table>
         </div>
-        {% else %}
-        <span style="color:var(--text-muted)">No ESM updates</span>
-        {% endif %}
     </div>
 </div>
+{% endif %}
 
 <!-- Phased Updates -->
 {% if phased_updates %}
-<div class="card">
-    <div class="card-header" style="border-left:3px solid var(--text-muted)">
+<details class="card card-collapsible" data-persist="updates-phased">
+    <summary class="card-header" style="border-left:3px solid var(--text-muted)">
         {{ icon('clock') }} Phased Updates
         <span class="tooltip-icon" data-bs-toggle="tooltip" title="Ubuntu gradually rolls out updates to detect issues early. Phased updates are waiting for wider testing before becoming available." style="margin-left:0">?</span>
-        <span class="badge" style="margin-left:auto;background:var(--bg-tertiary);color:var(--text-secondary)">{{ phased_updates|length }}</span>
-    </div>
+        <span class="summary-hint"><span class="badge" style="background:var(--bg-tertiary);color:var(--text-secondary)">{{ phased_updates|length }}</span></span>
+    </summary>
     <div class="card-body">
         <div style="padding:8px 12px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:6px;margin-bottom:12px;font-size:13px;color:var(--text-secondary)">
             These updates are being gradually rolled out by Ubuntu (phased rollout). They will become available automatically once your system is included in the rollout.
@@ -165,7 +163,7 @@
             </table>
         </div>
     </div>
-</div>
+</details>
 {% endif %}
 
 {% if not updates %}
@@ -175,15 +173,15 @@
 {% endif %}
 
 <!-- Update History -->
-<div class="card">
-    <div class="card-header">{{ icon('clock') }} Update History</div>
+<details class="card card-collapsible" data-persist="updates-history">
+    <summary class="card-header">{{ icon('clock') }} Update History <span class="summary-hint" id="historyCount"></span></summary>
     <div class="card-body">
         <div id="historyTimeline" style="display:flex;gap:3px;margin-bottom:16px;flex-wrap:wrap"></div>
         <div id="historyTable"></div>
         <div id="historyEmpty" style="display:none;color:var(--text-muted);font-size:13px">No update history found</div>
         <div id="historyLoading" style="color:var(--text-muted);font-size:13px">Loading history...</div>
     </div>
-</div>
+</details>
 
 <div id="updateProgress" style="display:none;margin-top:16px">
     <div class="card">
@@ -200,8 +198,26 @@
 
 {% block scripts %}
 <script>
-function refreshUpdates() {
-    location.reload();
+// Force a fresh package scan (bypasses the cached list), then reload so the
+// tables and the Install (N) button reflect it.
+async function refreshUpdates(btn) {
+    await withBusy(btn, async function() {
+        try {
+            const res = await fetch('/api/refresh/updates');
+            if (!res.ok) {
+                let data = null;
+                try { data = await res.json(); } catch (e) { data = null; }
+                if (!isAuthOrCsrfFailure(res, data)) showToast((data && data.message) || 'Could not refresh the package list (HTTP ' + res.status + ')', 'error');
+                return;
+            }
+        } catch (e) {
+            showToast('Connection error', 'error');
+            return;
+        }
+        location.reload();
+        // Keep the button busy until the page is replaced.
+        await new Promise(function() {});
+    });
 }
 
 async function installUpdates() {
@@ -225,8 +241,12 @@ async function installUpdates() {
         if (res.ok) {
             badgeEl.textContent = 'Updates installed';
             badgeEl.className = 'badge badge-green';
-            logEl.textContent = data.output || 'Done.';
-            showToast('Updates installed successfully', 'success');
+            logEl.textContent = (data.output || 'Done.') + '\n\nRefreshing the package list...';
+            showToast('Updates installed successfully. Refreshing the list...', 'success');
+            // The server already dropped its cached package list; reload so
+            // the tables and "Install (N)" are not stale.
+            setTimeout(function() { location.reload(); }, 3000);
+            return;
         } else {
             badgeEl.textContent = 'Installation failed';
             badgeEl.className = 'badge badge-red';
@@ -431,6 +451,7 @@ async function loadHistory() {
 
         document.getElementById('historyLoading').style.display = 'none';
 
+        document.getElementById('historyCount').textContent = data.length ? data.length + ' run' + (data.length === 1 ? '' : 's') : 'none';
         if (!data.length) {
             document.getElementById('historyEmpty').style.display = 'block';
             return;
@@ -484,10 +505,21 @@ loadHistory();
 
 // Load current version on page load
 (function() {
+    function showCheckError(message) {
+        var errorEl = document.getElementById('appUpdateError');
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+    }
     fetch('/api/update/check').then(function(res) {
-        return res.json();
+        return res.json().catch(function() { return {}; }).then(function(data) {
+            if (!res.ok || data.status === 'error') {
+                if (!isAuthOrCsrfFailure(res, data)) showCheckError(data.message || 'Could not check for updates (HTTP ' + res.status + ')');
+                return null;
+            }
+            return data;
+        });
     }).then(function(data) {
-        if (data.current_version) {
+        if (data && data.current_version) {
             document.getElementById('appCurrentVersion').textContent = 'v' + data.current_version;
             document.getElementById('appVersionBadge').textContent = 'v' + data.current_version;
             if (data.update_available) {
@@ -507,8 +539,7 @@ loadHistory();
             }
         }
     }).catch(function() {
-        document.getElementById('appCurrentVersion').textContent = 'unknown';
-        document.getElementById('appVersionBadge').textContent = 'unknown';
+        showCheckError('Could not connect to check for updates.');
     });
 })();
 </script>

@@ -68,8 +68,8 @@
     </div>
 </div>
 
-<div class="card">
-    <div class="card-header">{{ icon('activity') }} Self-healing Services</div>
+<details class="card card-collapsible" data-persist="security-self-healing">
+    <summary class="card-header">{{ icon('activity') }} Self-healing Services <span class="summary-hint" id="healState">{{ 'On' if auto_heal.get('enabled') else 'Off' }}</span></summary>
     <div class="card-body">
         <p style="color:var(--text-secondary);margin:0 0 16px">
             When enabled, the monitor automatically restarts a monitored service that goes down
@@ -90,7 +90,7 @@
             <button type="button" class="btn btn-sm btn-primary" onclick="saveAutoHeal(this)">Save</button>
         </div>
     </div>
-</div>
+</details>
 {% endblock %}
 
 {% block scripts %}
@@ -123,6 +123,7 @@ async function saveAutoHeal(btn) {
     btn.disabled = false;
     if (data) {
         document.getElementById('healMaxLabel').textContent = maxRestarts;
+        document.getElementById('healState').textContent = enabled ? 'On' : 'Off';
         showToast('Auto-heal settings saved', 'success');
     }
 }

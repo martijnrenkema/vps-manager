@@ -58,8 +58,8 @@
 </div>
 
 <!-- Fail2ban actions -->
-<div class="card">
-    <div class="card-header">{{ icon('shield') }} Fail2ban Actions <span class="card-meta">recent bans & unbans</span></div>
+<details class="card card-collapsible" data-persist="ssh-f2b-actions">
+    <summary class="card-header">{{ icon('shield') }} Fail2ban Actions <span class="card-meta">recent bans & unbans</span> <span class="summary-hint">{{ (data.fail2ban_actions or [])|length }} entr{{ 'y' if (data.fail2ban_actions or [])|length == 1 else 'ies' }}</span></summary>
     <div class="card-body flush">
         {% if data.fail2ban_actions %}
         <div class="log-entries">
@@ -87,14 +87,14 @@
             <div class="empty-state">No fail2ban actions found</div>
         {% endif %}
     </div>
-</div>
+</details>
 
 <!-- Recent failed attempts -->
-<div class="card">
-    <div class="card-header">
+<details class="card card-collapsible" data-persist="ssh-failed">
+    <summary class="card-header">
         {{ icon('file-text') }} Failed Login Attempts <span class="card-meta">last 30 entries</span>
-        <button class="btn btn-sm btn-ghost" onclick="viewFullLog('failed')">View more</button>
-    </div>
+        <span class="summary-hint">{{ (data.recent_failed or [])|length }} shown</span>
+    </summary>
     <div class="card-body flush">
         {% if data.recent_failed %}
         <div class="log-entries">
@@ -115,14 +115,17 @@
         {% else %}
             <div class="empty-state">No failed login attempts</div>
         {% endif %}
+        <div class="collapsible-actions">
+            <button type="button" class="btn btn-sm btn-ghost" onclick="viewFullLog('failed')">View more</button>
+        </div>
     </div>
-</div>
+</details>
 
 <!-- Recent accepted logins -->
 <div class="card">
     <div class="card-header">
         {{ icon('file-text') }} Accepted Logins <span class="card-meta">last 20 entries</span>
-        <button class="btn btn-sm btn-ghost" onclick="viewFullLog('accepted')">View more</button>
+        <button type="button" class="btn btn-sm btn-ghost" onclick="viewFullLog('accepted')">View more</button>
     </div>
     <div class="card-body flush">
         {% if data.recent_accepted %}
@@ -148,11 +151,10 @@
 </div>
 
 <!-- Recent SSH log entries -->
-<div class="card">
-    <div class="card-header">
+<details class="card card-collapsible" data-persist="ssh-recent">
+    <summary class="card-header">
         {{ icon('file-text') }} Recent SSH Log <span class="card-meta">last 20 sshd entries</span>
-        <button class="btn btn-sm btn-ghost" onclick="viewFullLog('all')">View more</button>
-    </div>
+    </summary>
     <div class="card-body flush">
         {% if data.recent_entries %}
         <div class="log-entries">
@@ -183,8 +185,11 @@
         {% else %}
             <div class="empty-state">No SSH log entries found</div>
         {% endif %}
+        <div class="collapsible-actions">
+            <button type="button" class="btn btn-sm btn-ghost" onclick="viewFullLog('all')">View more</button>
+        </div>
     </div>
-</div>
+</details>
 {% endblock %}
 
 {% block scripts %}
@@ -203,25 +208,41 @@ async function viewFullLog(filter) {
     }
 }
 
+// Same flow as firewallPost() on the Firewall page: a 409 {status:'confirm'}
+// (e.g. banning your own IP) asks again and resends with confirm: true.
+function postBan(ip, btn, confirmed) {
+    return withBusy(btn, async function() {
+        var body = {ip: ip, jail: 'sshd'};
+        if (confirmed) body.confirm = true;
+        var res, data = {};
+        try {
+            res = await fetch('/firewall/ban', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            try { data = await res.json(); } catch (e) { data = {}; }
+        } catch (e) {
+            showToast('Connection error', 'error');
+            return;
+        }
+        if (res.status === 409 && data.status === 'confirm' && !confirmed) {
+            showConfirm('Ban IP', data.message, function() {
+                postBan(ip, btn, true);
+            }, { destructive: true, confirmLabel: 'Do it anyway' });
+            return;
+        }
+        if (res.ok) {
+            showToast(data.message || 'IP banned', 'success');
+        } else if (!isAuthOrCsrfFailure(res, data)) {
+            showToast(data.message || 'Failed to ban IP', 'error');
+        }
+    });
+}
+
 function banIp(ip, btn) {
     showConfirm('Ban IP', 'Ban IP ' + ip + ' via fail2ban + UFW?', function() {
-        withBusy(btn, async function() {
-            try {
-                var res = await fetch('/firewall/ban', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ip: ip, jail: 'sshd'})
-                });
-                var data = await res.json();
-                if (res.ok) {
-                    showToast(data.message || 'IP banned', 'success');
-                } else {
-                    showToast(data.message || 'Failed to ban IP', 'error');
-                }
-            } catch (e) {
-                showToast('Connection error', 'error');
-            }
-        });
+        postBan(ip, btn, false);
     }, { confirmLabel: 'Ban' });
 }
 </script>
