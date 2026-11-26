@@ -8,6 +8,8 @@
 
 set -Eeuo pipefail
 umask 027
+# Jobs in /etc/cron.d get PATH=/usr/bin:/bin, which lacks runuser.
+export PATH="$PATH:/usr/local/sbin:/usr/sbin:/sbin"
 
 BACKUP_ENV="${BACKUP_ENV:-/var/www/vps-manager/data/.backup_env}"
 # Load overrides first: the defaults below are derived from each other
@@ -40,7 +42,22 @@ MANAGER_DATA_DIR="${MANAGER_DATA_DIR:-/var/www/vps-manager/data}"
 SKIP_DIRS="${SKIP_DIRS:-html vps-manager}"
 SKIP_CONFIG_DIRS="${SKIP_CONFIG_DIRS:-$SKIP_DIRS}"
 
+# Data of apps that live outside $WWW_DIR (e.g. a self-hosted tool in /opt).
+# Both are space-separated lists of absolute paths.
+# EXTRA_SQLITE_DBS: SQLite databases, snapshotted to databases/.
+# EXTRA_CONFIG_PATHS: files or directories, packed into configs/extra_DATE.tar.gz.
+EXTRA_SQLITE_DBS="${EXTRA_SQLITE_DBS:-}"
+EXTRA_CONFIG_PATHS="${EXTRA_CONFIG_PATHS:-}"
+
 WEBHOOK_SECRET="${WEBHOOK_SECRET:-}"
+
+# Problems that must not stop the run (the sites still get backed up) but do
+# turn the final report into a failure.
+WARNINGS=""
+add_warning() {
+    WARNINGS="$WARNINGS; $1"
+    echo "$(date): WARNING: $1" >> "$LOG"
+}
 
 mkdir -p "$BACKUP_DIR/databases" "$BACKUP_DIR/configs" "$BACKUP_DIR/sites" "$(dirname "$LOG")"
 
@@ -219,6 +236,49 @@ while IFS= read -r -d '' dbfile; do
 done < <(find "$WWW_DIR" -maxdepth 5 -name "*.db" -type f \
     ! -path "*/node_modules/*" ! -path "*/venv/*" ! -path "*/.venv/*" -print0 2>/dev/null)
 
+# SQLite databases outside $WWW_DIR. Python's backup API takes a consistent
+# snapshot while the app keeps writing; a cp of a live database (certainly one
+# in WAL mode) can be corrupt. The snapshot runs as the file's owner: if root
+# opened a WAL database while it had no -wal/-shm files, SQLite would create
+# them owned by root and the app could no longer write to its own database.
+snapshot_sqlite() {
+    local src="$1" dest="$2" owner work rc=0
+    owner=$(stat -c %U "$src")
+    work=$(mktemp -d)
+    chown "$owner" "$work"
+    runuser -u "$owner" -- python3 - "$src" "$work/snapshot.sqlite" <<'PY' || rc=$?
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1])
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+result = dst.execute("PRAGMA integrity_check").fetchone()[0]
+dst.close()
+src.close()
+if result != "ok":
+    sys.exit("integrity_check: " + result)
+PY
+    if [ "$rc" -eq 0 ]; then
+        { gzip -c "$work/snapshot.sqlite" > "$dest.tmp" && mv "$dest.tmp" "$dest"; } || rc=$?
+    fi
+    rm -rf "$work"
+    rm -f "$dest.tmp"
+    return "$rc"
+}
+
+EXTRA_SQLITE_COUNT=0
+for dbfile in $EXTRA_SQLITE_DBS; do
+    if [ ! -f "$dbfile" ]; then
+        add_warning "EXTRA_SQLITE_DBS entry $dbfile not found"
+        continue
+    fi
+    safename=$(printf '%s' "${dbfile#/}" | sed 's|/|_|g; s|\.[A-Za-z0-9]*$||')
+    if snapshot_sqlite "$dbfile" "$BACKUP_DIR/databases/${safename}_$DATE.sqlite.gz"; then
+        EXTRA_SQLITE_COUNT=$((EXTRA_SQLITE_COUNT + 1))
+    else
+        add_warning "snapshot of $dbfile failed"
+    fi
+done
+
 find "$BACKUP_DIR/databases" -type f -mtime +"$RETENTION_DAYS" -delete
 
 # =============================================================================
@@ -246,6 +306,19 @@ if [ -d "$MANAGER_DATA_DIR" ]; then
     tar czf "$BACKUP_DIR/configs/vps-manager-data_$DATE.tar.gz" \
         --exclude='*.tmp' \
         -C "$(dirname "$MANAGER_DATA_DIR")" "$(basename "$MANAGER_DATA_DIR")"
+fi
+
+extra_paths=()
+for p in $EXTRA_CONFIG_PATHS; do
+    if [ -e "$p" ]; then
+        extra_paths+=("${p#/}")
+    else
+        add_warning "EXTRA_CONFIG_PATHS entry $p not found"
+    fi
+done
+if [ "${#extra_paths[@]}" -gt 0 ]; then
+    tar czf "$BACKUP_DIR/configs/extra_$DATE.tar.gz" -C / "${extra_paths[@]}" \
+        || add_warning "could not pack EXTRA_CONFIG_PATHS"
 fi
 
 # Process substitution instead of a pipe: in a pipe subshell a failing cp
@@ -331,6 +404,12 @@ MANIFEST_FILE="$BACKUP_DIR/configs/manifest_$DATE.txt"
     echo
     echo "[databases]"
     printf '%s\n' "$DATABASES" | sed '/^$/d' | sort
+    echo
+    echo "[extra_sqlite]"
+    printf '%s\n' $EXTRA_SQLITE_DBS
+    echo
+    echo "[extra_config]"
+    printf '%s\n' $EXTRA_CONFIG_PATHS
 } > "$MANIFEST_FILE"
 
 cd "$BACKUP_DIR"
@@ -375,6 +454,19 @@ CHECKSUM_COUNT=$(wc -l < "$CHECKSUM_FILE")
 BACKUP_SIZE=$(du -sh "$BACKUP_DIR" | cut -f1)
 SITE_COUNT=$(find "$BACKUP_DIR/sites" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | wc -l)
 
-message="Backup completed - $SITE_COUNT sites, $DB_COUNT MariaDB databases$MYSQL_NOTE - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums"
-echo "$(date): $message" >> "$LOG"
-report_status "success" "$message"
+message="$SITE_COUNT sites, $DB_COUNT MariaDB databases$MYSQL_NOTE"
+if [ "$EXTRA_SQLITE_COUNT" -gt 0 ]; then
+    message="$message, $EXTRA_SQLITE_COUNT extra SQLite databases"
+fi
+message="$message - $BACKUP_SIZE on disk - $CHECKSUM_COUNT checksums"
+if [ -n "$WARNINGS" ]; then
+    # Reason first: the dashboard alert and notifications show only the first
+    # 80 characters, which used to be the "Backup completed - ..." summary.
+    message="Backup incomplete:${WARNINGS#;} - $message"
+    echo "$(date): $message" >> "$LOG"
+    report_status "failure" "$message"
+else
+    message="Backup completed - $message"
+    echo "$(date): $message" >> "$LOG"
+    report_status "success" "$message"
+fi

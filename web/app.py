@@ -1039,7 +1039,7 @@ def _auto_heal_services(services):
         if svc.get('status') not in ('failed', 'inactive'):
             continue
         name = svc.get('name', '')
-        if not name or not is_safe_name(name) or name in manually_stopped:
+        if not name or not is_safe_unit_name(name) or name in manually_stopped:
             continue
 
         with _auto_heal_lock:
@@ -1082,6 +1082,101 @@ def _auto_heal_services(services):
     if healed_any:
         _invalidate_cache('get_services_status')
     return alerts
+
+
+# Updates herstarten services bewust: needrestart (aangeroepen door apt en
+# unattended-upgrades) doet `systemctl restart` op alles wat een bijgewerkte
+# library gebruikt, en een pakket-upgrade stopt de service van dat pakket.
+# Een service die daarbij even 'deactivating' of 'inactive' is, is geen
+# storing. Zolang pakketbeheer draait worden service- en PM2-alerts daarom
+# vastgehouden; blijft er na afloop iets down, dan meldt de eerstvolgende
+# cyclus dat alsnog.
+_PKG_MANAGER_NAMES = frozenset({
+    'apt', 'apt-get', 'aptitude', 'dpkg', 'unattended-upgrade', 'needrestart',
+})
+_UPGRADE_HELD_ALERT_PREFIXES = ('service_down_', 'pm2_offline_')
+# Een hangende apt/dpkg mag alerts niet eindeloos inslikken.
+_PKG_BUSY_MAX_SECONDS = 3600
+_pkg_busy_since = None  # alleen gebruikt door de monitor-thread
+
+
+def _program_name(argv):
+    """Naam van het programma uit een /proc-cmdline: bij een script
+    (`/usr/bin/python3 /usr/bin/unattended-upgrade`) de naam van het script."""
+    name = os.path.basename(argv[0])
+    if name.startswith((b'python', b'perl')) or name in (b'sh', b'bash', b'dash'):
+        script = next((a for a in argv[1:] if a and not a.startswith(b'-')), None)
+        if script:
+            name = os.path.basename(script)
+    return name.decode('utf-8', 'replace')
+
+
+def _package_manager_running():
+    """Draait er nu apt, dpkg, unattended-upgrade of needrestart?
+
+    Op argv i.p.v. comm: de altijd draaiende daemon
+    unattended-upgrade-shutdown heeft dezelfde (op 15 tekens afgekapte) comm
+    'unattended-upgr' als unattended-upgrade zelf.
+    """
+    try:
+        pids = [p for p in os.listdir('/proc') if p.isdigit()]
+    except OSError:
+        return False
+    for pid in pids:
+        try:
+            with open(f'/proc/{pid}/cmdline', 'rb') as f:
+                argv = f.read().split(b'\0')
+        except OSError:
+            continue  # proces is al weg, of geen rechten
+        if argv and argv[0] and _program_name(argv) in _PKG_MANAGER_NAMES:
+            return True
+    return False
+
+
+def _package_manager_busy():
+    """Als _package_manager_running(), maar geeft na _PKG_BUSY_MAX_SECONDS
+    aaneengesloten activiteit False terug."""
+    global _pkg_busy_since
+    if not _package_manager_running():
+        _pkg_busy_since = None
+        return False
+    now = time.time()
+    if _pkg_busy_since is None:
+        _pkg_busy_since = now
+    if now - _pkg_busy_since > _PKG_BUSY_MAX_SECONDS:
+        logger.warning("Package manager has been running for over %d min; "
+                       "no longer holding service alerts", _PKG_BUSY_MAX_SECONDS // 60)
+        return False
+    return True
+
+
+# Tussenstanden van systemd: een herstart gaat via 'deactivating' en
+# 'activating' naar 'active'. fail2ban doet over het stoppen soms ruim een
+# minuut. Pas melden als de service daarna nog steeds niet actief is.
+_TRANSITIONAL_SERVICE_STATES = frozenset({'activating', 'deactivating', 'reloading', 'refreshing'})
+_SERVICE_SETTLE_MAX_SECONDS = 150
+_SERVICE_SETTLE_POLL_SECONDS = 10
+
+
+def _settle_services(services, max_wait=_SERVICE_SETTLE_MAX_SECONDS,
+                     poll=_SERVICE_SETTLE_POLL_SECONDS):
+    """Wacht (max. max_wait seconden) tot geen enkele service meer in een
+    tussenstand staat en geef de dan actuele status terug. Een service die
+    blijft hangen (bijv. 'activating (auto-restart)' bij een crash-loop)
+    wordt na max_wait gewoon gemeld."""
+    deadline = time.monotonic() + max_wait
+    waited = False
+    while (any(s.get('status') in _TRANSITIONAL_SERVICE_STATES for s in services)
+           and time.monotonic() < deadline):
+        waited = True
+        time.sleep(poll)
+        _invalidate_cache('get_services_status')
+        services = get_services_status()
+    if waited:
+        still = [s['name'] for s in services if s.get('status') in _TRANSITIONAL_SERVICE_STATES]
+        if still:
+            logger.info("Services still in a transitional state after %ds: %s", max_wait, ', '.join(still))
+    return services
 
 
 def _find_legacy_log_entry(notif_log, alert_key, email):
@@ -1156,16 +1251,29 @@ def _monitor_loop():
 
             services = get_services_status()
 
+            # Tijdens een update (apt/dpkg/needrestart) worden services bewust
+            # herstart: dan niet ingrijpen en niet melden (zie
+            # _PKG_MANAGER_NAMES). Anders eerst services die midden in een
+            # herstart zitten laten afronden.
+            pkg_busy = False
+            try:
+                pkg_busy = _package_manager_busy()
+                if not pkg_busy:
+                    services = _settle_services(services)
+            except Exception as e:
+                logger.warning(f"Service settle check error: {e}")
+
             # Self-healing: probeer gefaalde services te herstarten vóórdat de
             # alerts worden opgebouwd, zodat een geslaagde heal een
             # heal-notificatie geeft in plaats van een "service down"-alert.
             heal_alerts = []
-            try:
-                heal_alerts = _auto_heal_services(services)
-                if any(a['key'].startswith('auto_heal_ok_') for a in heal_alerts):
-                    services = get_services_status()
-            except Exception as e:
-                logger.warning(f"Auto-heal error: {e}")
+            if not pkg_busy:
+                try:
+                    heal_alerts = _auto_heal_services(services)
+                    if any(a['key'].startswith('auto_heal_ok_') for a in heal_alerts):
+                        services = get_services_status()
+                except Exception as e:
+                    logger.warning(f"Auto-heal error: {e}")
 
             if not subs and not email_prefs_any:
                 seed_on_first_cycle = False
@@ -1179,6 +1287,15 @@ def _monitor_loop():
             alerts = get_dashboard_alerts(data, services, pm2, ssl)
             alerts.extend(heal_alerts)
             del data, services, pm2, ssl
+
+            held_alerts = []
+            if pkg_busy:
+                held_alerts = [a for a in alerts
+                               if a.get('key', '').startswith(_UPGRADE_HELD_ALERT_PREFIXES)]
+                if held_alerts:
+                    alerts = [a for a in alerts if a not in held_alerts]
+                    logger.info("Package manager running, holding alerts until it is done: %s",
+                                '; '.join(a['message'] for a in held_alerts))
 
             # Add DDoS alerts
             alerts.extend(check_ddos_indicators())
@@ -1199,6 +1316,11 @@ def _monitor_loop():
 
                 # Build set of current alert keys so we can detect resolved alerts
                 current_alert_keys = set()
+                # Vastgehouden alerts zijn niet opgelost: anders verdwijnt hun
+                # log-entry en wordt een al gemelde storing na de update
+                # opnieuw verstuurd.
+                for alert in held_alerts:
+                    current_alert_keys.add(f"{_classify_alert(alert)}:{alert['key']}")
                 # Safety net: dedupe by (category, message) within this cycle so
                 # two alerts that resolve to identical text — e.g. via different
                 # `key` fields — can never produce two identical notifications.
@@ -1877,6 +1999,13 @@ def is_safe_name(name):
     afsluitende newline niet door de check glipt.
     """
     return isinstance(name, str) and bool(re.match(r'[a-zA-Z0-9_][a-zA-Z0-9._-]*\Z', name))
+
+
+def is_safe_unit_name(name):
+    """Als is_safe_name, maar met '@' voor systemd template-instances
+    (postgresql@16-main). Die worden gemonitord en door "Detect" voorgesteld,
+    maar konden niet opgeslagen, herstart of door auto-heal gestart worden."""
+    return isinstance(name, str) and bool(re.match(r'[a-zA-Z0-9_][a-zA-Z0-9._@-]*\Z', name))
 
 
 # ---------------------------------------------------------------------------
@@ -3248,10 +3377,22 @@ def get_backup_status():
     # zou hier anders nog steeds getoond worden.
     if isinstance(log_path, str) and _is_valid_backup_log_path(log_path):
         result = run_cmd_safe(["tail", "-5", log_path])
+        # vps-backup.sh (umask 027) en de meegeleverde logrotate-config maken
+        # de log root-only (0640 root:adm), dus voor een app zonder root bleef
+        # hij leeg. Dan via sudo, maar alleen onder /var/log: deze instelling
+        # mag geen sudo-leesroute naar willekeurige bestanden worden.
+        real_log = os.path.realpath(log_path)
+        if result.returncode != 0 and _under(real_log, '/var/log'):
+            result = run_cmd_safe(["sudo", "tail", "-n", "5", "--", real_log])
         if result.returncode == 0:
             data['log'] = result.stdout.strip()
 
     result = run_cmd_safe(["du", "-sh", backup_dir])
+    # databases/ en configs/ zijn 0750 en van root zolang BACKUP_READ_USER niet
+    # de app-gebruiker is: du faalt dan en de pagina meldde "No backup
+    # directory found".
+    if result.returncode != 0 and not _is_forbidden_dir(backup_dir):
+        result = run_cmd_safe(["sudo", "du", "-sh", "--", backup_dir])
     if result.returncode == 0:
         data['size'] = result.stdout.strip()
 
@@ -3264,18 +3405,33 @@ def get_backup_status():
         try:
             p = Path(dir_path)
             if p.is_dir():
-                files = []
-                for f in sorted(p.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
-                    if f.is_file():
-                        st = f.stat()
-                        files.append({
-                            'name': f.name,
-                            'path': str(f),
-                            'size': format_file_size(st.st_size),
-                            'size_bytes': st.st_size,
-                            'modified': datetime.fromtimestamp(st.st_mtime).strftime('%Y-%m-%d %H:%M'),
-                        })
-                data[key] = files[:20]
+                try:
+                    entries = [(f.name, st.st_size, st.st_mtime)
+                               for f in p.iterdir() if f.is_file() for st in (f.stat(),)]
+                except PermissionError:
+                    # Zelfde root-only map als hierboven: zonder deze fallback
+                    # stonden de database-dumps niet in de downloadlijst (de
+                    # download zelf valt al terug op sudo).
+                    if _is_forbidden_dir(dir_path):
+                        continue
+                    found = run_cmd_safe(['sudo', 'find', dir_path, '-maxdepth', '1', '-mindepth', '1',
+                                          '-type', 'f', '-printf', '%f\\t%s\\t%T@\\n'], timeout=15)
+                    entries = []
+                    for line in found.stdout.splitlines() if found.returncode == 0 else []:
+                        parts = line.split('\t')
+                        if len(parts) == 3:
+                            try:
+                                entries.append((parts[0], int(parts[1]), float(parts[2])))
+                            except ValueError:
+                                continue
+                entries.sort(key=lambda e: e[2], reverse=True)
+                data[key] = [{
+                    'name': name,
+                    'path': str(p / name),
+                    'size': format_file_size(size),
+                    'size_bytes': size,
+                    'modified': datetime.fromtimestamp(mtime).strftime('%Y-%m-%d %H:%M'),
+                } for name, size, mtime in entries[:20]]
         except OSError:
             pass
 
@@ -5243,7 +5399,7 @@ def services():
 def service_action(action, name):
     if action not in ('restart', 'stop', 'start'):
         return jsonify({'status': 'error', 'message': 'Invalid action'}), 400
-    if not is_safe_name(name):
+    if not is_safe_unit_name(name):
         return jsonify({'status': 'error', 'message': 'Invalid service name'}), 400
     # Marker vóór de stop: een trage stop (MariaDB) loopt na de 30s-timeout
     # door in systemd, en zonder marker herstartte auto-heal de dienst dan
@@ -5807,8 +5963,10 @@ def firewall_whitelist_get():
 @login_required
 def firewall_whitelist_set():
     """Update the fail2ban ignoreip whitelist in jail.local"""
-    data = request.get_json(silent=True) or {}
-    ips = data.get('ips', [])
+    data = _json_body()
+    # Geen default []: een body zonder (of met een ongeldige) 'ips' wiste
+    # anders de hele whitelist, inclusief 127.0.0.1 en het eigen IP.
+    ips = data.get('ips')
 
     if not isinstance(ips, list):
         return jsonify({'status': 'error', 'message': 'ips must be a list'}), 400
@@ -6223,8 +6381,10 @@ def _parse_unattended_upgrades_log():
     """Parse /var/log/unattended-upgrades/unattended-upgrades.log for recent activity"""
     log_path = '/var/log/unattended-upgrades/unattended-upgrades.log'
     entries = []
-    # Only read last 500 lines instead of entire file to limit memory usage
-    result = run_cmd_safe(['tail', '-500', log_path], timeout=5)
+    # Only read last 500 lines instead of entire file to limit memory usage.
+    # Met sudo: /var/log/unattended-upgrades is root:adm 0750, dus zonder
+    # bleef de historie van automatische updates altijd leeg.
+    result = run_cmd_safe(['sudo', 'tail', '-500', log_path], timeout=5)
     if result.returncode != 0:
         return entries
     lines = result.stdout.split('\n')
@@ -8000,7 +8160,9 @@ def validate_config(data):
             errors.append('services must be a list')
         else:
             for s in data['services']:
-                if not isinstance(s, str) or not re.match(r'^[a-zA-Z0-9._-]+$', s):
+                # '@' voor template-instances (postgresql@16-main), die
+                # "Detect" ook voorstelt
+                if not isinstance(s, str) or not re.match(r'^[a-zA-Z0-9._@-]+$', s):
                     errors.append(f'Invalid service name: {s}')
 
     if 'file_browser' in data:
@@ -9758,8 +9920,13 @@ def get_caddy_certificates():
     if result.returncode != 0 or not result.stdout.strip():
         return []
 
-    certs = []
-    seen_domains = set()
+    # Per domein het langst geldige certificaat: na een wissel van CA
+    # (staging → productie, Let's Encrypt → ZeroSSL-fallback) blijft het oude
+    # certificaat in een andere issuer-map staan tot Caddy het opruimt. Het
+    # eerste dat `find` vond telde, wat een valse "verloopt"/"verlopen"-alert
+    # gaf terwijl de site een geldig certificaat serveert (zelfde aanpak als
+    # de dubbele certbot-lineages).
+    best = {}
     for cert_path in result.stdout.strip().split('\n'):
         cert_path = cert_path.strip()
         if not cert_path:
@@ -9772,9 +9939,8 @@ def get_caddy_certificates():
             if p == 'certificates' and idx + 2 < len(parts):
                 domain = parts[idx + 2]  # Skip the ACME provider dir
                 break
-        if not domain or domain in seen_domains:
+        if not domain:
             continue
-        seen_domains.add(domain)
 
         # Read certificate expiry
         expiry_result = run_cmd_safe(
@@ -9801,12 +9967,14 @@ def get_caddy_certificates():
         days_left = (expiry_dt - datetime.now(timezone.utc)).days
         expiry_date = expiry_dt.strftime('%Y-%m-%d')
 
-        certs.append({
-            'domain': domain,
-            'expiry': expiry_date,
-            'days_left': days_left,
-        })
+        if domain not in best or days_left > best[domain]['days_left']:
+            best[domain] = {
+                'domain': domain,
+                'expiry': expiry_date,
+                'days_left': days_left,
+            }
 
+    certs = list(best.values())
     certs.sort(key=lambda x: x['days_left'])
     return certs
 
