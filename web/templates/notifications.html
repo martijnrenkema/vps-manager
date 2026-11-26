@@ -374,6 +374,7 @@
     async function doSaveAllPreferences() {
         try {
             // Save push preferences if subscribed
+            let pushFailed = false;
             if (currentSubscription) {
                 const pushPrefs = { endpoint: currentSubscription.endpoint };
                 const cats = ['critical','warnings','updates','security','ddos','backup','app_update'];
@@ -383,10 +384,9 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(pushPrefs),
                 });
-                if (!pushRes.ok) {
-                    showToast('Failed to save push preferences', 'error');
-                    return;
-                }
+                // Niet afbreken: een (elders verwijderde) push-subscription mag
+                // het opslaan van de e-mailvoorkeuren niet blokkeren
+                if (!pushRes.ok) pushFailed = true;
             }
 
             // Save email preferences (always)
@@ -399,7 +399,10 @@
                 body: JSON.stringify(emailPrefs),
             });
 
-            if (res.ok) {
+            if (res.ok && pushFailed) {
+                showToast('Email preferences saved, but push preferences could not be saved', 'error');
+                loadAllSubscriptions();
+            } else if (res.ok) {
                 showToast('Preferences saved', 'success');
                 loadAllSubscriptions();
             } else {

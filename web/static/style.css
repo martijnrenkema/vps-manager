@@ -1,155 +1,161 @@
 /* ==========================================================================
-   VPS Manager — "Graphite"
-   Dark-first operations console. Warm graphite neutrals, one quiet accent
-   (links, focus, selection), colour only for status. IBM Plex Sans for words,
-   IBM Plex Mono for identifiers and figures.
+   VPS Manager
+   Dark-first operations console in the style of muxdeck and the regiekamer:
+   slate neutrals, flat opaque panels with a 1px edge, teal as the one accent
+   (links, focus, selection, primary action), colour otherwise only for status.
+   System sans for words, system mono for identifiers and figures.
 
-   The @font-face rules live inline in templates/_theme_head.html so their URLs
-   can carry the cache-busting ?v= (and match the <link rel="preload">).
    Theme: <html data-theme="dark|light">, set before first paint by the same
    partial (stored choice, otherwise prefers-color-scheme).
    ========================================================================== */
 
-/* ---------- tokens: dark (default) ---------- */
+/* ---------- tokens: dark (default) ----------
+   Dezelfde tinten als muxdeck (muxdeck/web/style.css) en de regiekamer:
+   leisteen-ondergrond, vlakke ondoorzichtige panelen met een dunne rand,
+   teal als enige accent. Elke statuskleur heeft één betekenis:
+   groen = in orde, amber = aandacht, rood = mis, teal = bezig/info. */
 :root,
 :root[data-theme="dark"] {
     color-scheme: dark;
 
-    --bg: #0f0f0e;
-    --bg-nav: #0b0b0a;          /* sidebar is dimmer than the content */
-    --surface: #151514;         /* panels */
-    --surface-2: #1b1b19;       /* hover, selected, raised */
-    --surface-3: #22221f;       /* hover on raised */
-    --inset: #0c0c0b;           /* inputs, code, logs */
-    --hover: rgba(255, 255, 250, 0.035);
-    --line: #262624;
-    --line-strong: #34342f;
-    --line-subtle: #1f1f1d;
+    --bg: #14161a;
+    --bg-nav: #1c1f26;          /* zijbalk = paneel, zoals in muxdeck */
+    --surface: #1c1f26;         /* panels */
+    --surface-2: #262a33;       /* hover, selected, raised */
+    --surface-3: #2e333d;       /* hover on raised */
+    --inset: #111317;           /* inputs, code, logs */
+    --hover: rgba(216, 222, 233, 0.04);
+    --line: #2e333d;
+    --line-strong: #3a404c;
+    --line-subtle: #252931;
 
-    --text: #ebeae5;
-    --text-2: #a3a199;
-    --text-3: #858379;
+    --text: #d8dee9;
+    --text-2: #9aa3b2;
+    --text-3: #7f8796;          /* muxdeck dimt tot #6b7280; iets lichter voor 4.5:1 op panelen */
 
-    --accent: #8fb3ff;          /* links, focus, selection — never decoration */
-    --accent-hover: #adc6ff;
-    --accent-bg: rgba(143, 179, 255, 0.12);
-    --accent-line: rgba(143, 179, 255, 0.45);
+    --accent: #5eead4;          /* links, focus, selection, primary action */
+    --accent-hover: #99f6e4;
+    --accent-bg: rgba(94, 234, 212, 0.12);
+    --accent-line: rgba(94, 234, 212, 0.45);
 
-    --ok: #4fbf7f;
-    --warn: #e5a93a;
-    --err: #f0705e;
-    --info: #74a7f0;
-    --ok-bg: rgba(79, 191, 127, 0.10);
-    --warn-bg: rgba(229, 169, 58, 0.10);
-    --err-bg: rgba(240, 112, 94, 0.11);
-    --info-bg: rgba(116, 167, 240, 0.10);
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --err: #f87171;
+    --info: #5eead4;
+    --ok-bg: rgba(74, 222, 128, 0.10);
+    --warn-bg: rgba(251, 191, 36, 0.10);
+    --err-bg: rgba(248, 113, 113, 0.10);
+    --info-bg: rgba(94, 234, 212, 0.10);
 
-    /* Primary button = inverted text colour; no brand-coloured fills */
-    --btn-primary: #ebeae5;
-    --btn-primary-hover: #ffffff;
-    --btn-primary-fg: #111110;
-    --btn-danger: #b8412f;      /* wit erop: 5.5:1 */
-    --btn-danger-hover: #c64a37;
-    --btn-danger-fg: #ffffff;
+    /* Primary = teal met donkere tekst, zoals de knoppen in muxdeck */
+    --btn-primary: #5eead4;
+    --btn-primary-hover: #99f6e4;
+    --btn-primary-fg: #0b0e11;
+    --btn-danger: #f87171;      /* donkere tekst erop: 7.5:1 */
+    --btn-danger-hover: #fca5a5;
+    --btn-danger-fg: #0b0e11;
 
-    --scrim: rgba(0, 0, 0, 0.6);
-    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.55), 0 0 0 1px var(--line-strong);
-    --scroll-thumb: rgba(255, 255, 250, 0.12);
+    --scrim: rgba(0, 0, 0, 0.55);
+    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px var(--line-strong);
+    --scroll-thumb: #2e333d;
 
     /* Charts (read by JS via getComputedStyle) */
-    --chart-1: #5f8ad6;         /* single-series data line */
-    --chart-2: #9d9b93;         /* 2nd series: neutral so no hue competes with status */
-    --chart-3: #4fbf7f;
-    --chart-4: #74a7f0;
-    --chart-5: #e5a93a;
-    --chart-6: #c77dba;
-    --chart-7: #f0705e;
-    --chart-8: #8fb3ff;
-    --chart-grid: #232321;
-    --chart-tick: #7b7970;
-    --chart-cross: #5a5953;
-    --chart-area: 0.07;
+    --chart-1: #5eead4;         /* single-series data line */
+    --chart-2: #9aa3b2;         /* 2nd series: neutral so no hue competes with status */
+    --chart-3: #4ade80;
+    --chart-4: #7dd3fc;
+    --chart-5: #fbbf24;
+    --chart-6: #c4b5fd;
+    --chart-7: #f87171;
+    --chart-8: #99f6e4;
+    --chart-grid: #262a33;
+    --chart-tick: #6b7280;
+    --chart-cross: #4b5262;
+    --chart-area: 0.08;
     /* Categorical series (per-site lines): no status hues */
-    --cat-1: #3987e5;
-    --cat-2: #d95926;
-    --cat-3: #199e70;
-    --cat-4: #d55181;
-    --cat-5: #9085e9;
+    --cat-1: #38bdf8;
+    --cat-2: #fb923c;
+    --cat-3: #a78bfa;
+    --cat-4: #f472b6;
+    --cat-5: #94a3b8;
 
     /* Syntax colours (editors) */
-    --syn-directive: #8fb3ff;
-    --syn-string: #9fcf8f;
-    --syn-number: #d6a8e8;
-    --syn-brace: #d9b36a;
-    --syn-variable: #7fcfc4;
+    --syn-directive: #5eead4;
+    --syn-string: #a3e3a1;
+    --syn-number: #c4b5fd;
+    --syn-brace: #e5c07b;
+    --syn-variable: #7dd3fc;
 }
 
+/* Licht: muxdeck heeft er geen; zelfde opbouw met koele neutralen en een
+   donkerder teal zodat tekst en knoppen 4.5:1 halen op wit. */
 :root[data-theme="light"] {
     color-scheme: light;
 
-    --bg: #f7f7f5;
-    --bg-nav: #efefec;
+    --bg: #f4f5f7;
+    --bg-nav: #ffffff;
     --surface: #ffffff;
-    --surface-2: #f3f3f0;
-    --surface-3: #ebebe7;
-    --inset: #fafaf8;
-    --hover: rgba(27, 27, 25, 0.03);
-    --line: #e4e3de;
-    --line-strong: #d2d1ca;
-    --line-subtle: #ecebe7;
+    --surface-2: #eef0f3;
+    --surface-3: #e4e7ec;
+    --inset: #f8f9fb;
+    --hover: rgba(20, 22, 26, 0.035);
+    --line: #dfe2e8;
+    --line-strong: #c9ced6;
+    --line-subtle: #e9ecf0;
 
-    --text: #1b1b19;
-    --text-2: #55544f;
-    --text-3: #6e6d66;
+    --text: #14161a;
+    --text-2: #4b5262;
+    --text-3: #646b78;
 
-    --accent: #2f5fd0;
-    --accent-hover: #244fb5;
-    --accent-bg: rgba(47, 95, 208, 0.08);
-    --accent-line: rgba(47, 95, 208, 0.45);
+    --accent: #0f766e;
+    --accent-hover: #115e59;
+    --accent-bg: rgba(15, 118, 110, 0.08);
+    --accent-line: rgba(15, 118, 110, 0.45);
 
-    --ok: #1a7346;
-    --warn: #9a5d00;
-    --err: #c53b2c;
-    --info: #2f64c0;
-    --ok-bg: rgba(30, 127, 79, 0.08);
-    --warn-bg: rgba(179, 109, 0, 0.09);
-    --err-bg: rgba(197, 59, 44, 0.07);
-    --info-bg: rgba(47, 100, 192, 0.07);
+    --ok: #15803d;
+    --warn: #a16207;
+    --err: #dc2626;
+    --info: #0f766e;
+    --ok-bg: rgba(21, 128, 61, 0.08);
+    --warn-bg: rgba(161, 98, 7, 0.09);
+    --err-bg: rgba(220, 38, 38, 0.07);
+    --info-bg: rgba(15, 118, 110, 0.07);
 
-    --btn-primary: #1b1b19;
-    --btn-primary-hover: #33332f;
+    --btn-primary: #0f766e;
+    --btn-primary-hover: #115e59;
     --btn-primary-fg: #ffffff;
-    --btn-danger: #c53b2c;
-    --btn-danger-hover: #ad3123;
+    --btn-danger: #dc2626;
+    --btn-danger-hover: #b91c1c;
     --btn-danger-fg: #ffffff;
 
-    --scrim: rgba(20, 20, 18, 0.35);
-    --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.12), 0 0 0 1px var(--line-strong);
-    --scroll-thumb: rgba(27, 27, 25, 0.18);
+    --scrim: rgba(20, 22, 26, 0.35);
+    --shadow-pop: 0 12px 32px rgba(20, 22, 26, 0.12), 0 0 0 1px var(--line-strong);
+    --scroll-thumb: #c9ced6;
 
-    --chart-1: #3b6fd4;
-    --chart-2: #8a8980;
-    --chart-3: #1e7f4f;
-    --chart-4: #2f64c0;
-    --chart-5: #9a5d00;
-    --chart-6: #9b4f8f;
-    --chart-7: #c53b2c;
-    --chart-8: #2f5fd0;
-    --chart-grid: #ecebe7;
-    --chart-tick: #85847c;
-    --chart-cross: #b9b8b0;
-    --chart-area: 0.06;
-    --cat-1: #2a78d6;
-    --cat-2: #eb6834;
-    --cat-3: #1baf7a;
-    --cat-4: #e87ba4;
-    --cat-5: #4a3aa7;
+    --chart-1: #0d9488;
+    --chart-2: #8b93a1;
+    --chart-3: #16a34a;
+    --chart-4: #0284c7;
+    --chart-5: #ca8a04;
+    --chart-6: #7c3aed;
+    --chart-7: #dc2626;
+    --chart-8: #0f766e;
+    --chart-grid: #e9ecf0;
+    --chart-tick: #7f8796;
+    --chart-cross: #b8bec8;
+    --chart-area: 0.07;
+    --cat-1: #0284c7;
+    --cat-2: #ea580c;
+    --cat-3: #7c3aed;
+    --cat-4: #db2777;
+    --cat-5: #64748b;
 
-    --syn-directive: #2f5fd0;
-    --syn-string: #2d7a36;
-    --syn-number: #8a3fa0;
-    --syn-brace: #9a5d00;
-    --syn-variable: #0f7a70;
+    --syn-directive: #0f766e;
+    --syn-string: #15803d;
+    --syn-number: #7c3aed;
+    --syn-brace: #a16207;
+    --syn-variable: #0369a1;
+    --bs-link-color-rgb: 15, 118, 110;
 }
 
 :root {
@@ -183,12 +189,13 @@
     --red-bg: var(--err-bg);
     --purple-bg: var(--surface-2);
 
-    /* Radius: 6px panels, 4px controls, circles only for status dots */
-    --r-xs: 3px;
-    --r-sm: 4px;
-    --r-btn: 4px;
-    --r: 6px;
-    --r-lg: 8px;
+    /* Radius zoals muxdeck: 8px panelen en rijen, 6px knoppen en velden,
+       10px dialogen; cirkels alleen voor statusstippen */
+    --r-xs: 4px;
+    --r-sm: 6px;
+    --r-btn: 6px;
+    --r: 8px;
+    --r-lg: 10px;
     --r-pill: 999px;
 
     /* 4px grid */
@@ -210,8 +217,9 @@
     --fs-lg: 15px;
     --fs-xl: 20px;
     --fs-2xl: 22px;
-    --font-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
-    --font-mono: 'IBM Plex Mono', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+    /* Systeemletters, dezelfde stapel als muxdeck en de regiekamer */
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
     --ease: cubic-bezier(0.2, 0, 0, 1);
     --sidebar-width: 232px;
@@ -230,7 +238,7 @@
     --bs-tertiary-bg: var(--surface-2);
     --bs-link-color: var(--accent);
     --bs-link-hover-color: var(--accent-hover);
-    --bs-link-color-rgb: 143, 179, 255;
+    --bs-link-color-rgb: 94, 234, 212;
     --bs-table-bg: transparent;
     --bs-table-color: var(--text);
     --bs-table-hover-color: var(--text);
@@ -420,9 +428,9 @@ svg.i {
     flex-shrink: 0;
     display: grid;
     place-items: center;
-    border-radius: 5px;
-    background: var(--text);
-    color: var(--bg);
+    border-radius: var(--r-sm);
+    background: var(--accent-bg);
+    color: var(--accent);
     font: 600 11px/1 var(--font-mono);
     letter-spacing: -0.02em;
     text-transform: lowercase;
@@ -434,7 +442,8 @@ svg.i {
 }
 
 .host-name {
-    font: 500 13px/16px var(--font-mono);
+    font: 600 14px/18px var(--font-sans);
+    letter-spacing: 0.01em;
     color: var(--text);
     white-space: nowrap;
     overflow: hidden;
@@ -482,7 +491,7 @@ svg.i {
     margin: 0 0 6px;
     border: 1px solid var(--line);
     border-radius: var(--r-sm);
-    background: var(--bg);
+    background: var(--inset);
     color: var(--text-3);
     font: inherit;
     font-size: 13px;
@@ -492,7 +501,7 @@ svg.i {
 }
 
 .sidebar-jump:hover {
-    border-color: var(--line-strong);
+    border-color: var(--accent-line);
     color: var(--text-2);
 }
 
@@ -505,10 +514,11 @@ svg.i {
 }
 
 .sidebar-nav a {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 9px;
-    height: 27px;
+    height: 28px;
     padding: 0 8px;
     border-radius: var(--r-sm);
     color: var(--text-2);
@@ -530,13 +540,24 @@ svg.i {
 }
 
 .sidebar-nav a.active {
-    background: color-mix(in srgb, var(--text) 8%, transparent);
+    background: var(--surface-2);
     color: var(--text);
     font-weight: 500;
 }
 
+.sidebar-nav a.active::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 5px;
+    bottom: 5px;
+    width: 2px;
+    border-radius: 0 2px 2px 0;
+    background: var(--accent);
+}
+
 .sidebar-nav a.active svg.i {
-    color: var(--text);
+    color: var(--accent);
 }
 
 .nav-label {
@@ -566,7 +587,7 @@ svg.i {
 
 /* Sidebar groups: small sentence-case labels, collapsible */
 .sidebar-group {
-    margin-top: 8px;
+    margin-top: 12px;
 }
 
 .sidebar-group-header {
@@ -582,8 +603,10 @@ svg.i {
     background: none;
     color: var(--text-3);
     font-family: var(--font-sans);
-    font-size: 11.5px;
-    font-weight: 500;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     text-align: left;
     cursor: pointer;
     user-select: none;
@@ -829,8 +852,8 @@ svg.i {
     border: 0;
     border-radius: var(--r-sm);
     background: transparent;
-    font: 500 12px/24px var(--font-sans);
-    color: var(--text-2);
+    font: 400 12px/24px var(--font-sans);
+    color: var(--text-3);
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -849,7 +872,6 @@ svg.i {
 .seg .active {
     background: var(--surface-2);
     color: var(--text);
-    box-shadow: 0 0 0 1px var(--line-strong);
 }
 
 .seg .count {
@@ -1329,10 +1351,11 @@ a.card-link:hover .card {
 }
 
 .stat-card .value {
-    font-family: var(--font-mono);
-    font-size: 20px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-family: var(--font-sans);
+    font-size: 22px;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
     line-height: 28px;
     color: var(--text);
     overflow-wrap: anywhere;
@@ -1361,12 +1384,12 @@ a.card-link:hover .card {
 .progress-bar-fill {
     height: 100%;
     border-radius: 2px;
-    background: var(--text-2);
+    background: var(--accent);
     transition: width 0.4s var(--ease);
 }
 
-/* Normal = neutral; colour only when it means something */
-.progress-bar-fill.green { background: var(--text-2); }
+/* Normaal = teal (de accentkleur, zoals de balken in muxdeck); amber/rood bij een drempel */
+.progress-bar-fill.green { background: var(--accent); }
 .progress-bar-fill.yellow { background: var(--warn); }
 .progress-bar-fill.red { background: var(--err); }
 .progress-bar-fill.ok { background: var(--ok); }
@@ -1669,6 +1692,7 @@ tr.problem.is-warn > td:first-child { box-shadow: inset 2px 0 0 var(--warn); }
     background: var(--btn-primary);
     border-color: var(--btn-primary);
     color: var(--btn-primary-fg);
+    font-weight: 600;
 }
 
 .btn-primary:hover,
@@ -1981,10 +2005,10 @@ code {
 }
 
 .login-box h1 {
-    font-size: 15px;
+    font-size: 16px;
     line-height: 20px;
     font-weight: 600;
-    color: var(--text);
+    color: var(--accent);
     letter-spacing: -0.005em;
 }
 
@@ -2077,7 +2101,7 @@ select.form-control {
     padding-right: 28px;
     appearance: none;
     -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23858379' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9.5 6 6 6-6'/%3E%3C/svg%3E");
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%237f8796' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9.5 6 6 6-6'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 8px center;
     background-size: 14px 14px;
@@ -2106,7 +2130,7 @@ textarea.form-control {
 .form-select:focus {
     outline: none;
     border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-bg);
+    box-shadow: none;
     background-color: var(--inset);
     color: var(--text);
 }
@@ -2222,11 +2246,12 @@ a.quick-item:hover {
 }
 
 .quick-item .qi-value {
-    font-family: var(--font-mono);
-    font-size: 20px;
-    font-weight: 500;
+    font-family: var(--font-sans);
+    font-size: 22px;
+    font-weight: 300;
     line-height: 28px;
-    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
 }
 
 .quick-item .qi-label {
@@ -2672,8 +2697,8 @@ a.quick-item:hover {
 }
 
 .res-stat .v {
-    font: 500 22px/30px var(--font-mono);
-    letter-spacing: -0.02em;
+    font: 300 24px/30px var(--font-sans);
+    letter-spacing: 0;
     font-variant-numeric: tabular-nums;
     color: var(--text);
 }
@@ -2707,7 +2732,7 @@ a.quick-item:hover {
 .meter > i {
     position: absolute;
     inset: 0 auto 0 0;
-    background: var(--text-2);
+    background: var(--accent);
     border-radius: 2px;
     transition: width 0.4s var(--ease);
 }
@@ -3343,10 +3368,11 @@ a.quick-item:hover {
 }
 
 .chart-card .chart-value {
-    font-family: var(--font-mono);
-    font-size: 20px;
-    font-weight: 500;
-    letter-spacing: -0.02em;
+    font-family: var(--font-sans);
+    font-size: 22px;
+    font-weight: 300;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0;
     line-height: 28px;
     margin-bottom: 6px;
 }

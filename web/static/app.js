@@ -384,16 +384,16 @@ function cssVar(name, fallback) {
 function chartTheme() {
     const area = parseFloat(cssVar('--chart-area', '0.07'));
     return {
-        grid: cssVar('--chart-grid', '#232321'),
-        tick: cssVar('--chart-tick', '#7b7970'),
-        cross: cssVar('--chart-cross', '#5a5953'),
-        text: cssVar('--text', '#ebeae5'),
-        textSecondary: cssVar('--text-2', '#a3a199'),
-        tooltipBg: cssVar('--surface', '#151514'),
-        tooltipBorder: cssVar('--line-strong', '#34342f'),
-        surface: cssVar('--surface', '#151514'),
-        warn: cssVar('--warn', '#e5a93a'),
-        err: cssVar('--err', '#f0705e'),
+        grid: cssVar('--chart-grid', '#262a33'),
+        tick: cssVar('--chart-tick', '#6b7280'),
+        cross: cssVar('--chart-cross', '#4b5262'),
+        text: cssVar('--text', '#d8dee9'),
+        textSecondary: cssVar('--text-2', '#9aa3b2'),
+        tooltipBg: cssVar('--surface', '#1c1f26'),
+        tooltipBorder: cssVar('--line-strong', '#3a404c'),
+        surface: cssVar('--surface', '#1c1f26'),
+        warn: cssVar('--warn', '#fbbf24'),
+        err: cssVar('--err', '#f87171'),
         areaAlpha: isNaN(area) ? 0.07 : area,
         mono: cssVar('--font-mono', 'monospace'),
         palette: [1, 2, 3, 4, 5, 6, 7, 8].map(function (i) { return cssVar('--chart-' + i); }).filter(Boolean),
@@ -686,7 +686,7 @@ function confirmRestartWebServer() {
  * pages (charts) via the 'vps:themechange' event.
  * ------------------------------------------------------------------------ */
 const THEME_KEY = 'vpsm-theme';
-const THEME_COLORS = { dark: '#0f0f0e', light: '#f7f7f5' };
+const THEME_COLORS = { dark: '#14161a', light: '#f4f5f7' };
 
 function storedTheme() {
     try {

@@ -502,7 +502,8 @@ document.getElementById('cronOverlay').addEventListener('click', function(e) {
     if (e.target === this) closeCronDialog();
 });
 document.addEventListener('keydown', function(e) {
-    if (e.key === 'Escape' && document.getElementById('cronOverlay').classList.contains('active') && !isConfirmOpen()) closeCronDialog();
+    // defaultPrevented: deze Escape sloot al de bevestiging (app.js); de dialoog blijft dan open
+    if (e.key === 'Escape' && !e.defaultPrevented && document.getElementById('cronOverlay').classList.contains('active') && !isConfirmOpen()) closeCronDialog();
 });
 
 loadCronjobs();

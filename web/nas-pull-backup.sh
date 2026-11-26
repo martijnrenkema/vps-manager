@@ -22,6 +22,8 @@ fi
 # so the script itself stays generic.
 VPS="${VPS:-backup@your-vps-hostname}"
 SSH_PORT="${SSH_PORT:-22}"
+# Backup directory on the VPS: must match BACKUP_DIR of vps-backup.sh there.
+REMOTE_DIR="${REMOTE_DIR:-/var/backups/vps}"
 LOCAL_DIR="${LOCAL_DIR:-/volume1/Backup/vps}"
 DATA_DIR="$LOCAL_DIR/data"
 SNAPSHOT_DIR="$LOCAL_DIR/snapshots"
@@ -116,7 +118,7 @@ rsync -avz --delete --delay-updates --stats \
     --exclude='/databases/*.tmp' \
     --exclude='/checksums_*.sha256.tmp' \
     -e "ssh -p $SSH_PORT -o BatchMode=yes -o ConnectTimeout=30" \
-    "$VPS:/var/backups/vps/" "$DATA_DIR/" > "$RSYNC_OUTPUT_FILE" 2>&1
+    "$VPS:${REMOTE_DIR%/}/" "$DATA_DIR/" > "$RSYNC_OUTPUT_FILE" 2>&1
 RSYNC_EXIT=$?
 set -e
 trap 'report_failure $LINENO "$BASH_COMMAND"' ERR

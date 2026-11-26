@@ -280,6 +280,13 @@ What it backs up:
 - VPS Manager state (`data/` with `config.json`, secret key, VAPID keys) — these are not in git, so this tarball is the only way to recover 2FA and push subscriptions.
 - MariaDB users and grants (`_grants_DATE.sql.gz`), so a restore also brings back the database accounts the sites log in with.
 - A daily checksum manifest covering current-day DB/config files and all mirrored site files.
+- Optionally, apps that live outside `/var/www` (e.g. a self-hosted tool in `/opt`): list their SQLite databases in `EXTRA_SQLITE_DBS` and their config files or directories in `EXTRA_CONFIG_PATHS` (space-separated absolute paths in `.backup_env`). Each database is snapshotted with SQLite's backup API as the user that owns the file, checked with `PRAGMA integrity_check` and stored as `databases/<path>_DATE.sqlite.gz`; the config paths go into `configs/extra_DATE.tar.gz`. A missing path or failed snapshot does not stop the run, but the run is reported as failed.
+
+```bash
+# in .backup_env:
+EXTRA_SQLITE_DBS="/opt/bugsink/data/db.sqlite3"
+EXTRA_CONFIG_PATHS="/opt/bugsink/bugsink_conf.py"
+```
 
 **Manager installed somewhere else than `/var/www/vps-manager`?** The script looks for `.backup_env` there by default, so pass its real path in the cron line and set the matching directories in `.backup_env` (example for `/var/www/vps.example.com`):
 
@@ -317,7 +324,7 @@ Configure Synology Task Scheduler to run:
 ```
 
 The NAS script:
-- Pulls `/var/backups/vps/` to `/volume1/Backup/vps/data/`.
+- Pulls `/var/backups/vps/` to `/volume1/Backup/vps/data/`. If `BACKUP_DIR` on the VPS is somewhere else, set `REMOTE_DIR` to that path in the NAS `.backup_env`; `LOCAL_DIR` changes the NAS side.
 - Uses a lock file to prevent overlapping runs.
 - Verifies the latest checksum manifest and reports failure if any checksum fails.
 - Creates daily hard-link snapshots in `/volume1/Backup/vps/snapshots/YYYYMMDD`.
@@ -339,7 +346,7 @@ Restore order:
 3. Restore site files from `sites/<site>/`.
 4. Restore `.env` / `wp-config.php` from `configs/`.
 5. Restore MariaDB: per database `mysql -e "CREATE DATABASE IF NOT EXISTS <db>"` and `gunzip -c databases/<db>_YYYYMMDD.sql.gz | mysql <db>` (the dumps contain no `CREATE DATABASE`/`USE`). Then restore users and grants with `gunzip -c databases/_grants_YYYYMMDD.sql.gz | mysql --force` (`--force` skips accounts that already exist, such as `root`).
-6. Restore SQLite `.db` files to their original paths and fix ownership.
+6. Restore SQLite `.db` files to their original paths and fix ownership. Databases from `EXTRA_SQLITE_DBS` are gzipped (`gunzip -c databases/<path>_YYYYMMDD.sqlite.gz > <original path>`, with the app stopped, and remove any leftover `-wal`/`-shm` files next to it); the original paths are listed in `configs/manifest_YYYYMMDD.txt` and their config files are in `configs/extra_YYYYMMDD.tar.gz` (`tar xzf ... -C /`).
 7. Restore the VPS Manager `data/` directory from `configs/vps-manager-data_YYYYMMDD.tar.gz` (2FA, secret key, VAPID keys, settings).
 8. Restart services/PM2 and verify HTTP, database login and SSL.
 
@@ -388,6 +395,20 @@ vps.example.com {
 Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
+
+### v2.3.0 - New Look & Quieter Alerts
+- **New look** - The interface now shares its style with muxdeck and the regiekamer: slate neutrals, flat panels with a thin edge, and teal as the one accent for links, focus and primary buttons. Status colours keep one meaning each (green = fine, amber = attention, red = wrong). The sidebar marks the current page with a teal bar, group headers are small caps, usage bars are teal until they cross a threshold, and large figures are lighter. The light theme follows the same palette
+- **System fonts** - IBM Plex is replaced by the system font stack, the same as muxdeck. Pages no longer download web fonts
+- **No more false alerts during updates** - Automatic updates (unattended-upgrades with needrestart) restart services such as fail2ban, which can take over a minute to stop. That produced an e-mail like "Service 'fail2ban' is deactivating". Service and PM2 alerts are now held while apt, dpkg, unattended-upgrade or needrestart runs, and a service that is in the middle of a restart gets up to 150 seconds to finish. Anything that is still down afterwards is reported as before
+- **Backup: extra SQLite databases and config files** - `EXTRA_SQLITE_DBS` and `EXTRA_CONFIG_PATHS` in `.backup_env` back up apps outside `/var/www` (e.g. a tool in `/opt`). A failed backup now starts its alert with the reason (`Backup incomplete: ...`) instead of the summary
+- **Fix: Updates history missed automatic upgrades** - The unattended-upgrades log is only readable for root and group adm, so the history never showed them
+- **Fix: Backup page looked empty** when the backup log, `databases/` or `configs/` were root-only: no latest log, "No backup directory found" and no database dumps in the download list
+- **Fix: false SSL expiry alert on Caddy** when an older certificate from another issuer was still on disk next to the valid one
+- **Fix: fail2ban whitelist could be wiped** by a malformed save request (missing or invalid `ips`); it is now rejected
+- **Fix: template units** such as `postgresql@16-main` could not be saved in Settings, restarted from the Services page or restarted by self-healing
+- **NAS pull** - The VPS backup directory is configurable with `REMOTE_DIR` in the NAS `.backup_env`
+- **Fix: Cronjobs** - Escape on the save confirmation also closed the edit dialog and lost your input
+- **Fix: Notifications** - E-mail preferences were not saved when this device's push subscription no longer existed on the server
 
 ### v2.2.0 - Calmer Pages & Bug Fix Round
 - **Collapsible sections** - Advanced and rarely used parts are folded away by default on Settings, Firewall, Backup, SSH logs, Updates, PHP, Cronjobs, Notifications, Network and Security audit. Headers show a short status (e.g. "No attack detected", "2FA active") and the open/closed state is remembered per browser. Settings opens the right section when a field is invalid

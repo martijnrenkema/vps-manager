@@ -110,7 +110,7 @@ let uptimeChart = null;
 function buildChart(history, domains) {
         if (uptimeChart) { uptimeChart.destroy(); uptimeChart = null; }
         const theme = chartTheme();
-        const colors = theme.cat.length ? theme.cat : ['#3987e5'];
+        const colors = theme.cat.length ? theme.cat : ['#38bdf8'];
         const datasets = domains.map(function(domain, i) {
             const points = (history[domain] || [])
                 .map(function(p) { return { x: new Date(p.timestamp).getTime(), y: Number(p.response_ms) || 0 }; })
