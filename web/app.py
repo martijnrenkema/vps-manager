@@ -414,6 +414,48 @@ FORBIDDEN_ALLOWED_PATHS = {
 CADDY_ALLOWED_PREFIXES = ('/etc/caddy/',)
 CADDY_ALLOWED_LOG_PREFIXES = ('/var/log/caddy/',)
 NGINX_ALLOWED_LOG_PREFIXES = ('/var/log/nginx/',)
+# Standaard nginx site-mappen (Debian/Ubuntu-layout); de ingestelde mappen
+# (nginx.sites_enabled / nginx.sites_available) moeten hieronder vallen.
+NGINX_CONFIG_ROOT = '/etc/nginx'
+NGINX_DEFAULT_SITES_DIRS = {
+    'enabled': '/etc/nginx/sites-enabled',
+    'available': '/etc/nginx/sites-available',
+}
+
+
+def _nginx_sites_dir(kind):
+    """Ingestelde nginx site-map voor kind 'enabled' of 'available'.
+
+    Genormaliseerd en zonder slash aan het eind. Leeg of ongeldig (relatief,
+    geen string, niet ónder /etc/nginx, of /etc/nginx zelf): de standaardmap,
+    zodat een handmatig aangepaste config.json de editor nooit buiten
+    /etc/nginx laat lezen of schrijven.
+    """
+    default = NGINX_DEFAULT_SITES_DIRS[kind]
+    nginx_cfg = CONFIG.get('nginx')
+    value = nginx_cfg.get(f'sites_{kind}') if isinstance(nginx_cfg, dict) else None
+    if not isinstance(value, str) or '\0' in value or not value.strip().startswith('/'):
+        return default
+    norm = os.path.normpath(value.strip())
+    if not norm.startswith(NGINX_CONFIG_ROOT + '/'):
+        return default
+    return norm
+
+
+def _nginx_config_path(config_type, name):
+    """Pad van site-config 'name' in de enabled-/available-map, of None.
+
+    Alleen veilige bestandsnamen (geen '/', geen leidende '.'), en het
+    resultaat moet direct in de ingestelde map liggen: geen traversal en
+    geen bestanden buiten die twee mappen.
+    """
+    if config_type not in ('enabled', 'available') or not name or not is_safe_name(name):
+        return None
+    base = _nginx_sites_dir(config_type)
+    path = os.path.join(base, name)
+    if os.path.dirname(os.path.normpath(path)) != base:
+        return None
+    return path
 
 
 def _is_caddy_path_safe(path):
@@ -801,6 +843,17 @@ def _send_push(subscription_info, payload, private_key_pem):
         return None
 
 
+def _notify_text(alert):
+    """Tekst die bepaalt of een actieve alert opnieuw gemeld wordt.
+
+    Standaard de melding zelf: een gewijzigde tekst (bijv. een andere
+    service-status) is na de cooldown nieuws. Alerts met een schommelend
+    getal (load, RAM, swap) geven een vaste `notify_text`, zodat een
+    aanhoudend hoge waarde niet elk uur opnieuw mailt; pas na herstel plus
+    cooldown volgt weer een melding."""
+    return alert.get('notify_text') or alert['message']
+
+
 def _classify_alert(alert):
     """Classify an alert into a notification category"""
     msg = alert.get('message', '').lower()
@@ -1095,6 +1148,9 @@ _PKG_MANAGER_NAMES = frozenset({
     'apt', 'apt-get', 'aptitude', 'dpkg', 'unattended-upgrade', 'needrestart',
 })
 _UPGRADE_HELD_ALERT_PREFIXES = ('service_down_', 'pm2_offline_')
+# Log-entries van deze alerts blijven tijdens een update staan (niet "opgelost"),
+# ook die van self-healing: dat draait dan niet, dus zijn alerts ontbreken even.
+_UPGRADE_KEEP_LOG_PREFIXES = _UPGRADE_HELD_ALERT_PREFIXES + ('auto_heal_',)
 # Een hangende apt/dpkg mag alerts niet eindeloos inslikken.
 _PKG_BUSY_MAX_SECONDS = 3600
 _pkg_busy_since = None  # alleen gebruikt door de monitor-thread
@@ -1124,6 +1180,10 @@ def _package_manager_running():
         return False
     for pid in pids:
         try:
+            # Alleen root installeert pakketten; zo telt bijv. de eigen
+            # `apt list --upgradable` (als app-gebruiker) niet als update.
+            if os.stat(f'/proc/{pid}').st_uid != 0:
+                continue
             with open(f'/proc/{pid}/cmdline', 'rb') as f:
                 argv = f.read().split(b'\0')
         except OSError:
@@ -1316,11 +1376,6 @@ def _monitor_loop():
 
                 # Build set of current alert keys so we can detect resolved alerts
                 current_alert_keys = set()
-                # Vastgehouden alerts zijn niet opgelost: anders verdwijnt hun
-                # log-entry en wordt een al gemelde storing na de update
-                # opnieuw verstuurd.
-                for alert in held_alerts:
-                    current_alert_keys.add(f"{_classify_alert(alert)}:{alert['key']}")
                 # Safety net: dedupe by (category, message) within this cycle so
                 # two alerts that resolve to identical text — e.g. via different
                 # `key` fields — can never produce two identical notifications.
@@ -1398,7 +1453,7 @@ def _monitor_loop():
                             category = _classify_alert(alert)
                             alert_key = f"{category}:{alert.get('key', alert['message'][:80])}"
                             current_alert_keys.add(alert_key)
-                            entry = {'ts': now, 'message': alert['message']}
+                            entry = {'ts': now, 'message': _notify_text(alert)}
                             notif_log[alert_key] = entry
                             if email_prefs.get(category, False):
                                 notif_log[f"email:{alert_key}"] = entry
@@ -1443,12 +1498,12 @@ def _monitor_loop():
                                 should_push = False
                         else:
                             if isinstance(log_entry, dict):
-                                if log_entry.get('message') == alert['message']:
+                                if log_entry.get('message') == _notify_text(alert):
                                     should_push = False
                                 elif now - log_entry.get('ts', 0) < cooldown:
                                     should_push = False
                             elif isinstance(log_entry, (int, float)):
-                                notif_log[alert_key] = {'ts': log_entry, 'message': alert['message']}
+                                notif_log[alert_key] = {'ts': log_entry, 'message': _notify_text(alert)}
                                 log_changed = True
                                 should_push = False
 
@@ -1493,7 +1548,7 @@ def _monitor_loop():
                                 subs = [s for s in subs if s['endpoint'] not in dead]
 
                             if sent_count > 0:
-                                notif_log[alert_key] = {'ts': now, 'message': alert['message']}
+                                notif_log[alert_key] = {'ts': now, 'message': _notify_text(alert)}
                                 if _is_update_cat(category):
                                     # Re-evaluate the date at stamp time so a cycle
                                     # that crosses midnight stamps the correct day.
@@ -1529,12 +1584,12 @@ def _monitor_loop():
                                     should_email = False
                             else:
                                 if isinstance(email_entry, dict):
-                                    if email_entry.get('message') == alert['message']:
+                                    if email_entry.get('message') == _notify_text(alert):
                                         should_email = False
                                     elif now - email_entry.get('ts', 0) < cooldown:
                                         should_email = False
                                 elif isinstance(email_entry, (int, float)):
-                                    notif_log[email_key] = {'ts': email_entry, 'message': alert['message']}
+                                    notif_log[email_key] = {'ts': email_entry, 'message': _notify_text(alert)}
                                     log_changed = True
                                     should_email = False
 
@@ -1544,7 +1599,7 @@ def _monitor_loop():
                             if should_email:
                                 ok, err = send_notification_email(category, alert)
                                 if ok:
-                                    notif_log[email_key] = {'ts': now, 'message': alert['message']}
+                                    notif_log[email_key] = {'ts': now, 'message': _notify_text(alert)}
                                     if _is_update_cat(category):
                                         notif_log[f"_daily_email:{alert_key}"] = datetime.now().strftime('%Y-%m-%d')
                                     log_changed = True
@@ -1580,6 +1635,11 @@ def _monitor_loop():
                     if k.startswith('_daily_push:') or k.startswith('_daily_email:'):
                         continue
                     check_key = k[6:] if k.startswith('email:') else k
+                    # Tijdens een update zijn vastgehouden alerts niet opgelost:
+                    # anders verdwijnt hun log-entry en wordt een al gemelde
+                    # storing na de update opnieuw verstuurd.
+                    if pkg_busy and check_key.partition(':')[2].startswith(_UPGRADE_KEEP_LOG_PREFIXES):
+                        continue
                     if check_key not in current_alert_keys:
                         entry = notif_log[k]
                         ts = entry.get('ts', 0) if isinstance(entry, dict) else entry
@@ -1808,9 +1868,12 @@ def get_sidebar_hints():
             if days:
                 soonest = min(days)
                 thr = CONFIG.get('thresholds', {})
-                if soonest <= 30:
-                    tone = ('err' if soonest <= thr.get('ssl_critical_days', 3)
-                            else 'warn' if soonest <= thr.get('ssl_warning_days', 14) else '')
+                warn_days = thr.get('ssl_warning_days', 14)
+                # Zelfde grens als de dashboard-alerts (days < drempel), en
+                # ook zichtbaar bij een waarschuwingsdrempel boven 30 dagen
+                if soonest <= 30 or soonest < warn_days:
+                    tone = ('err' if soonest < thr.get('ssl_critical_days', 3)
+                            else 'warn' if soonest < warn_days else '')
                     hints['ssl'] = {'text': f"{soonest}d" if soonest >= 0 else 'exp', 'tone': tone,
                                     'title': 'Days until the first certificate expires'}
 
@@ -3046,8 +3109,8 @@ def _read_nginx_site_config(config_path):
 @_ttl_cache(60, stale=900)
 def get_nginx_sites():
     """Get nginx sites with HTTP status"""
-    sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
-    result = run_cmd_safe(["ls", sites_dir])
+    sites_dir = _nginx_sites_dir('enabled')
+    result = run_cmd_safe(["ls", sites_dir + '/'])
     if result.returncode != 0:
         return []
 
@@ -3344,13 +3407,27 @@ def get_services_status():
 
 
 BACKUP_STATUS_PATH = DATA_DIR / 'backup_status.json'
+# Read-modify-write van backup_status.json: de VPS-backup en de NAS-pull
+# kunnen tegelijk melden en waitress handelt elk verzoek in een eigen thread
+# af, dus zonder lock kon de ene melding de andere overschrijven.
+_backup_status_lock = threading.Lock()
+
+# Bronnen die via de webhook rapporteren, in weergavevolgorde. Elke bron heeft
+# een eigen laatste succes/fout: een geslaagde NAS pull mag een mislukte
+# VPS-backup niet verbergen, en omgekeerd.
+BACKUP_SOURCES = ('vps', 'nas')
+BACKUP_SOURCE_LABELS = {'vps': 'VPS backup', 'nas': 'NAS pull'}
+# Zonder geslaagde run van een bron binnen deze tijd volgt een waarschuwing
+BACKUP_STALE_SECONDS = 48 * 3600
 
 
 def _load_backup_status():
     """Load backup status history"""
     if BACKUP_STATUS_PATH.exists():
         try:
-            return json.loads(BACKUP_STATUS_PATH.read_text())
+            status = json.loads(BACKUP_STATUS_PATH.read_text())
+            if isinstance(status, dict):
+                return status
         except (json.JSONDecodeError, OSError):
             pass
     return {'history': [], 'last_success': None, 'last_failure': None}
@@ -3359,6 +3436,104 @@ def _load_backup_status():
 def _save_backup_status(status):
     """Save backup status history"""
     _atomic_write_json(BACKUP_STATUS_PATH, status)
+
+
+def _infer_backup_source(entry):
+    """Bron van een melding: het 'source'-veld, of afgeleid uit de tekst.
+
+    Scripts van vóór het 'source'-veld (en eigen scripts) sturen alleen
+    status + details. nas-pull-backup.sh begint elke melding met "NAS pull"
+    ("NAS pull completed/failed ...", "NAS pull OK but VPS backup is stale"),
+    vps-backup.sh met "Backup completed/incomplete/failed". Wat niet als NAS
+    pull herkenbaar is, telt als VPS-backup: dat was de eerste en vaak enige
+    bron.
+    """
+    if isinstance(entry, dict):
+        if entry.get('source') in BACKUP_SOURCES:
+            return entry['source']
+        details = entry.get('details')
+    else:
+        details = entry
+    if isinstance(details, str) and details.lstrip().lower().startswith('nas pull'):
+        return 'nas'
+    return 'vps'
+
+
+def _backup_sources(status):
+    """Laatste succes en fout per bron:
+    {'vps': {'last_success': entry, 'last_failure': entry}, 'nas': {...}}.
+
+    Bron is het opgeslagen 'sources'-deel, aangevuld met de history en de
+    oude top-level velden (de nieuwste melding per bron en status wint).
+    Zo verliest een statusbestand van vóór de per-bron-administratie geen
+    bekende fout of laatste succes, en wordt 'sources' na een downgrade en
+    weer een upgrade (de oude versie werkt alleen top-level bij) niet stale.
+    """
+    sources = {s: {'last_success': None, 'last_failure': None} for s in BACKUP_SOURCES}
+
+    def consider(src, key, entry):
+        current = sources[src][key]
+        if current is None:
+            sources[src][key] = entry
+        elif isinstance(entry, dict) and isinstance(current, dict):
+            # ISO-timestamps zijn als string te vergelijken
+            if str(entry.get('timestamp') or '') > str(current.get('timestamp') or ''):
+                sources[src][key] = entry
+
+    stored = status.get('sources')
+    if isinstance(stored, dict):
+        for src in BACKUP_SOURCES:
+            info = stored.get(src)
+            if isinstance(info, dict):
+                for key in ('last_success', 'last_failure'):
+                    if isinstance(info.get(key), dict):
+                        consider(src, key, info[key])
+    for entry in status.get('history') or []:
+        if isinstance(entry, dict) and entry.get('status') in ('success', 'failure'):
+            consider(_infer_backup_source(entry), 'last_' + entry['status'], entry)
+    # De history bewaart maar 20 meldingen: een oudere fout of succes staat
+    # alleen nog in de top-level velden (die golden voor beide bronnen samen).
+    for key in ('last_success', 'last_failure'):
+        entry = status.get(key)
+        if entry and isinstance(entry, (dict, str)):
+            consider(_infer_backup_source(entry), key, entry)
+    return sources
+
+
+def _backup_source_states(status, now=None):
+    """Toestand per bron, gedeeld door de alerts, de Backup-pagina en de
+    security audit:
+
+    - failed: de laatste fout van deze bron is nieuwer dan het laatste succes
+      van díe bron (een later succes van de andere bron telt niet mee);
+    - stale: het laatste succes van deze bron is ouder dan 48 uur;
+    - reported: de bron heeft ooit iets gemeld.
+    """
+    now = now or datetime.now()
+    states = []
+    for src, info in _backup_sources(status).items():
+        success, failure = info['last_success'], info['last_failure']
+        failed = bool(failure)
+        # Zonder timestamps (oude string-entries uit de log) blijft een fout staan
+        if failed and isinstance(failure, dict) and isinstance(success, dict):
+            failed = not (str(success.get('timestamp') or '') > str(failure.get('timestamp') or ''))
+        age_hours = None
+        if isinstance(success, dict):
+            try:
+                age_hours = (now - datetime.fromisoformat(success.get('timestamp', ''))).total_seconds() / 3600
+            except (ValueError, TypeError):
+                pass
+        states.append({
+            'source': src,
+            'label': BACKUP_SOURCE_LABELS[src],
+            'last_success': success,
+            'last_failure': failure,
+            'reported': bool(success or failure),
+            'failed': failed,
+            'age_hours': age_hours,
+            'stale': age_hours is not None and age_hours * 3600 > BACKUP_STALE_SECONDS,
+        })
+    return states
 
 
 @_ttl_cache(300, stale=21600)
@@ -3465,13 +3640,21 @@ def get_backup_status():
     # Load tracked backup status
     status = _load_backup_status()
     data['status'] = status
-    data['history'] = status.get('history', [])[-10:]
+    # Per bron (VPS-backup / NAS pull) apart: de top-level last_success en
+    # last_failure gelden voor beide samen. Vóór de log-fallback hieronder,
+    # die strings in data['status'] zet.
+    data['sources'] = _backup_source_states(status)
+    # Kopieën met bron erbij: oude meldingen hebben nog geen 'source'-veld
+    data['history'] = [dict(e, source=src, source_label=BACKUP_SOURCE_LABELS[src])
+                       for e in (status.get('history') or [])[-10:] if isinstance(e, dict)
+                       for src in (_infer_backup_source(e),)]
 
     # Parse transfer stats from last NAS pull
     data['nas_pull'] = None
-    for entry in reversed(status.get('history', [])):
-        if entry.get('status') == 'success' and 'NAS pull' in entry.get('details', ''):
-            details = entry['details']
+    for entry in reversed(status.get('history') or []):
+        if (isinstance(entry, dict) and entry.get('status') == 'success'
+                and _infer_backup_source(entry) == 'nas'):
+            details = str(entry.get('details') or '')
             pull_stats = {'timestamp': entry.get('timestamp', '')[:19]}
             # Parse "transferred: 3473931 bytes"
             m = re.search(r'transferred:\s*([\d,]+)\s*bytes', details)
@@ -3515,49 +3698,31 @@ def get_backup_status():
 
 
 def check_backup_alerts():
-    """Check backup status and return alerts"""
+    """Check backup status and return alerts, per bron (VPS-backup en NAS pull).
+
+    Een fout telt zolang die bron daarna niet zelf geslaagd is: een latere
+    geslaagde NAS pull verbergt een mislukte VPS-backup niet, en omgekeerd.
+    """
     alerts = []
-    status = _load_backup_status()
-
-    if status.get('last_failure'):
-        entry = status['last_failure']
-        # Only show failure alert if it's more recent than the last success
-        show_failure = True
-        if isinstance(entry, dict) and isinstance(status.get('last_success'), dict):
-            fail_ts = entry.get('timestamp', '')
-            success_ts = status['last_success'].get('timestamp', '')
-            if success_ts > fail_ts:
-                show_failure = False
-        if show_failure:
-            if isinstance(entry, dict):
-                alerts.append({
-                    'severity': 'error',
-                    'message': f"Last backup failed: {entry.get('details', 'Unknown error')[:80]}",
-                    'link': '/backup',
-                    'key': 'backup_failed',
-                })
-            elif isinstance(entry, str):
-                alerts.append({
-                    'severity': 'error',
-                    'message': f"Backup failure detected: {entry[:80]}",
-                    'link': '/backup',
-                    'key': 'backup_failed',
-                })
-
-    # Check if no successful backup in 48 hours
-    last_success = status.get('last_success')
-    if last_success and isinstance(last_success, dict):
-        try:
-            last_dt = datetime.fromisoformat(last_success.get('timestamp', ''))
-            if (datetime.now() - last_dt).total_seconds() > 172800:  # 48h
-                alerts.append({
-                    'severity': 'warning',
-                    'message': 'No successful backup in the last 48 hours',
-                    'link': '/backup',
-                    'key': 'backup_stale',
-                })
-        except (ValueError, TypeError):
-            pass
+    for st in _backup_source_states(_load_backup_status()):
+        src, label = st['source'], st['label']
+        if st['failed']:
+            entry = st['last_failure']
+            details = (entry.get('details') or 'Unknown error') if isinstance(entry, dict) else entry
+            alerts.append({
+                'severity': 'error',
+                'message': f"{label} failed: {str(details)[:80]}",
+                'link': '/backup',
+                'key': f'backup_failed_{src}',
+            })
+        # Geen geslaagde run van deze bron in 48 uur
+        if st['stale']:
+            alerts.append({
+                'severity': 'warning',
+                'message': f"No successful {label} in the last 48 hours",
+                'link': '/backup',
+                'key': f'backup_stale_{src}',
+            })
 
     return alerts
 
@@ -3628,12 +3793,59 @@ def parse_ufw_rules(ufw_output):
     return rules
 
 
+_AUTH_LOG_PATH = '/var/log/auth.log'
 _AUTH_LOG_TAIL_BYTES = 20_000_000
 # Regels van het sshd-proces zelf (ook sshd-session[..] sinds OpenSSH 9.8).
 # Een losse 'sshd'-match ving ook de sudo-logregels van de app zelf
 # ("COMMAND=/usr/bin/fail2ban-client status sshd").
 _SSHD_LINE_RE = re.compile(r'\bsshd(?:-session)?\[\d+\]:')
 _SSHD_GREP = r"grep -E 'sshd(-session)?\[[0-9]+\]:'"
+# Journald-only systemen (bijv. Debian 12 zonder rsyslog) hebben geen
+# auth.log: dan dezelfde regels uit de journal. Facility auth (4) + authpriv
+# (10) is precies wat rsyslog naar auth.log schrijft, en short-iso-precise
+# heeft hetzelfde formaat als auth.log op Ubuntu 24.04
+# ("2026-11-26T06:03:15.123456+01:00 host sshd[123]: ..."), dus dezelfde
+# parsers en greps werken. --quiet laat "-- Boot ... --"-regels weg.
+_AUTH_JOURNAL_ARGS = ('sudo', 'journalctl', 'SYSLOG_FACILITY=4', 'SYSLOG_FACILITY=10',
+                      '-o', 'short-iso-precise', '--no-pager', '--quiet')
+# Alleen sshd (en sshd-session sinds OpenSSH 9.8): journalctl filtert dat via
+# zijn index, dus '-n 15' is direct klaar i.p.v. eerst duizenden regels.
+_AUTH_JOURNAL_SSHD_ARGS = ('SYSLOG_IDENTIFIER=sshd', 'SYSLOG_IDENTIFIER=sshd-session')
+# journalctl -n leest achterwaarts, ~0,3 ms per regel op een volle journal:
+# het equivalent van 20 MB auth.log (~150k regels) zou tientallen seconden
+# duren. 20k regels (~6 s, op de SSH-logpagina gecachet) is het recente deel.
+_AUTH_JOURNAL_LINES = 20_000
+
+
+def _auth_journal_cmd(lines, sshd_only=False):
+    """journalctl-argumentlijst voor de laatste `lines` auth.log-regels."""
+    args = list(_AUTH_JOURNAL_ARGS)
+    if sshd_only:
+        args += _AUTH_JOURNAL_SSHD_ARGS
+    return args + ['-n', str(int(lines))]
+
+
+def _auth_log_shell(tail_opts, journal_lines, sshd_only=False):
+    """Shell-fragment dat auth.log leest met 'sudo tail <tail_opts>'.
+
+    Is auth.log er niet of ook met sudo niet te lezen, dan de laatste
+    journal_lines regels uit de journal (sshd_only: alleen sshd-regels, voor
+    aanroepers die toch alleen sshd-regels overhouden). Met een leesbare
+    auth.log draait precies hetzelfde commando als zonder fallback.
+    """
+    return (f"{{ sudo tail {tail_opts} {_AUTH_LOG_PATH} 2>/dev/null"
+            f" || {shlex.join(_auth_journal_cmd(journal_lines, sshd_only))} 2>/dev/null; }}")
+
+
+def _tail_output_lines(stdout, max_bytes):
+    """Uitvoer van 'tail -c max_bytes' als regels; een eventueel afgekapte
+    eerste regel wordt weggelaten."""
+    if not stdout:
+        return []
+    lines = stdout.split('\n')
+    if len(stdout) >= max_bytes - 1 and len(lines) > 1:
+        lines = lines[1:]
+    return [line for line in lines if line.strip()]
 
 
 def _tail_file_lines(path, max_bytes):
@@ -3641,12 +3853,27 @@ def _tail_file_lines(path, max_bytes):
 
     Een eventueel afgekapte eerste regel wordt weggelaten."""
     result = run_cmd_safe(['sudo', 'tail', '-c', str(max_bytes), path], timeout=20)
-    if result.returncode != 0 or not result.stdout:
+    if result.returncode != 0:
         return []
-    lines = result.stdout.split('\n')
-    if len(result.stdout) >= max_bytes - 1 and len(lines) > 1:
-        lines = lines[1:]
-    return [line for line in lines if line.strip()]
+    return _tail_output_lines(result.stdout, max_bytes)
+
+
+def _auth_log_lines():
+    """Recente auth.log-regels als (bron, regels), bron 'auth.log' of 'journal'.
+
+    Het staartstuk van auth.log (laatste ~20 MB). Alleen als dat bestand er
+    niet is of ook met sudo niet te lezen is (journald-only systemen) de
+    laatste _AUTH_JOURNAL_LINES regels van facility auth/authpriv uit de
+    journal; op Ubuntu verandert er dus niets.
+    """
+    result = run_cmd_safe(['sudo', 'tail', '-c', str(_AUTH_LOG_TAIL_BYTES), _AUTH_LOG_PATH],
+                          timeout=20)
+    if result.returncode == 0:
+        return 'auth.log', _tail_output_lines(result.stdout, _AUTH_LOG_TAIL_BYTES)
+    result = run_cmd_safe(_auth_journal_cmd(_AUTH_JOURNAL_LINES), timeout=60)
+    if result.returncode != 0:
+        return 'journal', []
+    return 'journal', [line for line in result.stdout.split('\n') if line.strip()]
 
 
 _LOG_IP_PORT_RE = re.compile(r'\bfrom\s+([0-9a-fA-F:.]+[0-9a-fA-F])\s+port\s+\d+')
@@ -3679,13 +3906,15 @@ def get_ssh_logs():
         'top_attackers': [],
         'fail2ban_actions': [],
         'recent_entries': [],
+        'log_source': 'auth.log',
     }
 
     # Eén pass in Python over het staartstuk van auth.log, i.p.v. zeven
     # volledige grep-scans: auth.log is op een server onder brute-force al
     # snel honderden MB's. De tellingen gelden daarmee voor het recente deel
-    # van de log (laatste ~20 MB).
-    auth_lines = _tail_file_lines('/var/log/auth.log', _AUTH_LOG_TAIL_BYTES)
+    # van de log (laatste ~20 MB). Zonder auth.log: dezelfde regels uit de
+    # journal (zie _auth_log_lines).
+    data['log_source'], auth_lines = _auth_log_lines()
     failed_re = re.compile(r'failed|invalid user|authentication failure', re.I)
     attacker_re = re.compile(r'failed|invalid user', re.I)
     failed, accepted, sshd_lines = [], [], []
@@ -3839,7 +4068,8 @@ def get_firewall_security():
         'who': "who",
         # Alleen het staartstuk: auth.log is op een aangevallen server al
         # snel honderden MB's en een volledige grep kostte seconden.
-        'auth': f"sudo tail -n 5000 /var/log/auth.log 2>/dev/null | {_SSHD_GREP} | tail -15",
+        # Zonder auth.log de laatste sshd-regels uit de journal.
+        'auth': f"{_auth_log_shell('-n 5000', 15, sshd_only=True)} | {_SSHD_GREP} | tail -15",
         'bantime': "sudo fail2ban-client get sshd bantime 2>/dev/null",
         'findtime': "sudo fail2ban-client get sshd findtime 2>/dev/null",
         'maxretry': "sudo fail2ban-client get sshd maxretry 2>/dev/null",
@@ -4350,22 +4580,29 @@ def get_dashboard_alerts(data, services, pm2, ssl):
         mem_pct = data.get('mem_pct', 0)
         mem_warning = thresholds.get('memory_warning', 85)
         if mem_pct > mem_warning:
-            alerts.append({'severity': 'warning', 'message': f"RAM usage high: {mem_pct}%", 'link': None, 'key': 'ram_warning'})
+            alerts.append({'severity': 'warning', 'message': f"RAM usage high: {mem_pct}%", 'link': None, 'key': 'ram_warning',
+                           'notify_text': f"RAM usage high (> {mem_warning}%)"})
 
         # Swap usage
         swap_pct = data.get('swap_pct', 0)
         swap_warning = thresholds.get('swap_warning', 50)
         if swap_pct > swap_warning:
-            alerts.append({'severity': 'warning', 'message': f"Swap usage high: {swap_pct}%", 'link': None, 'key': 'swap_warning'})
+            alerts.append({'severity': 'warning', 'message': f"Swap usage high: {swap_pct}%", 'link': None, 'key': 'swap_warning',
+                           'notify_text': f"Swap usage high (> {swap_warning}%)"})
 
-        # Load average
+        # Load average: op het 15-minutengemiddelde. Het 1-minuutgemiddelde
+        # schiet bij elke cron-job of backup even boven het aantal cores en gaf
+        # zo tientallen meldingen per week voor pieken van een paar minuten.
         load_str = data.get('load', '')
         cpu_cores = data.get('cpu_cores', '1')
         try:
-            load_1 = float(load_str.split('/')[0].strip())
+            load_15 = float(load_str.split('/')[2].strip())
             cores = int(cpu_cores)
-            if load_1 > cores:
-                alerts.append({'severity': 'warning', 'message': f"Load average high: {load_1:.2f} (> {cores} cores)", 'link': None, 'key': 'load_warning'})
+            if load_15 > cores:
+                alerts.append({'severity': 'warning',
+                               'message': f"Load average high: {load_15:.2f} over 15 min (> {cores} cores)",
+                               'link': None, 'key': 'load_warning',
+                               'notify_text': f"Load average high (> {cores} cores)"})
         except (ValueError, IndexError):
             pass
 
@@ -4715,21 +4952,26 @@ def get_security_audit():
                                        'self-signed certificate)'))
 
     # --- Backup freshness ---
-    backup_status = _load_backup_status()
-    last_success = backup_status.get('last_success')
-    if isinstance(last_success, dict):
-        try:
-            last_dt = datetime.fromisoformat(last_success.get('timestamp', ''))
-            age_h = (datetime.now() - last_dt).total_seconds() / 3600
-            if age_h <= 48:
-                checks.append(_audit_check('backup', 'Recent backup', 'ok',
-                                           f'Last successful backup {age_h:.0f}h ago'))
+    # Per bron: een recente NAS pull maskeerde anders een gestopte VPS-backup
+    # (de NAS haalt dan elke nacht dezelfde oude bestanden op).
+    reported = [s for s in _backup_source_states(_load_backup_status()) if s['reported']]
+    if reported:
+        parts, level = [], 'ok'
+        for s in reported:
+            if s['stale']:
+                parts.append(f"{s['label']}: last success {s['age_hours'] / 24:.0f} days ago")
+                level = 'warn'
+            elif s['age_hours'] is not None:
+                parts.append(f"{s['label']}: last success {s['age_hours']:.0f}h ago")
+            elif isinstance(s['last_success'], dict):
+                parts.append(f"{s['label']}: status could not be parsed")
+                if level == 'ok':
+                    level = 'info'
             else:
-                checks.append(_audit_check('backup', 'Recent backup', 'warn',
-                                           f'Last successful backup was {age_h / 24:.0f} days ago',
-                                           'Check the backup page and cron schedule'))
-        except (ValueError, TypeError):
-            checks.append(_audit_check('backup', 'Recent backup', 'info', 'Backup status could not be parsed'))
+                parts.append(f"{s['label']}: no successful run recorded")
+                level = 'warn'
+        checks.append(_audit_check('backup', 'Recent backup', level, '; '.join(parts),
+                                   'Check the backup page and cron schedule' if level == 'warn' else ''))
     else:
         checks.append(_audit_check('backup', 'Recent backup', 'info',
                                    'No backup reports received yet',
@@ -5014,7 +5256,7 @@ def get_php_info():
 
     # Per-site PHP mapping from nginx configs
     site_mapping = []
-    sites_dir = CONFIG['nginx'].get('sites_enabled', '/etc/nginx/sites-enabled/')
+    sites_dir = _nginx_sites_dir('enabled') + '/'
     result = run_cmd_safe(["grep", "-Rl", "fastcgi_pass", sites_dir], timeout=5)
     if result.returncode == 0:
         for config_path in result.stdout.strip().split('\n'):
@@ -5599,8 +5841,9 @@ def api_ssh_logs():
     lines = max(1, min(lines, 2000))
     filter_type = request.args.get('filter', 'all')
 
-    # Alleen het staartstuk van auth.log doorzoeken (kan honderden MB's zijn)
-    auth_tail = f"sudo tail -c {_AUTH_LOG_TAIL_BYTES} /var/log/auth.log 2>/dev/null"
+    # Alleen het staartstuk van auth.log doorzoeken (kan honderden MB's zijn);
+    # zonder auth.log het recente deel van de journal (zie _auth_log_shell)
+    auth_tail = _auth_log_shell(f"-c {_AUTH_LOG_TAIL_BYTES}", _AUTH_JOURNAL_LINES)
     if filter_type == 'failed':
         cmd = f"{auth_tail} | grep -ai 'failed\\|invalid user\\|authentication failure' | tail -{lines}"
     elif filter_type == 'accepted':
@@ -5608,7 +5851,9 @@ def api_ssh_logs():
     elif filter_type == 'fail2ban':
         cmd = f"{auth_tail} | grep -ai 'fail2ban' | tail -{lines}; sudo tail -{lines} /var/log/fail2ban.log 2>/dev/null"
     else:
-        cmd = f"{auth_tail} | {_SSHD_GREP} -a | tail -{lines}"
+        # Alleen sshd-regels: uit de journal direct de laatste `lines`
+        sshd_tail = _auth_log_shell(f"-c {_AUTH_LOG_TAIL_BYTES}", lines, sshd_only=True)
+        cmd = f"{sshd_tail} | {_SSHD_GREP} -a | tail -{lines}"
 
     result = run_cmd(cmd)
     if result.returncode == 0:
@@ -8312,12 +8557,14 @@ def validate_config(data):
                         errors.append(f'nginx.{key} must be an absolute path')
                     elif not _under(v, '/var/log/nginx/'):
                         errors.append(f'nginx.{key} must be under /var/log/nginx/')
-            if 'sites_enabled' in data['nginx']:
-                v = data['nginx']['sites_enabled']
-                if not isinstance(v, str) or not v.startswith('/'):
-                    errors.append('nginx.sites_enabled must be an absolute path')
-                elif not _under(v, '/etc/nginx/'):
-                    errors.append('nginx.sites_enabled must be under /etc/nginx/')
+            # Zelfde regels als _nginx_sites_dir(): een map ónder /etc/nginx
+            for key in ('sites_enabled', 'sites_available'):
+                if key in data['nginx']:
+                    v = data['nginx'][key]
+                    if not isinstance(v, str) or not v.startswith('/') or '\0' in v:
+                        errors.append(f'nginx.{key} must be an absolute path')
+                    elif not os.path.normpath(v).startswith(NGINX_CONFIG_ROOT + '/'):
+                        errors.append(f'nginx.{key} must be a directory under /etc/nginx/')
 
     if 'caddy' in data:
         if not isinstance(data['caddy'], dict):
@@ -8684,26 +8931,45 @@ def backup_webhook():
     raw_details = data.get('details', '')
     clean_details = re.sub(r'<[^>]+>', '', str(raw_details))[:500]
 
-    status_data = _load_backup_status()
-    entry = {
-        'status': data['status'],
-        'details': clean_details,
-        'timestamp': datetime.now().isoformat(),
-    }
-
-    history = status_data.get('history', [])
-    history.append(entry)
-    # Keep last 20 entries
-    status_data['history'] = history[-20:]
-
-    if data['status'] == 'success':
-        status_data['last_success'] = entry
+    # Bron: "vps" (vps-backup.sh) of "nas" (nas-pull-backup.sh). Oudere en
+    # eigen scripts sturen geen source mee: dan afleiden uit de tekst.
+    source = data.get('source')
+    if source is None or source == '':
+        source = _infer_backup_source(clean_details)
+    elif not isinstance(source, str) or source.strip().lower() not in BACKUP_SOURCES:
+        return jsonify({'status': 'error',
+                        'message': f"Invalid source, must be one of: {', '.join(BACKUP_SOURCES)}"}), 400
     else:
-        status_data['last_failure'] = entry
+        source = source.strip().lower()
 
-    _save_backup_status(status_data)
+    key = 'last_success' if data['status'] == 'success' else 'last_failure'
+    with _backup_status_lock:
+        status_data = _load_backup_status()
+        # Vóór het toevoegen: migreert een statusbestand zonder 'sources'
+        sources = _backup_sources(status_data)
+        entry = {
+            'status': data['status'],
+            'details': clean_details,
+            'timestamp': datetime.now().isoformat(),
+            'source': source,
+        }
+
+        history = status_data.get('history')
+        if not isinstance(history, list):
+            history = []
+        history.append(entry)
+        # Keep last 20 entries
+        status_data['history'] = history[-20:]
+
+        sources[source][key] = entry
+        status_data['sources'] = sources
+        # Top-level velden: laatste melding van welke bron dan ook, voor wie
+        # ze nog leest (oudere versies na een downgrade, eigen tooling).
+        status_data[key] = entry
+
+        _save_backup_status(status_data)
     _invalidate_cache('get_backup_status')
-    return jsonify({'status': 'ok', 'message': 'Backup status recorded'})
+    return jsonify({'status': 'ok', 'message': 'Backup status recorded', 'source': source})
 
 
 @app.route('/swap/clear', methods=['POST'])
@@ -9279,11 +9545,12 @@ def list_nginx_configs():
     """List enabled + available site configs"""
     configs = {'enabled': [], 'available': []}
 
-    result = run_cmd("sudo ls /etc/nginx/sites-enabled/ 2>/dev/null", timeout=10)
+    # Ingestelde mappen (Settings → Nginx), niet vast /etc/nginx/sites-*
+    result = run_cmd_safe(["sudo", "ls", _nginx_sites_dir('enabled') + '/'], timeout=10)
     if result.returncode == 0:
         configs['enabled'] = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
 
-    result = run_cmd("sudo ls /etc/nginx/sites-available/ 2>/dev/null", timeout=10)
+    result = run_cmd_safe(["sudo", "ls", _nginx_sites_dir('available') + '/'], timeout=10)
     if result.returncode == 0:
         all_available = [n.strip() for n in result.stdout.strip().split('\n') if n.strip()]
         configs['available'] = [n for n in all_available if n not in configs['enabled']]
@@ -10081,8 +10348,10 @@ def nginx_config_read():
     if config_type not in ('enabled', 'available'):
         return jsonify({'status': 'error', 'message': 'Invalid type'}), 400
 
-    path = f'/etc/nginx/sites-{config_type}/{name}'
-    result = run_cmd(f"sudo cat {shlex.quote(path)}", timeout=10)
+    path = _nginx_config_path(config_type, name)
+    if not path:
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
+    result = run_cmd_safe(["sudo", "cat", path], timeout=10)
     if result.returncode == 0:
         return jsonify({'status': 'ok', 'content': result.stdout, 'name': name, 'type': config_type})
     return jsonify({'status': 'error', 'message': 'Could not read config'}), 500
@@ -10201,7 +10470,9 @@ def nginx_config_save():
     if config_type not in ('enabled', 'available'):
         return jsonify({'status': 'error', 'message': 'Invalid type'}), 400
 
-    path = f'/etc/nginx/sites-{config_type}/{name}'
+    path = _nginx_config_path(config_type, name)
+    if not path:
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
 
     res = _sudo_write_validated(
         path, content, validate_nginx,
@@ -10231,13 +10502,23 @@ def nginx_config_enable():
     if not name or not is_safe_name(name):
         return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
 
-    available = f'/etc/nginx/sites-available/{name}'
-    enabled = f'/etc/nginx/sites-enabled/{name}'
+    # Ingestelde mappen; in meldingen alleen de mapnaam (standaard
+    # 'sites-enabled' / 'sites-available')
+    available = _nginx_config_path('available', name)
+    enabled = _nginx_config_path('enabled', name)
+    if not available or not enabled:
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
+    available_label = os.path.basename(os.path.dirname(available))
+    enabled_label = os.path.basename(os.path.dirname(enabled))
+    if os.path.dirname(available) == os.path.dirname(enabled):
+        return jsonify({'status': 'error', 'message':
+                        'Sites enabled and sites available are the same directory; '
+                        'enable/disable via symlinks is not possible'}), 409
 
     # Check if available exists
     check = run_cmd_safe(["sudo", "test", "-f", available], timeout=5)
     if check.returncode != 0:
-        return jsonify({'status': 'error', 'message': 'Config not found in sites-available'}), 404
+        return jsonify({'status': 'error', 'message': f'Config not found in {available_label}'}), 404
 
     # Nooit iets in sites-enabled overschrijven: een regulier bestand daar
     # heeft mogelijk geen kopie in sites-available.
@@ -10249,10 +10530,10 @@ def nginx_config_enable():
         if target == os.path.realpath(available):
             return jsonify({'status': 'ok', 'message': f'{name} is already enabled'})
         return jsonify({'status': 'error', 'message':
-                        f'sites-enabled/{name} is a symlink to another file; remove it first'}), 409
+                        f'{enabled_label}/{name} is a symlink to another file; remove it first'}), 409
     if run_cmd_safe(["sudo", "test", "-e", enabled], timeout=5).returncode == 0:
         return jsonify({'status': 'error', 'message':
-                        f'sites-enabled/{name} is a regular file, not a symlink; refusing to overwrite it'}), 409
+                        f'{enabled_label}/{name} is a regular file, not a symlink; refusing to overwrite it'}), 409
 
     result = run_cmd_safe(["sudo", "ln", "-s", available, enabled], timeout=10)
     if result.returncode != 0:
@@ -10284,15 +10565,19 @@ def nginx_config_disable():
     if not name or not is_safe_name(name):
         return jsonify({'status': 'error', 'message': 'Invalid config name'}), 400
 
-    enabled = f'/etc/nginx/sites-enabled/{name}'
+    enabled = _nginx_config_path('enabled', name)
+    if not enabled:
+        return jsonify({'status': 'error', 'message': 'Path not allowed'}), 403
+    enabled_label = os.path.basename(os.path.dirname(enabled))
+    available_label = os.path.basename(_nginx_sites_dir('available'))
 
     # Alleen symlinks verwijderen: een regulier bestand in sites-enabled heeft
     # mogelijk geen kopie in sites-available en zou dan verloren gaan.
     if run_cmd_safe(["sudo", "test", "-L", enabled], timeout=5).returncode != 0:
         if run_cmd_safe(["sudo", "test", "-e", enabled], timeout=5).returncode == 0:
             return jsonify({'status': 'error', 'message':
-                            f'sites-enabled/{name} is a regular file, not a symlink; move it to '
-                            'sites-available and enable it from there before disabling'}), 409
+                            f'{enabled_label}/{name} is a regular file, not a symlink; move it to '
+                            f'{available_label} and enable it from there before disabling'}), 409
         return jsonify({'status': 'error', 'message': f'{name} is not enabled'}), 404
 
     try:

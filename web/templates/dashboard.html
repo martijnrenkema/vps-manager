@@ -269,10 +269,10 @@
                             {% set d = c.days_left %}
                             {% set warn_days = th.get('ssl_warning_days', 14) %}
                             {% set crit_days = th.get('ssl_critical_days', 3) %}
-                            <tr{% if d <= crit_days %} class="problem"{% elif d <= warn_days %} class="problem is-warn"{% endif %}>
+                            <tr{% if d < crit_days %} class="problem"{% elif d < warn_days %} class="problem is-warn"{% endif %}>
                                 <td class="name">{{ doms[0] if doms else c.domain }}{% if doms|length > 1 %} <span class="muted">+{{ doms|length - 1 }}</span>{% endif %}</td>
                                 <td class="tnum muted hide-sm">{{ c.expiry }}</td>
-                                <td class="r num{% if d <= crit_days %} days-err{% elif d <= warn_days %} days-warn{% endif %}">{{ d }}</td>
+                                <td class="r num{% if d < crit_days %} days-err{% elif d < warn_days %} days-warn{% endif %}">{{ d }}</td>
                             </tr>
                             {% endfor %}
                         </tbody>

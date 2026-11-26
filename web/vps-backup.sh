@@ -68,7 +68,8 @@ if ! flock -n 9; then
 fi
 
 json_escape() {
-    python3 -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))'
+    # -I: never import modules from the current directory (this runs as root)
+    python3 -I -c 'import json,sys; print(json.dumps(sys.stdin.read().strip()))'
 }
 
 webhook_secret_config() {
@@ -89,9 +90,10 @@ report_status() {
     # The secret goes to curl as a config file on stdin (-K -), not as a
     # command-line argument, where every local user could read it in `ps`.
     # -K - works on all curl versions (unlike -H @file, which needs >= 7.55).
+    # "source" keeps this run apart from the NAS pull on the dashboard.
     webhook_secret_config | curl -s -K - -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
-        -d "{\"status\": \"$status\", \"details\": $escaped}" > /dev/null 2>&1 || true
+        -d "{\"status\": \"$status\", \"source\": \"vps\", \"details\": $escaped}" > /dev/null 2>&1 || true
 }
 
 report_failure() {
@@ -214,39 +216,19 @@ if [ -n "$DATABASES" ]; then
     fi
 fi
 
-# Auto-detect SQLite databases in /var/www. Exclude dependencies and skipped apps.
-while IFS= read -r -d '' dbfile; do
-    relative="${dbfile#"$WWW_DIR"/}"
-    sitename="${relative%%/*}"
-    is_listed "$sitename" "$SKIP_DIRS" && continue
-
-    safename=$(printf '%s' "$relative" | sed 's|/|_|g; s|\.db$||')
-    dest="$BACKUP_DIR/databases/${safename}_$DATE.db"
-    tmp="$dest.tmp"
-    # Plain cp (no -p): the copy must get today's mtime, otherwise the
-    # retention `find -mtime +N -delete` below removes an old-but-unchanged
-    # database copy in the very run that made it.
-    if command -v sqlite3 >/dev/null 2>&1; then
-        sqlite3 "$dbfile" ".backup '$tmp'" 2>/dev/null || cp "$dbfile" "$tmp"
-    else
-        cp "$dbfile" "$tmp"
-    fi
-    touch "$tmp"
-    mv "$tmp" "$dest"
-done < <(find "$WWW_DIR" -maxdepth 5 -name "*.db" -type f \
-    ! -path "*/node_modules/*" ! -path "*/venv/*" ! -path "*/.venv/*" -print0 2>/dev/null)
-
-# SQLite databases outside $WWW_DIR. Python's backup API takes a consistent
-# snapshot while the app keeps writing; a cp of a live database (certainly one
-# in WAL mode) can be corrupt. The snapshot runs as the file's owner: if root
-# opened a WAL database while it had no -wal/-shm files, SQLite would create
-# them owned by root and the app could no longer write to its own database.
+# SQLite snapshots. Python's backup API takes a consistent snapshot while the
+# app keeps writing; a cp of a live database (certainly one in WAL mode) can be
+# corrupt. The snapshot runs as the file's owner: if root opened a WAL database
+# while it had no -wal/-shm files, SQLite would create them owned by root and
+# the app could no longer write to its own database.
+# $3 = gzip writes a compressed copy, otherwise a plain database file.
 snapshot_sqlite() {
-    local src="$1" dest="$2" owner work rc=0
+    local src="$1" dest="$2" compress="${3:-}" owner work rc=0
     owner=$(stat -c %U "$src")
     work=$(mktemp -d)
     chown "$owner" "$work"
-    runuser -u "$owner" -- python3 - "$src" "$work/snapshot.sqlite" <<'PY' || rc=$?
+    # -I: never import modules from the current directory (may be root)
+    runuser -u "$owner" -- python3 -I - "$src" "$work/snapshot.sqlite" <<'PY' || rc=$?
 import sqlite3, sys
 src = sqlite3.connect(sys.argv[1])
 dst = sqlite3.connect(sys.argv[2])
@@ -257,22 +239,70 @@ src.close()
 if result != "ok":
     sys.exit("integrity_check: " + result)
 PY
+    # Plain cp (no -p) / gzip: the copy gets today's mtime, otherwise the
+    # retention `find -mtime +N -delete` below would remove it in the very
+    # run that made it.
     if [ "$rc" -eq 0 ]; then
-        { gzip -c "$work/snapshot.sqlite" > "$dest.tmp" && mv "$dest.tmp" "$dest"; } || rc=$?
+        if [ "$compress" = gzip ]; then
+            { gzip -c "$work/snapshot.sqlite" > "$dest.tmp" && mv "$dest.tmp" "$dest"; } || rc=$?
+        else
+            { cp "$work/snapshot.sqlite" "$dest.tmp" && mv "$dest.tmp" "$dest"; } || rc=$?
+        fi
     fi
     rm -rf "$work"
     rm -f "$dest.tmp"
     return "$rc"
 }
 
+# Auto-detect SQLite databases in /var/www. Exclude dependencies and skipped apps.
+while IFS= read -r -d '' dbfile; do
+    relative="${dbfile#"$WWW_DIR"/}"
+    sitename="${relative%%/*}"
+    is_listed "$sitename" "$SKIP_DIRS" && continue
+
+    safename=$(printf '%s' "$relative" | sed 's|/|_|g; s|\.db$||')
+    dest="$BACKUP_DIR/databases/${safename}_$DATE.db"
+    # Not every *.db is SQLite (e.g. Thumbs.db): those are copied as-is, as
+    # is a database whose snapshot fails (that one does make the run
+    # incomplete). A cp only reads, so it never creates -wal/-shm files.
+    if [ "$(head -c 15 "$dbfile" 2>/dev/null)" = "SQLite format 3" ]; then
+        snapshot_sqlite "$dbfile" "$dest" && continue
+        add_warning "snapshot of $dbfile failed, copied it as-is"
+    fi
+    cp "$dbfile" "$dest.tmp"
+    mv "$dest.tmp" "$dest"
+done < <(find "$WWW_DIR" -maxdepth 5 -name "*.db" -type f \
+    ! -path "*/node_modules/*" ! -path "*/venv/*" ! -path "*/.venv/*" -print0 2>/dev/null)
+
+# SQLite databases outside $WWW_DIR. Only absolute paths: a relative one would
+# be resolved against whatever directory cron or the admin started us in.
+# The backup name keeps the full file name, so db.sqlite and db.sqlite3 in
+# one directory no longer end up in the same file.
 EXTRA_SQLITE_COUNT=0
+extra_sqlite_names=" "
 for dbfile in $EXTRA_SQLITE_DBS; do
+    case "$dbfile" in
+        /*) ;;
+        *)
+            add_warning "EXTRA_SQLITE_DBS entry $dbfile is not an absolute path - skipped"
+            continue
+            ;;
+    esac
     if [ ! -f "$dbfile" ]; then
         add_warning "EXTRA_SQLITE_DBS entry $dbfile not found"
         continue
     fi
-    safename=$(printf '%s' "${dbfile#/}" | sed 's|/|_|g; s|\.[A-Za-z0-9]*$||')
-    if snapshot_sqlite "$dbfile" "$BACKUP_DIR/databases/${safename}_$DATE.sqlite.gz"; then
+    safename=$(printf '%s' "${dbfile#/}" | sed 's|/|_|g')
+    # / becomes _, so /opt/a_b/x.db and /opt/a/b_x.db still share a name:
+    # never let the second one overwrite the first.
+    case "$extra_sqlite_names" in
+        *" $safename "*)
+            add_warning "EXTRA_SQLITE_DBS entry $dbfile has the same backup name as an earlier entry - skipped"
+            continue
+            ;;
+    esac
+    extra_sqlite_names="$extra_sqlite_names$safename "
+    if snapshot_sqlite "$dbfile" "$BACKUP_DIR/databases/${safename}_$DATE.sqlite.gz" gzip; then
         EXTRA_SQLITE_COUNT=$((EXTRA_SQLITE_COUNT + 1))
     else
         add_warning "snapshot of $dbfile failed"
@@ -310,6 +340,15 @@ fi
 
 extra_paths=()
 for p in $EXTRA_CONFIG_PATHS; do
+    # Only absolute paths: tar packs them relative to /, while the -e check
+    # would resolve a relative one against the current directory.
+    case "$p" in
+        /*) ;;
+        *)
+            add_warning "EXTRA_CONFIG_PATHS entry $p is not an absolute path - skipped"
+            continue
+            ;;
+    esac
     if [ -e "$p" ]; then
         extra_paths+=("${p#/}")
     else

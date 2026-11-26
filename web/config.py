@@ -78,6 +78,7 @@ def get_default_config():
         "nginx": {
             "error_log": "/var/log/nginx/error.log",
             "access_log": "/var/log/nginx/access.log",
+            "sites_available": "/etc/nginx/sites-available/",
             "sites_enabled": "/etc/nginx/sites-enabled/",
         },
         "caddy": {

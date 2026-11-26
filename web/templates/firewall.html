@@ -192,7 +192,7 @@
         {% if data.auth_log %}
             <pre>{{ data.auth_log }}</pre>
         {% else %}
-            <div class="empty-state">Unable to read auth.log</div>
+            <div class="empty-state">Unable to read auth.log or the systemd journal</div>
         {% endif %}
     </div>
 </details>

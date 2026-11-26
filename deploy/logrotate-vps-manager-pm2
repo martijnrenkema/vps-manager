@@ -1,0 +1,18 @@
+# Logrotatie voor de PM2-logs van de VPS Manager (~/.pm2/logs/vps-manager-*.log
+# groeien anders onbegrensd). APPUSER/APPGROUP/APPHOME horen bij de gebruiker
+# die PM2 draait; installeer daarom als die gebruiker (niet als root):
+#   sed "s|APPHOME|$HOME|; s/APPUSER/$(id -un)/; s/APPGROUP/$(id -gn)/" \
+#       deploy/logrotate-vps-manager-pm2 | sudo tee /etc/logrotate.d/vps-manager-pm2 >/dev/null
+# copytruncate: PM2 houdt het bestand open en schrijft anders door in de
+# hernoemde versie.
+APPHOME/.pm2/logs/vps-manager-*.log {
+    su APPUSER APPGROUP
+    weekly
+    maxsize 10M
+    rotate 4
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}

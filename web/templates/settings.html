@@ -369,8 +369,12 @@
                             <input type="text" class="form-control" id="cfg_nginx_access_log" value="{{ config.nginx.access_log }}">
                         </div>
                         <div class="form-group">
-                            <label>Sites enabled <span class="tooltip-icon tooltip-icon-sm" data-bs-toggle="tooltip" title="Path to the nginx sites-enabled directory.">?</span></label>
+                            <label>Sites enabled <span class="tooltip-icon tooltip-icon-sm" data-bs-toggle="tooltip" title="Directory with the active site configs (usually symlinks). Used for the site list, PHP mapping and the config editor.">?</span></label>
                             <input type="text" class="form-control" id="cfg_nginx_sites_enabled" value="{{ config.nginx.sites_enabled }}">
+                        </div>
+                        <div class="form-group">
+                            <label>Sites available <span class="tooltip-icon tooltip-icon-sm" data-bs-toggle="tooltip" title="Directory with all site configs. The config editor enables a site by symlinking it from here into sites enabled.">?</span></label>
+                            <input type="text" class="form-control" id="cfg_nginx_sites_available" value="{{ config.nginx.sites_available }}">
                         </div>
                     </div>
                     </div>
@@ -745,6 +749,7 @@ const CONFIG_ERROR_FIELDS = [
     ['nginx.error_log', 'cfg_nginx_error_log'],
     ['nginx.access_log', 'cfg_nginx_access_log'],
     ['nginx.sites_enabled', 'cfg_nginx_sites_enabled'],
+    ['nginx.sites_available', 'cfg_nginx_sites_available'],
     ['caddy.config_file', 'cfg_caddy_config_file'],
     ['caddy.sites_dir', 'cfg_caddy_sites_dir'],
     ['caddy.error_log', 'cfg_caddy_error_log'],
@@ -825,6 +830,7 @@ async function saveConfig(e) {
             error_log: document.getElementById('cfg_nginx_error_log').value,
             access_log: document.getElementById('cfg_nginx_access_log').value,
             sites_enabled: document.getElementById('cfg_nginx_sites_enabled').value,
+            sites_available: document.getElementById('cfg_nginx_sites_available').value,
         },
         caddy: {
             config_file: document.getElementById('cfg_caddy_config_file').value,
