@@ -693,15 +693,55 @@ function uploadFiles(fileList) {
     const files = Array.from(fileList || []);
     if (!files.length) return;
 
-    const area = document.getElementById('uploadProgressArea');
-    const list = document.getElementById('uploadProgressList');
-    const title = document.getElementById('uploadProgressTitle');
-    const dismissBtn = document.getElementById('uploadDismissBtn');
-
     // Upload target fixed at the start: navigating while the queue runs must
     // not send the remaining files to another folder.
     const targetPath = currentPath;
     if (!targetPath) { showToast('No folder open to upload to', 'error'); return; }
+    // Allow picking the same file again later.
+    document.getElementById('uploadInput').value = '';
+
+    // Bestaande bestanden alleen na bevestiging vervangen. Mislukt de
+    // controle, dan gewoon uploaden: de server weigert dan zelf te
+    // overschrijven en meldt dat per bestand.
+    fetch('/files/upload/check', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        body: JSON.stringify({path: targetPath, names: files.map(function(f) { return f.name; })})
+    })
+        .then(function(res) { return res.ok ? res.json() : null; })
+        .catch(function() { return null; })
+        .then(function(data) {
+            const exists = (data && Array.isArray(data.exists)) ? data.exists : [];
+            const existing = files.filter(function(f, i) { return exists[i] === true; });
+            if (!existing.length) { enqueueUploads(files, targetPath, false); return; }
+
+            const shown = existing.slice(0, 5).map(function(f) { return f.name; }).join(', ');
+            const more = existing.length > 5 ? ` and ${existing.length - 5} more` : '';
+            const one = existing.length === 1;
+            showConfirm(
+                one ? 'Replace existing file?' : `Replace ${existing.length} existing files?`,
+                `${one ? 'This file already exists' : 'These files already exist'} in ${targetPath}: ${shown}${more}. ` +
+                    'Replacing overwrites the current version.',
+                function() { enqueueUploads(files, targetPath, true); },
+                {
+                    destructive: true,
+                    confirmLabel: 'Replace',
+                    cancelLabel: one ? 'Skip it' : 'Skip these',
+                    onCancel: function() {
+                        const rest = files.filter(function(f) { return existing.indexOf(f) === -1; });
+                        showToast(`Skipped ${existing.length} existing file${one ? '' : 's'}`, 'info');
+                        if (rest.length) enqueueUploads(rest, targetPath, false);
+                    },
+                }
+            );
+        });
+}
+
+function enqueueUploads(files, targetPath, overwrite) {
+    const area = document.getElementById('uploadProgressArea');
+    const list = document.getElementById('uploadProgressList');
+    const title = document.getElementById('uploadProgressTitle');
+    const dismissBtn = document.getElementById('uploadDismissBtn');
 
     if (!uploadRunning) {
         list.innerHTML = '';
@@ -714,8 +754,6 @@ function uploadFiles(fileList) {
     dismissBtn.style.display = 'none';
     uploadStats.total += files.length;
     uploadStats.targets.add(targetPath);
-    // Allow picking the same file again later.
-    document.getElementById('uploadInput').value = '';
 
     // Progress entry per file; keep direct element references (no global ids).
     files.forEach(function(file) {
@@ -735,6 +773,7 @@ function uploadFiles(fileList) {
         uploadQueue.push({
             file: file,
             targetPath: targetPath,
+            overwrite: overwrite,
             entryEl: entry,
             barEl: entry.querySelector('.progress-bar-fill'),
             statusEl: entry.querySelector('.upload-file-status'),
@@ -775,6 +814,7 @@ function uploadNext() {
     const form = new FormData();
     form.append('csrf_token', csrfToken);
     form.append('path', job.targetPath);
+    if (job.overwrite) form.append('overwrite', '1');
     form.append('file', job.file);
 
     const xhr = new XMLHttpRequest();

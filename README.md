@@ -396,6 +396,9 @@ Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
 
+### v2.3.1 - Ask Before Replacing Uploaded Files
+- **Uploads no longer overwrite silently** - Uploading a file with the same name as an existing one (e.g. `index.php` in a live site) replaced it without asking. The Files page now checks first and asks once per upload: "Replace" overwrites the existing files, "Skip" (or Esc) uploads only the new ones. The server also refuses to overwrite without that confirmation, so a file that appears in the meantime or an upload from an old open page is never replaced unasked. A folder with the same name is never replaced. The audit log records whether a file was replaced
+
 ### v2.3.0 - New Look & Quieter Alerts
 - **New look** - The interface now shares its style with muxdeck and the regiekamer: slate neutrals, flat panels with a thin edge, and teal as the one accent for links, focus and primary buttons. Status colours keep one meaning each (green = fine, amber = attention, red = wrong). The sidebar marks the current page with a teal bar, group headers are small caps, usage bars are teal until they cross a threshold, and large figures are lighter. The light theme follows the same palette
 - **System fonts** - IBM Plex is replaced by the system font stack, the same as muxdeck. Pages no longer download web fonts
