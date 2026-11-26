@@ -6,34 +6,51 @@
 {% block content %}
 <!-- Status Overview -->
 <div class="card">
-    <div class="card-header">{{ icon('activity') }} Backup Health <span class="tooltip-icon" data-bs-toggle="tooltip" title="Overview of automated backup status. Backups pull data from the VPS to NAS storage.">?</span></div>
+    <div class="card-header">{{ icon('activity') }} Backup Health <span class="tooltip-icon" data-bs-toggle="tooltip" title="The VPS backup and the NAS pull are tracked separately, so a successful NAS pull cannot hide a failed VPS backup (or the other way round).">?</span></div>
     <div class="card-body">
-        {% set st = data.status if data.status is mapping else {} %}
-        {% set last_ok = st.last_success if st.last_success is mapping else none %}
-        {% set last_fail = st.last_failure if st.last_failure is mapping else none %}
-        {# Same rule as check_backup_alerts(): a failure counts unless a later success exists (ISO timestamps compare as strings). #}
-        {% set failed_last = last_fail and not (last_ok and (last_ok.timestamp or '') > (last_fail.timestamp or '')) %}
-        {% if last_ok and not failed_last %}
+        {# One row per source. failed/stale come from _backup_source_states(), the same rule as the dashboard alerts. #}
+        {% set sources = data.sources or [] %}
+        {% if sources|selectattr('reported')|list %}
+            {% for s in sources %}
+            {% set ok = s.last_success if s.last_success is mapping else none %}
+            {% set fail = s.last_failure if s.last_failure is mapping else none %}
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
-                <div class="backup-status-icon backup-ok">
-                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                </div>
-                <div>
-                    <div style="font-size:16px;font-weight:600;color:var(--green)">Last backup successful</div>
-                    <div style="font-size:13px;color:var(--text-muted)">{{ last_ok.timestamp[:19]|replace('T', ' ') if last_ok.timestamp else 'Unknown' }}</div>
-                </div>
-            </div>
-        {% elif failed_last %}
-            <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+            {% if s.failed %}
                 <div class="backup-status-icon backup-fail">
                     <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                 </div>
                 <div>
-                    <div style="font-size:16px;font-weight:600;color:var(--red)">Last backup failed</div>
-                    <div style="font-size:13px;color:var(--text-muted)">{% if last_fail.timestamp %}{{ last_fail.timestamp[:19]|replace('T', ' ') }}{% if last_fail.details %} — {% endif %}{% endif %}{{ last_fail.details[:100] if last_fail.details else '' }}</div>
-                    <div style="font-size:13px;color:var(--text-muted)">Last successful backup: {{ last_ok.timestamp[:19]|replace('T', ' ') if last_ok and last_ok.timestamp else 'none recorded' }}</div>
+                    <div style="font-size:16px;font-weight:600;color:var(--red)">{{ s.label }} failed</div>
+                    <div style="font-size:13px;color:var(--text-muted)">{% if fail %}{% if fail.timestamp %}{{ fail.timestamp[:19]|replace('T', ' ') }}{% if fail.details %} — {% endif %}{% endif %}{{ fail.details[:100] if fail.details else '' }}{% else %}{{ s.last_failure|string|truncate(100) }}{% endif %}</div>
+                    <div style="font-size:13px;color:var(--text-muted)">Last successful run: {{ ok.timestamp[:19]|replace('T', ' ') if ok and ok.timestamp else 'none recorded' }}</div>
                 </div>
+            {% elif s.stale %}
+                <div class="backup-status-icon backup-warn">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--yellow)">{{ s.label }}: no successful run in 48 hours</div>
+                    <div style="font-size:13px;color:var(--text-muted)">Last successful run: {{ ok.timestamp[:19]|replace('T', ' ') if ok.timestamp else 'Unknown' }}</div>
+                </div>
+            {% elif ok %}
+                <div class="backup-status-icon backup-ok">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--green)">{{ s.label }} successful</div>
+                    <div style="font-size:13px;color:var(--text-muted)">{{ ok.timestamp[:19]|replace('T', ' ') if ok.timestamp else 'Unknown' }}</div>
+                </div>
+            {% else %}
+                <div class="backup-status-icon backup-unknown">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                </div>
+                <div>
+                    <div style="font-size:16px;font-weight:600;color:var(--text-muted)">{{ s.label }}: no reports yet</div>
+                    <div style="font-size:13px;color:var(--text-muted)">{% if s.source == 'nas' %}Set up nas-pull-backup.sh with the webhook to track the offsite copy{% else %}Set up vps-backup.sh with the webhook to track it{% endif %}</div>
+                </div>
+            {% endif %}
             </div>
+            {% endfor %}
         {% else %}
             <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
                 <div class="backup-status-icon backup-unknown">
@@ -52,7 +69,7 @@
             <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Last {{ data.history|length }} runs</div>
             <div class="backup-timeline">
                 {% for entry in data.history|reverse %}
-                <div class="backup-dot {% if entry.status == 'success' %}dot-ok{% else %}dot-fail{% endif %}" data-bs-toggle="tooltip" title="{{ entry.timestamp[:16] if entry.timestamp else '' }} - {{ entry.status }}"></div>
+                <div class="backup-dot {% if entry.status == 'success' %}dot-ok{% else %}dot-fail{% endif %}" data-bs-toggle="tooltip" title="{{ entry.timestamp[:16]|replace('T', ' ') if entry.timestamp else '' }} - {{ entry.source_label }} - {{ entry.status }}"></div>
                 {% endfor %}
             </div>
         </div>
@@ -175,6 +192,7 @@
             <thead>
                 <tr>
                     <th style="padding:10px 16px">Time</th>
+                    <th style="padding:10px 16px">Source</th>
                     <th style="padding:10px 16px">Status</th>
                     <th style="padding:10px 16px">Details</th>
                 </tr>
@@ -183,6 +201,7 @@
                 {% for entry in data.history|reverse %}
                 <tr>
                     <td style="padding:8px 16px;white-space:nowrap;color:var(--text-muted)">{{ entry.timestamp[:16]|replace('T', ' ') if entry.timestamp else '-' }}</td>
+                    <td style="padding:8px 16px;white-space:nowrap">{{ entry.source_label or '-' }}</td>
                     <td style="padding:8px 16px">
                         {% if entry.status == 'success' %}
                             <span style="color:var(--green);font-weight:500">OK</span>
@@ -224,6 +243,10 @@
             Set the secret under <a href="/settings">Settings</a> → Advanced → Backup and replace <code>YOUR_WEBHOOK_SECRET</code> below with it.
             The local example assumes the default bind address <code>127.0.0.1:5050</code>; if the app runs with a different <code>VPS_MANAGER_HOST</code> / <code>VPS_MANAGER_PORT</code>, use those instead.
         </p>
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+            <code>source</code> tells which job reports: <code>vps</code> for the backup on the VPS, <code>nas</code> for the pull to the NAS. Each source keeps its own last result and alerts.
+            Without <code>source</code> (older scripts), a message starting with <code>NAS pull</code> counts as the NAS pull and anything else as the VPS backup.
+        </p>
 
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">VPS backup script (localhost)</div>
         <pre style="font-size:12px;margin-bottom:16px;overflow-x:auto;max-width:100%">WEBHOOK_URL="http://127.0.0.1:5050/api/backup/webhook"
@@ -233,13 +256,13 @@ WEBHOOK_SECRET="YOUR_WEBHOOK_SECRET"
 curl -s -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-  -d '{"status": "success", "details": "Backup completed"}'
+  -d '{"status": "success", "source": "vps", "details": "Backup completed"}'
 
 # Report failure:
 curl -s -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-  -d '{"status": "failure", "details": "Error message"}'</pre>
+  -d '{"status": "failure", "source": "vps", "details": "Error message"}'</pre>
 
         <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;letter-spacing:0.5px">Remote pull script (NAS / offsite)</div>
         <pre style="font-size:12px;overflow-x:auto;max-width:100%">WEBHOOK_URL="{{ request.url_root }}api/backup/webhook"
@@ -250,7 +273,7 @@ WEBHOOK_SECRET="YOUR_WEBHOOK_SECRET"
 curl -s -X POST "$WEBHOOK_URL" \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
-  -d '{"status": "success", "details": "NAS pull completed"}'</pre>
+  -d '{"status": "success", "source": "nas", "details": "NAS pull completed"}'</pre>
     </div>
 </details>
 {% endblock %}

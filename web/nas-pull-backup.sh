@@ -84,9 +84,10 @@ report_status() {
     # The secret goes to curl as a config file on stdin (-K -), not as a
     # command-line argument, where every local user could read it in `ps`.
     # -K - works on all curl versions (unlike -H @file, which needs >= 7.55).
+    # "source" keeps this run apart from the VPS backup on the dashboard.
     webhook_secret_config | curl -s -K - -X POST "$WEBHOOK_URL" \
         -H "Content-Type: application/json" \
-        -d "{\"status\": \"$status\", \"details\": \"$escaped\"}" > /dev/null 2>&1 || true
+        -d "{\"status\": \"$status\", \"source\": \"nas\", \"details\": \"$escaped\"}" > /dev/null 2>&1 || true
 }
 
 fail() {

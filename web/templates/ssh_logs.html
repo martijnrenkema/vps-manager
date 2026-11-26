@@ -28,7 +28,7 @@
                 <div class="label">Accepted logins</div>
                 <div class="value">{{ data.accepted_count | default(0) }}</div>
             </div>
-            <div class="sub muted" style="font-size:12px;margin-top:8px">Counts from the current auth.log</div>
+            <div class="sub muted" style="font-size:12px;margin-top:8px">{% if data.log_source == 'journal' %}Counts from the recent systemd journal (no auth.log on this server){% else %}Counts from the current auth.log{% endif %}</div>
         </div>
     </div>
     <div class="card" style="margin-bottom:0">

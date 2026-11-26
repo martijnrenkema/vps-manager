@@ -196,6 +196,8 @@ export VPS_MANAGER_PASS=your-password
 
 Supports both **Nginx** and **Caddy** as the web server. Configure in Settings with auto-detection. The entire dashboard adapts: site listing, config editor, log viewer, SSL management, sidebar labels, and command palette.
 
+For Nginx, the site directories are set under Settings → Nginx: **Sites enabled** (default `/etc/nginx/sites-enabled/`) and **Sites available** (default `/etc/nginx/sites-available/`). The site list, PHP mapping and config editor (read, save, enable/disable via symlinks) use these directories and only touch files directly inside them. Both must be a directory under `/etc/nginx/`; an empty or invalid value falls back to the default.
+
 ### Monitored Services
 
 Default: `nginx`, `php8.3-fpm`, `mariadb`, `fail2ban`. Configurable in settings. When using Caddy, replace `nginx` with `caddy` (auto-detected via the Detect button).
@@ -208,6 +210,8 @@ Default: `nginx`, `php8.3-fpm`, `mariadb`, `fail2ban`. Configurable in settings.
 | Memory usage | 85% | - |
 | Swap usage | 50% | - |
 | SSL expiry | 14 days | 3 days |
+
+SSL thresholds apply when fewer days are left than the threshold (with 14 days, a certificate with 13 days left warns, one with 14 does not). Dashboard alerts, the certificate tables, the SSL page and the sidebar hint use the same boundary.
 
 ### Push Notifications
 
@@ -259,6 +263,14 @@ The dashboard tracks backup status via a webhook endpoint (`POST /api/backup/web
 └─────────┘               └──────────────────────┘
 ```
 
+The two jobs are tracked separately: each has its own last success and last failure on the Backup page, in the dashboard alerts and in the security audit. A failed VPS backup therefore stays visible after a later successful NAS pull, and the other way round; "no successful run in 48 hours" is also checked per job. The scripts send `"source": "vps"` or `"source": "nas"` with every report:
+
+```json
+{"status": "success", "source": "vps", "details": "Backup completed - ..."}
+```
+
+`source` is optional. Reports without it (older copies of the scripts, your own scripts) are assigned by their text: `details` starting with `NAS pull` count as the NAS pull, everything else as the VPS backup. Any other value than `vps` or `nas` is rejected with HTTP 400.
+
 ### VPS Backup Script
 
 Install the VPS-side script as root:
@@ -271,8 +283,15 @@ echo '0 3 * * * root /usr/local/bin/vps-backup.sh' | sudo tee /etc/cron.d/vps-ba
 sudo cp deploy/logrotate-vps-manager /etc/logrotate.d/vps-manager
 ```
 
+The app's own PM2 logs (`~/.pm2/logs/vps-manager-*.log`) also grow without limit. Install their rotation as the user that runs PM2 (not with `sudo -i`), so the paths and user are filled in:
+
+```bash
+sed "s|APPHOME|$HOME|; s/APPUSER/$(id -un)/; s/APPGROUP/$(id -gn)/" \
+    deploy/logrotate-vps-manager-pm2 | sudo tee /etc/logrotate.d/vps-manager-pm2 >/dev/null
+```
+
 What it backs up:
-- MariaDB dumps for all non-system databases, plus SQLite `.db` files under included sites.
+- MariaDB dumps for all non-system databases, plus SQLite `.db` files under included sites (`/var/www/<site>/prisma/dev.db` becomes `databases/<site>_prisma_dev_DATE.db`). These are snapshotted with SQLite's backup API as the user that owns the file, so a site that opens its database during the backup is never left with root-owned `-wal`/`-shm` files. A `.db` file that is not SQLite is copied as-is; a failed snapshot is copied as-is too, and the run is reported as incomplete.
 - Site data from `/var/www`, excluding `html` and the manager's own directory (`vps-manager`) by default — override with `SKIP_DIRS` in `.backup_env`.
 - WordPress `wp-content` uploads/themes/plugins and custom root files, without WordPress core.
 - Node/Python/static site files without rebuildable dependencies such as `node_modules`, `.next`, `venv`, `.git`, caches, logs and bytecode.
@@ -280,7 +299,7 @@ What it backs up:
 - VPS Manager state (`data/` with `config.json`, secret key, VAPID keys) — these are not in git, so this tarball is the only way to recover 2FA and push subscriptions.
 - MariaDB users and grants (`_grants_DATE.sql.gz`), so a restore also brings back the database accounts the sites log in with.
 - A daily checksum manifest covering current-day DB/config files and all mirrored site files.
-- Optionally, apps that live outside `/var/www` (e.g. a self-hosted tool in `/opt`): list their SQLite databases in `EXTRA_SQLITE_DBS` and their config files or directories in `EXTRA_CONFIG_PATHS` (space-separated absolute paths in `.backup_env`). Each database is snapshotted with SQLite's backup API as the user that owns the file, checked with `PRAGMA integrity_check` and stored as `databases/<path>_DATE.sqlite.gz`; the config paths go into `configs/extra_DATE.tar.gz`. A missing path or failed snapshot does not stop the run, but the run is reported as failed.
+- Optionally, apps that live outside `/var/www` (e.g. a self-hosted tool in `/opt`): list their SQLite databases in `EXTRA_SQLITE_DBS` and their config files or directories in `EXTRA_CONFIG_PATHS` (space-separated absolute paths in `.backup_env`). Each database is snapshotted with SQLite's backup API as the user that owns the file, checked with `PRAGMA integrity_check` and stored as `databases/<path>_DATE.sqlite.gz`, where `<path>` is the full path with `/` replaced by `_`, file name and extension included (`/opt/bugsink/data/db.sqlite3` becomes `databases/opt_bugsink_data_db.sqlite3_DATE.sqlite.gz`); the config paths go into `configs/extra_DATE.tar.gz`. A relative path, a missing path, two entries that map to the same backup name, or a failed snapshot does not stop the run: that entry is skipped and the run is reported as incomplete.
 
 ```bash
 # in .backup_env:
@@ -346,7 +365,7 @@ Restore order:
 3. Restore site files from `sites/<site>/`.
 4. Restore `.env` / `wp-config.php` from `configs/`.
 5. Restore MariaDB: per database `mysql -e "CREATE DATABASE IF NOT EXISTS <db>"` and `gunzip -c databases/<db>_YYYYMMDD.sql.gz | mysql <db>` (the dumps contain no `CREATE DATABASE`/`USE`). Then restore users and grants with `gunzip -c databases/_grants_YYYYMMDD.sql.gz | mysql --force` (`--force` skips accounts that already exist, such as `root`).
-6. Restore SQLite `.db` files to their original paths and fix ownership. Databases from `EXTRA_SQLITE_DBS` are gzipped (`gunzip -c databases/<path>_YYYYMMDD.sqlite.gz > <original path>`, with the app stopped, and remove any leftover `-wal`/`-shm` files next to it); the original paths are listed in `configs/manifest_YYYYMMDD.txt` and their config files are in `configs/extra_YYYYMMDD.tar.gz` (`tar xzf ... -C /`).
+6. Restore SQLite `.db` files to their original paths and fix ownership. Databases from `EXTRA_SQLITE_DBS` are gzipped and named after their full original path (`gunzip -c databases/opt_bugsink_data_db.sqlite3_YYYYMMDD.sqlite.gz > /opt/bugsink/data/db.sqlite3`, with the app stopped, and remove any leftover `-wal`/`-shm` files next to it; backups made before this naming have the extension stripped, e.g. `opt_bugsink_data_db_YYYYMMDD.sqlite.gz`); the original paths are listed in `configs/manifest_YYYYMMDD.txt` and their config files are in `configs/extra_YYYYMMDD.tar.gz` (`tar xzf ... -C /`).
 7. Restore the VPS Manager `data/` directory from `configs/vps-manager-data_YYYYMMDD.tar.gz` (2FA, secret key, VAPID keys, settings).
 8. Restart services/PM2 and verify HTTP, database login and SSL.
 
@@ -395,6 +414,17 @@ vps.example.com {
 Caddy automatically provisions and renews SSL certificates via Let's Encrypt.
 
 ## Changelog
+
+### v2.3.2 - Quieter Alerts and Separate Backup Status
+- **Load alerts on the 15-minute average** - The load alert used the 1-minute average, so every cron job or backup that briefly pushed it above the number of cores sent a notification (89 of the last 100 on one server). It now uses the 15-minute average. Load, RAM and swap alerts are no longer re-sent every time their number changes; after recovery and the cooldown a new one follows
+- **VPS backup and NAS pull tracked separately** - Both jobs shared one "last success", so a successful NAS pull hid a failed VPS backup (and the reverse). Each now has its own status on the Backup page, in the dashboard alerts and in the security audit, including the 48-hour staleness check. The scripts send a `source` field; reports without it are assigned by their text, so older scripts keep working. Webhook updates are now locked and written atomically
+- **SQLite backups as the file owner** - `vps-backup.sh` snapshots the `.db` files under `/var/www` as the user that owns them, with SQLite's backup API and an integrity check, so no root-owned `-wal`/`-shm` files are left behind for the site. Files that are not SQLite (e.g. `Thumbs.db`) are copied as-is
+- **`EXTRA_SQLITE_DBS` / `EXTRA_CONFIG_PATHS` fixes** - Relative paths are skipped with a warning (the run reports as incomplete). Backup names keep the full file name, so `db.sqlite` and `db.sqlite3` in one folder no longer overwrite each other; two entries that would still share a name give a warning
+- **Monitor** - The app's own `apt list --upgradable` check no longer counts as "updates running" (only root package processes do), and "self-healing gave up" is no longer re-sent after a long update
+- **Nginx directories from Settings** - The config editor, site list and PHP mapping use the Sites enabled / Sites available directories from Settings (new field) instead of fixed `/etc/nginx/sites-*` paths
+- **SSH logs without auth.log** - SSH logs, attacker stats and recent login attempts fall back to the systemd journal when there is no `/var/log/auth.log` (e.g. Debian 12)
+- **SSL boundary day** - The sidebar hint, dashboard table and SSL page now use the same "fewer days than the threshold" rule as the dashboard alerts
+- **PM2 log rotation** - New `deploy/logrotate-vps-manager-pm2` for the app's PM2 logs, which grew without limit (see Backup setup)
 
 ### v2.3.1 - Ask Before Replacing Uploaded Files
 - **Uploads no longer overwrite silently** - Uploading a file with the same name as an existing one (e.g. `index.php` in a live site) replaced it without asking. The Files page now checks first and asks once per upload: "Replace" overwrites the existing files, "Skip" (or Esc) uploads only the new ones. The server also refuses to overwrite without that confirmation, so a file that appears in the meantime or an upload from an old open page is never replaced unasked. A folder with the same name is never replaced. The audit log records whether a file was replaced
