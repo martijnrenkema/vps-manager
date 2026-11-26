@@ -589,6 +589,8 @@ function closeLogModal() {
  * given). Focus goes to the primary button, Enter confirms, Esc cancels.
  * ------------------------------------------------------------------------ */
 let confirmCallback = null;
+// opts.onCancel: aangeroepen bij Annuleren, Esc of klik naast de dialoog
+let confirmCancelCallback = null;
 let _confirmReturnFocus = null;
 // Enter only confirms when the key was pressed after the dialog opened: the
 // keydown that opened it (e.g. Enter in the command palette) or a held-down,
@@ -599,6 +601,12 @@ const DESTRUCTIVE_RE = /\b(reboot|delete|kill|stop|clear|remove|ban|disable|drop
 
 function showConfirm(title, message, callback, opts) {
     opts = opts || {};
+    // Een openstaande vraag die hierdoor vervangen wordt, telt als geannuleerd
+    if (confirmCancelCallback && isConfirmOpen()) {
+        const prevCancel = confirmCancelCallback;
+        confirmCancelCallback = null;
+        prevCancel();
+    }
     const overlay = document.getElementById('confirmOverlay');
     const box = overlay.querySelector('.confirm-box');
     const btn = document.getElementById('confirmBtn');
@@ -609,8 +617,11 @@ function showConfirm(title, message, callback, opts) {
     box.classList.toggle('is-destructive', destructive);
     btn.className = 'btn ' + (destructive ? 'btn-danger' : 'btn-primary');
     btn.textContent = opts.confirmLabel || 'Confirm';
+    const cancelBtn = document.getElementById('confirmCancelBtn');
+    if (cancelBtn) cancelBtn.textContent = opts.cancelLabel || 'Cancel';
 
     confirmCallback = callback;
+    confirmCancelCallback = (typeof opts.onCancel === 'function') ? opts.onCancel : null;
     _confirmReturnFocus = document.activeElement;
     overlay.classList.add('active');
     _confirmArmed = false;
@@ -625,16 +636,20 @@ function closeConfirm() {
     const wasOpen = overlay.classList.contains('active');
     overlay.classList.remove('active');
     confirmCallback = null;
+    const onCancel = confirmCancelCallback;
+    confirmCancelCallback = null;
     _confirmArmed = false;
     clearTimeout(_confirmArmTimer);
     if (wasOpen && _confirmReturnFocus && _confirmReturnFocus.focus && document.contains(_confirmReturnFocus)) {
         try { _confirmReturnFocus.focus(); } catch (e) { /* ignore */ }
     }
     _confirmReturnFocus = null;
+    if (wasOpen && onCancel) onCancel();
 }
 
 function executeConfirm() {
     const cb = confirmCallback;
+    confirmCancelCallback = null;  // bevestigd, dus niet ook "geannuleerd"
     closeConfirm();
     if (cb) cb();
 }

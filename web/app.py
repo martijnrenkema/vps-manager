@@ -7410,19 +7410,49 @@ def files_download():
     return jsonify({'status': 'error', 'message': 'Not found'}), 404
 
 
+def _upload_target_dir(path):
+    """Gevalideerde doelmap voor een upload: (map, None) of (None, foutresponse)."""
+    if not isinstance(path, str) or _path_has_nul(path):
+        return None, (jsonify({'status': 'error', 'message': 'Invalid path'}), 400)
+    norm_path = os.path.realpath(path)
+    if not is_path_allowed(norm_path):
+        return None, (jsonify({'status': 'error', 'message': 'Access denied'}), 403)
+    if not os.path.isdir(norm_path):
+        return None, (jsonify({'status': 'error', 'message': 'Directory not found'}), 404)
+    return norm_path, None
+
+
+@app.route('/files/upload/check', methods=['POST'])
+@login_required
+def files_upload_check():
+    """Welke van de te uploaden namen bestaan al in de doelmap?
+
+    Zelfde naamopschoning als de upload (secure_filename), zodat de pagina
+    kan vragen of bestaande bestanden vervangen moeten worden. Antwoordt met
+    `exists`: één boolean per opgegeven naam, in dezelfde volgorde."""
+    data = _json_body()
+    norm_path, err = _upload_target_dir(data.get('path', '/var/www'))
+    if err:
+        return err
+    names = data.get('names')
+    if not isinstance(names, list) or len(names) > 1000:
+        return jsonify({'status': 'error', 'message': 'names must be a list (max 1000)'}), 400
+    exists = []
+    for name in names:
+        filename = secure_filename(name) if isinstance(name, str) else ''
+        exists.append(bool(filename) and os.path.lexists(os.path.join(norm_path, filename)))
+    return jsonify({'status': 'ok', 'exists': exists})
+
+
 @app.route('/files/upload', methods=['POST'])
 @login_required
 def files_upload():
-    path = request.form.get('path', '/var/www')
-    if _path_has_nul(path):
-        return jsonify({'status': 'error', 'message': 'Invalid path'}), 400
-    norm_path = os.path.realpath(path)
-
-    if not is_path_allowed(norm_path):
-        return jsonify({'status': 'error', 'message': 'Access denied'}), 403
-
-    if not os.path.isdir(norm_path):
-        return jsonify({'status': 'error', 'message': 'Directory not found'}), 404
+    norm_path, err = _upload_target_dir(request.form.get('path', '/var/www'))
+    if err:
+        return err
+    # Alleen vervangen als de gebruiker dat bevestigd heeft; anders weigeren
+    # i.p.v. een live bestand (bijv. index.php) stil te overschrijven.
+    overwrite = request.form.get('overwrite') == '1'
 
     if 'file' not in request.files:
         return jsonify({'status': 'error', 'message': 'No file received'}), 400
@@ -7440,13 +7470,25 @@ def files_upload():
     # schrijven.
     if os.path.islink(dest):
         return jsonify({'status': 'error', 'message': 'Refusing to overwrite a symlink'}), 403
+    if os.path.isdir(dest):
+        return jsonify({'status': 'error', 'code': 'exists',
+                        'message': f"A folder named '{filename}' already exists"}), 409
 
+    # O_EXCL zonder bevestiging: ook een bestand dat ná de controle verscheen
+    # wordt dan niet overschreven.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | (os.O_TRUNC if overwrite else os.O_EXCL)
     try:
-        fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        fd = os.open(dest, flags, 0o644)
+    except FileExistsError:
+        return jsonify({'status': 'error', 'code': 'exists',
+                        'message': f"'{filename}' already exists, not replaced"}), 409
+    except OSError as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+    try:
         with os.fdopen(fd, 'wb') as out:
             file.save(out)
-        log_audit('file_upload', {'path': dest})
-        return jsonify({'status': 'ok', 'message': f"'{filename}' uploaded"})
+        log_audit('file_upload', {'path': dest, 'overwrite': overwrite})
+        return jsonify({'status': 'ok', 'message': f"'{filename}' {'replaced' if overwrite else 'uploaded'}"})
     except OSError as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
